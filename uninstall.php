@@ -15,8 +15,41 @@ if (!defined('WP_UNINSTALL_PLUGIN')) {
 
 global $wpdb;
 
+// Check if complete data removal is enabled
+// If the custom settings table exists, check there first
+$table_prefix = $wpdb->prefix . 'mat_';
+$settings_table = $table_prefix . 'settings';
+$complete_removal_enabled = false;
+
+// Check if settings table exists and look for the setting
+$table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $settings_table)) === $settings_table;
+if ($table_exists) {
+    $setting_value = $wpdb->get_var($wpdb->prepare(
+        "SELECT setting_value FROM {$settings_table} WHERE setting_key = %s AND user_id IS NULL",
+        'complete_data_removal'
+    ));
+    if ($setting_value !== null) {
+        $complete_removal_enabled = (bool) maybe_unserialize($setting_value);
+    }
+}
+
+// If not found in custom table, check wp_options as fallback
+if (!$complete_removal_enabled && !$table_exists) {
+    $complete_removal_enabled = get_option('mat_complete_data_removal', false);
+}
+
+// If complete data removal is not enabled, preserve all data and exit
+if (!$complete_removal_enabled) {
+    error_log('MagicAssistant: Uninstall triggered but complete data removal is disabled. Data preserved.');
+    return;
+}
+
+// Log that complete removal is proceeding
+error_log('MagicAssistant: Complete data removal enabled. Proceeding with full cleanup.');
+
 // Delete WordPress options created by the plugin
 delete_option('mat_db_version');
+delete_option('mat_complete_data_removal'); // Clean up the setting itself
 
 // Delete any legacy options that might exist in wp_options (from migration)
 $legacy_options = array(

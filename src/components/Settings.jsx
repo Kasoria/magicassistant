@@ -99,6 +99,44 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                 {darkMode ? '☀️ Light' : '🌙 Dark'}
               </Button>
             </div>
+            
+            <div className="p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <h4 className="font-medium text-brand-dark dark:text-white mb-2">Complete Data Removal</h4>
+                  <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+                    Control what happens to your data when the plugin is uninstalled
+                  </p>
+                  <div className="bg-yellow-50 dark:bg-yellow-900/20 p-3 rounded-lg border border-yellow-200 dark:border-yellow-800">
+                    <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                      <strong>⚠️ Important:</strong> When enabled, uninstalling the plugin will permanently delete:
+                    </p>
+                    <ul className="text-sm text-yellow-800 dark:text-yellow-200 mt-2 ml-4 list-disc">
+                      <li>All chat conversations and history</li>
+                      <li>API usage logs and analytics data</li>
+                      <li>Plugin settings and configurations</li>
+                      <li>Encrypted API keys</li>
+                    </ul>
+                    <p className="text-sm text-yellow-800 dark:text-yellow-200 mt-2">
+                      If disabled, all data will be preserved even after uninstallation, allowing you to reinstall later without losing your conversations.
+                    </p>
+                  </div>
+                </div>
+                <div className="ml-4 flex items-center">
+                  <input
+                    type="checkbox"
+                    id="complete-data-removal"
+                    checked={settings?.complete_data_removal || false}
+                    onChange={(e) => handleSettingsChange('complete_data_removal', e.target.checked)}
+                    disabled={isSavingSettings}
+                    className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 rounded focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                  />
+                  <Label htmlFor="complete-data-removal" className="ml-2 font-medium">
+                    Enable complete removal
+                  </Label>
+                </div>
+              </div>
+            </div>
           </div>
         )
 
@@ -422,11 +460,6 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
   return (
     <div className="space-y-6">
       <Card className="p-6">
-        <h2 className="text-2xl font-bold mb-4 text-brand-dark dark:text-white">Settings</h2>
-        <p className="text-gray-600 dark:text-gray-300 mb-6">
-          Configure your MagicAssistant preferences and API settings.
-        </p>
-        
         {/* Tab Navigation */}
         <div className="border-b border-gray-200 dark:border-gray-600 mb-6">
           <nav className="-mb-px flex space-x-8">
