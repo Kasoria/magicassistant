@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Card, Select, Label, TextInput, Button } from 'flowbite-react'
 import ConfirmationModal from './ConfirmationModal'
 import { useToast } from './Toast'
@@ -7,10 +7,25 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
   const [apiKey, setApiKey] = useState('')
   const [activeTab, setActiveTab] = useState('general')
   const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [completeDataRemoval, setCompleteDataRemoval] = useState(false)
   const { showSuccess, showWarning } = useToast()
 
+  // Sync local state with props
+  useEffect(() => {
+    if (settings) {
+      setCompleteDataRemoval(settings.complete_data_removal || false)
+    }
+  }, [settings])
+
   const handleSettingsChange = (key, value) => {
+    console.log('Settings change:', key, value) // Debug log
     onSaveSettings({ [key]: value })
+  }
+
+  const handleCompleteDataRemovalChange = (checked) => {
+    console.log('Complete data removal change:', checked) // Debug log
+    setCompleteDataRemoval(checked) // Update local state immediately
+    onSaveSettings({ complete_data_removal: checked }) // Save to server
   }
 
   const handleDeleteToolsChange = (checked) => {
@@ -126,9 +141,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                   <label className="inline-flex items-center cursor-pointer">
                     <input
                       type="checkbox"
-                      id="complete-data-removal"
-                      checked={settings?.complete_data_removal || false}
-                      onChange={(e) => handleSettingsChange('complete_data_removal', e.target.checked)}
+                      checked={completeDataRemoval}
+                      onChange={(e) => handleCompleteDataRemovalChange(e.target.checked)}
                       disabled={isSavingSettings}
                       className="sr-only peer"
                     />
