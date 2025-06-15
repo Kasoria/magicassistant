@@ -1,0 +1,34 @@
+{
+    "name": "magicplugins/magicassistant",
+    "description": "Your personal AI assistant for WordPress websites",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "authors": [
+        {
+            "name": "Christian Wenterodt",
+            "email": "contact@magicplugins.io",
+            "homepage": "https://magicplugins.io"
+        }
+    ],
+    "keywords": [
+        "wordpress",
+        "plugin",
+        "ai",
+        "assistant",
+        "mcp"
+    ],
+    "homepage": "https://magicplugins.io",
+    "require": {
+        "php": ">=7.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "MagicAssistant\\": "includes/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "classmap-authoritative": false,
+        "apcu-autoloader": false
+    }
+} 

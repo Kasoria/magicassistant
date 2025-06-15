@@ -1,0 +1,534 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom WordPress admin integration styles */
+@layer base {
+  
+  /* Apply Nunito Sans globally to the React app */
+  #mat-admin-root {
+    font-family: 'Nunito Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    position: relative;
+    overflow-x: hidden; /* Prevent horizontal scroll on mobile */
+  }
+
+  /* Apply font to public root as well */
+  #mat-public-root {
+    font-family: 'Nunito Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  }
+
+  /* Ensure all child elements inherit the font */
+  #mat-admin-root *,
+  #mat-admin-root *::before,
+  #mat-admin-root *::after {
+    font-family: inherit;
+  }
+
+  /* Scope font overrides to our React app roots */
+  #mat-admin-root button,
+  #mat-admin-root input,
+  #mat-admin-root textarea,
+  #mat-admin-root select,
+  #mat-public-root button,
+  #mat-public-root input,
+  #mat-public-root textarea,
+  #mat-public-root select {
+    font-family: 'Nunito Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  }
+
+  /* Ensure proper z-index layering for Flowbite components */
+  .fixed {
+    z-index: 40;
+  }
+
+  /* Custom scrollbar for sidebar */
+  .overflow-y-auto::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .overflow-y-auto::-webkit-scrollbar-track {
+    background: #f1f5f9;
+  }
+
+  .overflow-y-auto::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+  }
+
+  .overflow-y-auto::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+
+  /* Sticky header support */
+  #mat-admin-root header.sticky {
+    position: sticky;
+    top: 32px;
+    z-index: 40;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  /* Ensure content flows properly under sticky header */
+  #mat-admin-root .main-content-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  /* Ensure the main flex container works properly on all screen sizes */
+  #mat-admin-root .main-flex-container {
+    display: flex;
+    height: 100%; /* Fill the root container height */
+    position: relative;
+  }
+}
+
+/* Responsive fixes for main layout */
+@layer base {
+  /* Mobile sidebar overlay fixes */
+  @media (max-width: 1023px) {
+    #wpcontent {
+      padding: 0 !important;
+    }
+    #mat-admin-root .sidebar-container {
+      position: fixed !important;
+      top: 0;
+      left: 0;
+      height: 100vh;
+      z-index: 50;
+      transform: translateX(-100%);
+      transition: transform 0.3s ease-in-out;
+    }
+
+    #mat-admin-root .sidebar-container.open {
+      transform: translateX(0);
+    }
+
+    #mat-admin-root .main-content-container {
+      width: 100%;
+      margin-left: 0 !important;
+    }
+
+    /* Prevent body scroll when sidebar is open on mobile */
+    body.sidebar-open {
+      overflow: hidden;
+    }
+
+    /* Mobile overlay backdrop */
+    #mat-admin-root .mobile-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 40;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.3s ease-in-out, visibility 0.3s ease-in-out;
+    }
+
+    #mat-admin-root .mobile-overlay.show {
+      opacity: 1;
+      visibility: visible;
+    }
+  }
+
+  /* Large screen layout - sidebar always visible */
+  @media (min-width: 1024px) {
+    #mat-admin-root .sidebar-container {
+      position: relative !important;
+      transform: translateX(0) !important;
+      height: auto;
+    }
+
+    #mat-admin-root .main-content-container {
+      margin-left: 0;
+    }
+
+    /* Hide mobile overlay on large screens */
+    #mat-admin-root .mobile-overlay {
+      display: none !important;
+    }
+  }
+}
+
+/* WordPress admin bar responsive adjustments */
+@media screen and (max-width: 782px) {
+  /* WordPress changes admin bar height to 46px on screens ≤782px */
+  #mat-admin-root {
+    min-height: calc(100vh - 46px) !important; /* Account for mobile admin bar height */
+    max-height: calc(100vh - 46px) !important;
+  }
+  
+  #mat-admin-root .main-flex-container {
+    height: 100% !important;
+  }
+}
+
+/* Additional mobile admin bar adjustments for very small screens */
+@media screen and (max-width: 600px) {
+  /* On very small screens, WordPress admin bar might have different behavior */
+  #mat-admin-root {
+    min-height: calc(100vh - 46px) !important;
+    max-height: calc(100vh - 46px) !important;
+  }
+  
+  #mat-admin-root .main-flex-container {
+    height: 100% !important;
+  }
+  
+  /* Ensure sidebar covers full height including admin bar adjustment */
+  #mat-admin-root .sidebar-container {
+    height: calc(100vh - 46px) !important;
+    top: 46px !important;
+  }
+}
+
+/* Ensure sidebar positioning accounts for admin bar on mobile */
+@media screen and (max-width: 782px) {
+  #mat-admin-root .sidebar-container {
+    height: calc(100vh - 46px) !important;
+    top: 46px !important;
+  }
+}
+
+@layer components {
+  /* Custom component styles with proper font weights */
+  .app-shell {
+    @apply min-h-screen bg-brand-light dark:bg-brand-dark;
+  }
+
+  /* Sidebar navigation styles */
+  .sidebar-item {
+    @apply flex items-center p-3 text-sm font-medium rounded-lg transition-colors duration-150;
+  }
+
+  .sidebar-item.active {
+    @apply bg-brand-accent text-brand-dark dark:bg-brand-accent dark:text-brand-dark font-bold;
+  }
+
+  .sidebar-item:not(.active) {
+    @apply text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700;
+  }
+
+  /* Typography improvements */
+  #mat-admin-root h1,
+  #mat-admin-root h2,
+  #mat-admin-root h3,
+  #mat-admin-root h4,
+  #mat-admin-root h5,
+  #mat-admin-root h6 {
+    font-weight: 700;
+    line-height: 1.25;
+    color: inherit;
+  }
+
+  .page-title {
+    @apply text-2xl font-extrabold text-brand-dark dark:text-white;
+  }
+
+  .page-description {
+    @apply text-sm font-normal text-gray-600 dark:text-gray-300;
+  }
+
+  /* Button styles */
+  .btn-primary {
+    @apply bg-brand-accent hover:bg-brand-accent/90 text-brand-dark font-medium;
+  }
+
+  .btn-secondary {
+    @apply bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700;
+  }
+
+  /* Table and list improvements */
+  .table-row-hover {
+    @apply hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors duration-150;
+  }
+
+  /* Empty state styles */
+  .empty-state {
+    @apply text-center py-8;
+  }
+
+  .empty-state-icon {
+    @apply mx-auto mb-4 text-gray-400 dark:text-gray-500;
+  }
+
+  .empty-state-title {
+    @apply text-lg font-semibold text-gray-900 dark:text-white mb-2;
+  }
+
+  .empty-state-description {
+    @apply text-gray-600 dark:text-gray-300;
+  }
+
+  /* Utility classes */
+  .text-truncate-2 {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-in-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Mobile menu animation */
+  .mobile-menu-transition {
+    transition: transform 0.3s ease-in-out;
+  }
+
+  /* Font weight overrides */
+  .font-light { font-weight: 300 !important; }
+  .font-normal { font-weight: 400 !important; }
+  .font-medium { font-weight: 500 !important; }
+  .font-semibold { font-weight: 600 !important; }
+  .font-bold { font-weight: 700 !important; }
+  .font-extrabold { font-weight: 800 !important; }
+  .font-black { font-weight: 900 !important; }
+
+  /* Responsive sidebar */
+  .sidebar-responsive {
+    @media (max-width: 1023px) {
+      transform: translateX(-100%);
+      transition: transform 0.3s ease-in-out;
+    }
+  }
+
+  .sidebar-responsive.open {
+    @media (max-width: 1023px) {
+      transform: translateX(0);
+    }
+  }
+}
+
+/* WordPress wrapper adjustments */
+.wrap #mat-admin-root {
+  margin: 0 !important;
+  padding: 0 !important;
+  max-width: none !important;
+}
+
+/* Mobile responsive adjustments */
+@media screen and (max-width: 1023px) {
+  #mat-admin-root {
+    padding: 0 !important;
+  }
+
+  #mat-admin-root .main-flex-container {
+    flex-direction: column;
+  }
+
+  #mat-admin-root .main-content-area {
+    width: 100%;
+    min-height: calc(100vh - 46px);
+  }
+}
+
+/* Tablet adjustments */
+@media screen and (min-width: 768px) and (max-width: 1023px) {
+  #mat-admin-root .container {
+    max-width: 100%;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+}
+
+/* Desktop adjustments */
+@media screen and (min-width: 1024px) {
+  #mat-admin-root {
+    height: calc(100vh - 32px) !important; /* Account for WP admin bar */
+  }
+}
+
+/* Small mobile adjustments */
+@media screen and (max-width: 640px) {
+  
+  #mat-admin-root .container {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  #mat-admin-root .px-6 {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  #mat-admin-root h1 {
+    font-size: 1.25rem;
+    line-height: 1.75rem;
+  }
+
+  #mat-admin-root header > div:first-child {
+    padding: 0.75rem;
+  }
+
+  #mat-admin-root header > div:first-child > div:last-child {
+    gap: 0.5rem;
+  }
+}
+
+/* Additional mobile fixes */
+@media (max-width: 1023px) {
+  #mat-admin-root .main-content-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+/* Sidebar specific adjustments */
+#mat-admin-root .sidebar-container {
+  overflow: hidden;
+}
+
+@media (max-width: 1023px) {
+  #mat-admin-root .sidebar-container {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  }
+
+  #mat-admin-root .mobile-overlay {
+    backdrop-filter: blur(2px);
+  }
+}
+
+/* Global style improvements */
+#mat-admin-root {
+  line-height: 1.6;
+}
+
+@media (max-width: 1023px) {
+  #mat-admin-root button {
+    touch-action: manipulation;
+  }
+
+  #mat-admin-root .sidebar-container nav button {
+    padding: 0.75rem;
+  }
+
+  #mat-admin-root header {
+    backdrop-filter: blur(8px);
+  }
+
+  #mat-admin-root header button {
+    padding: 0.5rem;
+    min-height: 2.5rem;
+  }
+
+  #mat-admin-root header .flex {
+    align-items: center;
+  }
+
+  #mat-admin-root header h1 {
+    font-size: 1.125rem;
+    line-height: 1.75rem;
+    font-weight: 800;
+    margin: 0;
+  }
+}
+
+/* Very small screen adjustments */
+@media (max-width: 640px) {
+  #mat-admin-root header h1 {
+    font-size: 1rem;
+    line-height: 1.5rem;
+  }
+
+  #mat-admin-root header .gap-2 {
+    gap: 0.25rem;
+  }
+
+  #mat-admin-root header button {
+    padding: 0.375rem;
+  }
+
+  #mat-admin-root header button svg {
+    width: 1rem;
+    height: 1rem;
+  }
+}
+
+/* Medium screen header adjustments */
+@media (min-width: 641px) and (max-width: 1023px) {
+  #mat-admin-root header h1 {
+    font-size: 1.25rem;
+    line-height: 1.75rem;
+  }
+}
+
+/* Global scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Dark mode scrollbar */
+.dark ::-webkit-scrollbar-track {
+  background: #1e293b;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #475569;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+/* Base styles for light/dark theme support */
+.light {
+  background-color: #f4f4f4;
+  color: #333;
+}
+
+.dark {
+  background-color: #011326;
+  color: #fff;
+}
+
+/* Flowbite theme adjustments */
+.flowbite-react {
+  --flowbite-semantic-color-primary: #0ea5e9;
+} 
