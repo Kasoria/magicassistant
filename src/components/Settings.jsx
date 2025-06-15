@@ -122,18 +122,21 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                     </p>
                   </div>
                 </div>
-                <div className="ml-4 flex items-center">
-                  <input
-                    type="checkbox"
-                    id="complete-data-removal"
-                    checked={settings?.complete_data_removal || false}
-                    onChange={(e) => handleSettingsChange('complete_data_removal', e.target.checked)}
-                    disabled={isSavingSettings}
-                    className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 rounded focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-                  />
-                  <Label htmlFor="complete-data-removal" className="ml-2 font-medium">
-                    Enable complete removal
-                  </Label>
+                <div className="ml-4">
+                  <label className="inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      id="complete-data-removal"
+                      checked={settings?.complete_data_removal || false}
+                      onChange={(e) => handleSettingsChange('complete_data_removal', e.target.checked)}
+                      disabled={isSavingSettings}
+                      className="sr-only peer"
+                    />
+                    <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-accent/20 dark:peer-focus:ring-brand-accent/30 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-brand-accent dark:peer-checked:bg-brand-accent peer-disabled:opacity-50 peer-disabled:cursor-not-allowed"></div>
+                    <span className="ms-3 text-sm font-medium text-gray-900 dark:text-gray-300">
+                      Enable complete removal
+                    </span>
+                  </label>
                 </div>
               </div>
             </div>
