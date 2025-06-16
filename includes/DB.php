@@ -15,6 +15,7 @@ class DB {
     private $settings_table;
     private $chat_history_table;
     private $api_logs_table;
+    private $shared_conversations_table;
     
     public function __construct() {
         global $wpdb;
@@ -22,6 +23,7 @@ class DB {
         $this->settings_table = $this->table_prefix . 'settings';
         $this->chat_history_table = $this->table_prefix . 'chat_history';
         $this->api_logs_table = $this->table_prefix . 'api_logs';
+        $this->shared_conversations_table = $this->table_prefix . 'shared_conversations';
         
         // Hook into WordPress activation/deactivation
         register_activation_hook(MAGIC_ASSISTANT_PLUGIN_FILE, array($this, 'create_tables'));
@@ -65,6 +67,7 @@ class DB {
             total_cost decimal(10,6) DEFAULT 0.00,
             providers_used text DEFAULT NULL,
             models_used text DEFAULT NULL,
+            agent_mode tinyint(1) DEFAULT 0,
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
@@ -95,11 +98,36 @@ class DB {
             KEY idx_status_code (status_code)
         ) $charset_collate;";
         
+        // Shared conversations table
+        $shared_conversations_sql = "CREATE TABLE {$this->shared_conversations_table} (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            user_id bigint(20) unsigned NOT NULL,
+            session_id varchar(100) DEFAULT NULL,
+            share_id varchar(32) NOT NULL UNIQUE,
+            title varchar(255) NOT NULL,
+            formatted_content longtext NOT NULL,
+            html_content longtext NOT NULL,
+            view_count bigint(20) unsigned DEFAULT 0,
+            is_public tinyint(1) DEFAULT 1,
+            password varchar(255) DEFAULT NULL,
+            expires_at datetime DEFAULT NULL,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY unique_share_id (share_id),
+            KEY idx_user_id (user_id),
+            KEY idx_session_id (session_id),
+            KEY idx_is_public (is_public),
+            KEY idx_expires_at (expires_at),
+            KEY idx_created_at (created_at)
+        ) $charset_collate;";
+        
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         
         dbDelta($settings_sql);
         dbDelta($chat_sessions_sql);
         dbDelta($api_logs_sql);
+        dbDelta($shared_conversations_sql);
         
         // Set database version
         update_option('mat_db_version', '1.0.0');
@@ -494,9 +522,10 @@ class DB {
                     'total_tokens' => intval($tokens_used),
                     'total_cost' => floatval($cost),
                     'providers_used' => $provider ? $provider : '',
-                    'models_used' => $model ? $model : ''
+                    'models_used' => $model ? $model : '',
+                    'agent_mode' => 0
                 ),
-                array('%d', '%s', '%s', '%s', '%d', '%d', '%f', '%s', '%s')
+                array('%d', '%s', '%s', '%s', '%d', '%d', '%f', '%s', '%s', '%d')
             );
         }
     }
@@ -526,7 +555,7 @@ class DB {
             // Get all sessions for user (for session list)
             $sessions = $wpdb->get_results($wpdb->prepare(
                 "SELECT session_id, title, message_count, total_tokens, 
-                        providers_used, models_used, created_at, updated_at
+                        providers_used, models_used, agent_mode, created_at, updated_at
                 FROM {$this->chat_history_table} 
                 WHERE user_id = %d 
                 ORDER BY updated_at DESC LIMIT %d",
@@ -654,7 +683,7 @@ class DB {
     public function tables_exist() {
         global $wpdb;
         
-        $tables = array($this->settings_table, $this->chat_history_table, $this->api_logs_table);
+        $tables = array($this->settings_table, $this->chat_history_table, $this->api_logs_table, $this->shared_conversations_table);
         
         foreach ($tables as $table) {
             $result = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table));
@@ -809,5 +838,181 @@ class DB {
             $user_id,
             $session_id
         ), ARRAY_A);
+    }
+    
+    /**
+     * Create a shared conversation
+     */
+    public function create_shared_conversation($user_id, $session_id, $title, $formatted_content, $html_content, $expires_at = null) {
+        global $wpdb;
+        
+        // Generate unique share ID
+        $share_id = $this->generate_share_id();
+        
+        // Ensure unique share_id
+        $attempts = 0;
+        while ($this->share_id_exists($share_id) && $attempts < 10) {
+            $share_id = $this->generate_share_id();
+            $attempts++;
+        }
+        
+        if ($attempts >= 10) {
+            return false; // Failed to generate unique ID
+        }
+        
+        $data = array(
+            'user_id' => $user_id,
+            'session_id' => $session_id,
+            'share_id' => $share_id,
+            'title' => $title,
+            'formatted_content' => $formatted_content,
+            'html_content' => $html_content,
+            'expires_at' => $expires_at
+        );
+        
+        $result = $wpdb->insert($this->shared_conversations_table, $data, array('%d', '%s', '%s', '%s', '%s', '%s', '%s'));
+        
+        return $result ? $share_id : false;
+    }
+    
+    /**
+     * Get shared conversation by share_id
+     */
+    public function get_shared_conversation($share_id) {
+        global $wpdb;
+        
+        $conversation = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$this->shared_conversations_table} 
+            WHERE share_id = %s AND is_public = 1 
+            AND (expires_at IS NULL OR expires_at > NOW())",
+            $share_id
+        ), ARRAY_A);
+        
+        // Increment view count if conversation exists
+        if ($conversation) {
+            $wpdb->update(
+                $this->shared_conversations_table,
+                array('view_count' => intval($conversation['view_count']) + 1),
+                array('id' => $conversation['id']),
+                array('%d'),
+                array('%d')
+            );
+            $conversation['view_count'] = intval($conversation['view_count']) + 1;
+        }
+        
+        return $conversation;
+    }
+    
+    /**
+     * Get user's shared conversations
+     */
+    public function get_user_shared_conversations($user_id, $limit = 50) {
+        global $wpdb;
+        
+        return $wpdb->get_results($wpdb->prepare(
+            "SELECT share_id, title, view_count, is_public, expires_at, created_at, updated_at
+            FROM {$this->shared_conversations_table} 
+            WHERE user_id = %d 
+            ORDER BY created_at DESC LIMIT %d",
+            $user_id,
+            $limit
+        ), ARRAY_A);
+    }
+    
+    /**
+     * Delete shared conversation
+     */
+    public function delete_shared_conversation($user_id, $share_id) {
+        global $wpdb;
+        
+        return $wpdb->delete(
+            $this->shared_conversations_table,
+            array(
+                'user_id' => $user_id,
+                'share_id' => $share_id
+            ),
+            array('%d', '%s')
+        );
+    }
+    
+    /**
+     * Update shared conversation
+     */
+    public function update_shared_conversation($user_id, $share_id, $data) {
+        global $wpdb;
+        
+        $allowed_fields = array('title', 'is_public', 'expires_at');
+        $update_data = array();
+        $format = array();
+        
+        foreach ($allowed_fields as $field) {
+            if (isset($data[$field])) {
+                $update_data[$field] = $data[$field];
+                $format[] = in_array($field, ['is_public']) ? '%d' : '%s';
+            }
+        }
+        
+        if (empty($update_data)) {
+            return false;
+        }
+        
+        return $wpdb->update(
+            $this->shared_conversations_table,
+            $update_data,
+            array(
+                'user_id' => $user_id,
+                'share_id' => $share_id
+            ),
+            $format,
+            array('%d', '%s')
+        );
+    }
+    
+    /**
+     * Clean up expired shared conversations
+     */
+    public function cleanup_expired_shared_conversations() {
+        global $wpdb;
+        
+        return $wpdb->query(
+            "DELETE FROM {$this->shared_conversations_table} 
+            WHERE expires_at IS NOT NULL AND expires_at <= NOW()"
+        );
+    }
+    
+    /**
+     * Generate unique share ID
+     */
+    private function generate_share_id() {
+        return wp_generate_password(16, false, false);
+    }
+    
+    /**
+     * Check if share ID exists
+     */
+    private function share_id_exists($share_id) {
+        global $wpdb;
+        
+        $exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$this->shared_conversations_table} WHERE share_id = %s",
+            $share_id
+        ));
+        
+        return intval($exists) > 0;
+    }
+    
+    /**
+     * Persist the agent mode flag for a chat session (0 = chat, 1 = agent)
+     */
+    public function set_chat_session_mode($user_id, $session_id, $agent_mode) {
+        global $wpdb;
+
+        return $wpdb->update(
+            $this->chat_history_table,
+            array('agent_mode' => $agent_mode ? 1 : 0),
+            array('user_id' => $user_id, 'session_id' => $session_id),
+            array('%d'),
+            array('%d', '%s')
+        );
     }
 }

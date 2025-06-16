@@ -226,6 +226,9 @@ class MCP_Server {
         // Register WooCommerce Tools (from wordpress-mcp)
         $this->register_woocommerce_tools();
         
+        // Register WordPress.org repository tools
+        $this->register_repository_tools();
+        
         // Register generic REST API tools
         $this->register_rest_api_tools();
         
@@ -5672,5 +5675,1115 @@ class MCP_Server {
             default:
                 return \MagicAssistant\Utils\UserInfo::get_user_info($args);
         }
+    }
+
+    /**
+     * Register WordPress.org repository tools for searching and installing plugins/themes
+     */
+    private function register_repository_tools() {
+        // wp_search_repo_plugins - Search WordPress.org plugin repository
+        $this->register_tool(array(
+            'name' => 'wp_search_repo_plugins',
+            'description' => 'Search the WordPress.org plugin repository for plugins. Returns plugin information including name, description, author, ratings, and download stats.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'search' => array('type' => 'string', 'description' => 'Search term to look for in plugin names and descriptions'),
+                    'tag' => array('type' => 'string', 'description' => 'Filter by plugin tag (e.g., "seo", "security", "backup")'),
+                    'author' => array('type' => 'string', 'description' => 'Filter by plugin author'),
+                    'per_page' => array('type' => 'integer', 'description' => 'Number of results per page (default: 12, max: 24)', 'default' => 12),
+                    'page' => array('type' => 'integer', 'description' => 'Page number (default: 1)', 'default' => 1),
+                    'browse' => array('type' => 'string', 'description' => 'Browse by category: popular, featured, updated, new (default: popular)', 'default' => 'popular')
+                )
+            ),
+            'callback' => array($this, 'wp_search_repo_plugins')
+        ));
+
+        // wp_get_repo_plugin_info - Get detailed information about a specific plugin from WordPress.org repository
+        $this->register_tool(array(
+            'name' => 'wp_get_repo_plugin_info',
+            'description' => 'Get detailed information about a specific plugin from WordPress.org repository, including description, installation instructions, changelog, and compatibility.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'slug' => array('type' => 'string', 'description' => 'The plugin slug (e.g., "akismet", "shortpixel-image-optimiser")')
+                ),
+                'required' => array('slug')
+            ),
+            'callback' => array($this, 'wp_get_repo_plugin_info')
+        ));
+
+        // wp_install_repo_plugin - Install a plugin from WordPress.org repository
+        $this->register_tool(array(
+            'name' => 'wp_install_repo_plugin',
+            'description' => 'Install a plugin from the WordPress.org repository. Requires the plugin slug and optionally can activate it immediately.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'slug' => array('type' => 'string', 'description' => 'The plugin slug from WordPress.org (e.g., "akismet", "shortpixel-image-optimiser")'),
+                    'activate' => array('type' => 'boolean', 'description' => 'Whether to activate the plugin after installation (default: false)', 'default' => false)
+                ),
+                'required' => array('slug')
+            ),
+            'callback' => array($this, 'wp_install_repo_plugin')
+        ));
+
+        // wp_search_repo_themes - Search WordPress.org theme repository
+        $this->register_tool(array(
+            'name' => 'wp_search_repo_themes',
+            'description' => 'Search the WordPress.org theme repository for themes. Returns theme information including name, description, author, ratings, and preview images.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'search' => array('type' => 'string', 'description' => 'Search term to look for in theme names and descriptions'),
+                    'tag' => array('type' => 'string', 'description' => 'Filter by theme tag (e.g., "blog", "business", "portfolio")'),
+                    'author' => array('type' => 'string', 'description' => 'Filter by theme author'),
+                    'per_page' => array('type' => 'integer', 'description' => 'Number of results per page (default: 12, max: 24)', 'default' => 12),
+                    'page' => array('type' => 'integer', 'description' => 'Page number (default: 1)', 'default' => 1),
+                    'browse' => array('type' => 'string', 'description' => 'Browse by category: popular, featured, updated, new (default: popular)', 'default' => 'popular')
+                )
+            ),
+            'callback' => array($this, 'wp_search_repo_themes')
+        ));
+
+        // wp_get_repo_theme_info - Get detailed information about a specific theme from WordPress.org repository
+        $this->register_tool(array(
+            'name' => 'wp_get_repo_theme_info',
+            'description' => 'Get detailed information about a specific theme from WordPress.org repository, including description, installation instructions, preview images, and compatibility.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'slug' => array('type' => 'string', 'description' => 'The theme slug (e.g., "twentytwentyfour", "astra")')
+                ),
+                'required' => array('slug')
+            ),
+            'callback' => array($this, 'wp_get_repo_theme_info')
+        ));
+
+        // wp_install_repo_theme - Install a theme from WordPress.org repository
+        $this->register_tool(array(
+            'name' => 'wp_install_repo_theme',
+            'description' => 'Install a theme from the WordPress.org repository. Requires the theme slug and optionally can activate it immediately.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'slug' => array('type' => 'string', 'description' => 'The theme slug from WordPress.org (e.g., "twentytwentyfour", "astra")'),
+                    'activate' => array('type' => 'boolean', 'description' => 'Whether to activate the theme after installation (default: false)', 'default' => false)
+                ),
+                'required' => array('slug')
+            ),
+            'callback' => array($this, 'wp_install_repo_theme')
+        ));
+
+        // wp_check_plugin_updates - Check for available plugin updates
+        $this->register_tool(array(
+            'name' => 'wp_check_plugin_updates',
+            'description' => 'Check for available plugin updates on the WordPress site. Returns a list of plugins that have updates available.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => (object)array(),
+                'additionalProperties' => false
+            ),
+            'callback' => array($this, 'wp_check_plugin_updates')
+        ));
+
+        // wp_update_plugin - Update a specific plugin
+        $this->register_tool(array(
+            'name' => 'wp_update_plugin',
+            'description' => 'Update a specific plugin to its latest version.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'plugin_file' => array('type' => 'string', 'description' => 'The plugin file path (e.g., "plugin-folder/plugin-file.php")')
+                ),
+                'required' => array('plugin_file'),
+                'additionalProperties' => false
+            ),
+            'callback' => array($this, 'wp_update_plugin')
+        ));
+
+        // wp_update_all_plugins - Update all plugins that have updates available
+        $this->register_tool(array(
+            'name' => 'wp_update_all_plugins',
+            'description' => 'Update all plugins that have updates available.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => (object)array(),
+                'additionalProperties' => false
+            ),
+            'callback' => array($this, 'wp_update_all_plugins')
+        ));
+
+        // wp_check_theme_updates - Check for available theme updates
+        $this->register_tool(array(
+            'name' => 'wp_check_theme_updates',
+            'description' => 'Check for available theme updates on the WordPress site. Returns a list of themes that have updates available.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => (object)array(),
+                'additionalProperties' => false
+            ),
+            'callback' => array($this, 'wp_check_theme_updates')
+        ));
+
+        // wp_update_theme - Update a specific theme
+        $this->register_tool(array(
+            'name' => 'wp_update_theme',
+            'description' => 'Update a specific theme to its latest version.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'theme_slug' => array('type' => 'string', 'description' => 'The theme slug (folder name)')
+                ),
+                'required' => array('theme_slug'),
+                'additionalProperties' => false
+            ),
+            'callback' => array($this, 'wp_update_theme')
+        ));
+
+        // wp_update_all_themes - Update all themes that have updates available
+        $this->register_tool(array(
+            'name' => 'wp_update_all_themes',
+            'description' => 'Update all themes that have updates available.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => (object)array(),
+                'additionalProperties' => false
+            ),
+            'callback' => array($this, 'wp_update_all_themes')
+        ));
+    }
+
+    /**
+     * Search WordPress.org plugin repository
+     */
+    public function wp_search_repo_plugins($args) {
+        if (!current_user_can('install_plugins')) {
+            throw new Exception('Insufficient permissions. User must have install_plugins capability.');
+        }
+
+        $search = $args['search'] ?? '';
+        $tag = $args['tag'] ?? '';
+        $author = $args['author'] ?? '';
+        $per_page = min(intval($args['per_page'] ?? 12), 24);
+        $page = max(intval($args['page'] ?? 1), 1);
+        $browse = $args['browse'] ?? 'popular';
+
+        $url = 'https://api.wordpress.org/plugins/info/1.2/';
+        $request_data = array(
+            'action' => 'query_plugins',
+            'request' => array(
+                'per_page' => $per_page,
+                'page' => $page,
+                'browse' => $browse,
+                'fields' => array(
+                    'description' => false,
+                    'sections' => false,
+                    'rating' => true,
+                    'ratings' => false,
+                    'downloaded' => true,
+                    'download_link' => false,
+                    'last_updated' => true,
+                    'homepage' => true,
+                    'tags' => true,
+                    'active_installs' => true,
+                    'short_description' => true,
+                    'author' => true
+                )
+            )
+        );
+
+        if (!empty($search)) {
+            $request_data['request']['search'] = $search;
+        }
+        if (!empty($tag)) {
+            $request_data['request']['tag'] = array($tag);
+        }
+        if (!empty($author)) {
+            $request_data['request']['author'] = $author;
+        }
+
+        $response = wp_remote_get(add_query_arg($request_data, $url), array(
+            'timeout' => 15,
+            'user-agent' => 'WordPress/' . get_bloginfo('version') . '; ' . home_url()
+        ));
+
+        if (is_wp_error($response)) {
+            throw new Exception('Failed to search WordPress.org: ' . $response->get_error_message());
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new Exception('Invalid response from WordPress.org');
+        }
+
+        $plugins = array();
+        if (isset($data['plugins']) && is_array($data['plugins'])) {
+            foreach ($data['plugins'] as $plugin) {
+                $plugins[] = array(
+                    'name' => $plugin['name'] ?? '',
+                    'slug' => $plugin['slug'] ?? '',
+                    'version' => $plugin['version'] ?? '',
+                    'author' => strip_tags($plugin['author'] ?? ''),
+                    'rating' => floatval($plugin['rating'] ?? 0),
+                    'num_ratings' => intval($plugin['num_ratings'] ?? 0),
+                    'active_installs' => intval($plugin['active_installs'] ?? 0),
+                    'downloaded' => intval($plugin['downloaded'] ?? 0),
+                    'last_updated' => $plugin['last_updated'] ?? '',
+                    'tested' => $plugin['tested'] ?? '',
+                    'requires' => $plugin['requires'] ?? '',
+                    'requires_php' => $plugin['requires_php'] ?? '',
+                    'short_description' => $plugin['short_description'] ?? '',
+                    'homepage' => $plugin['homepage'] ?? '',
+                    'tags' => is_array($plugin['tags'] ?? null) ? array_keys($plugin['tags']) : array()
+                );
+            }
+        }
+
+        return array(
+            'plugins' => $plugins,
+            'info' => array(
+                'page' => $page,
+                'pages' => intval($data['info']['pages'] ?? 1),
+                'results' => intval($data['info']['results'] ?? 0)
+            )
+        );
+    }
+
+    /**
+     * Get detailed information about a specific plugin from WordPress.org repository
+     */
+    public function wp_get_repo_plugin_info($args) {
+        $slug = $args['slug'] ?? '';
+
+        if (empty($slug)) {
+            throw new Exception('Plugin slug is required');
+        }
+
+        $url = 'https://api.wordpress.org/plugins/info/1.2/';
+        $request_data = array(
+            'action' => 'plugin_information',
+            'request' => array(
+                'slug' => $slug,
+                'fields' => array(
+                    'description' => true,
+                    'installation' => true,
+                    'changelog' => true,
+                    'sections' => true,
+                    'rating' => true,
+                    'ratings' => true,
+                    'downloaded' => true,
+                    'download_link' => true,
+                    'last_updated' => true,
+                    'homepage' => true,
+                    'tags' => true,
+                    'active_installs' => true,
+                    'screenshots' => true,
+                    'banners' => true
+                )
+            )
+        );
+
+        $response = wp_remote_get(add_query_arg($request_data, $url), array(
+            'timeout' => 15,
+            'user-agent' => 'WordPress/' . get_bloginfo('version') . '; ' . home_url()
+        ));
+
+        if (is_wp_error($response)) {
+            throw new Exception('Failed to get plugin info from WordPress.org: ' . $response->get_error_message());
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $plugin = json_decode($body, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE || empty($plugin)) {
+            throw new Exception('Plugin not found or invalid response from WordPress.org');
+        }
+
+        // Check if already installed
+        $installed_plugins = get_plugins();
+        $is_installed = false;
+        $installed_file = '';
+
+        foreach ($installed_plugins as $file => $details) {
+            if (strpos($file, $slug . '/') === 0 || $file === $slug . '.php') {
+                $is_installed = true;
+                $installed_file = $file;
+                break;
+            }
+        }
+
+        return array(
+            'name' => $plugin['name'] ?? '',
+            'slug' => $plugin['slug'] ?? '',
+            'version' => $plugin['version'] ?? '',
+            'author' => strip_tags($plugin['author'] ?? ''),
+            'rating' => floatval($plugin['rating'] ?? 0),
+            'num_ratings' => intval($plugin['num_ratings'] ?? 0),
+            'active_installs' => intval($plugin['active_installs'] ?? 0),
+            'downloaded' => intval($plugin['downloaded'] ?? 0),
+            'last_updated' => $plugin['last_updated'] ?? '',
+            'tested' => $plugin['tested'] ?? '',
+            'requires' => $plugin['requires'] ?? '',
+            'requires_php' => $plugin['requires_php'] ?? '',
+            'short_description' => $plugin['short_description'] ?? '',
+            'description' => $plugin['sections']['description'] ?? '',
+            'installation' => $plugin['sections']['installation'] ?? '',
+            'changelog' => $plugin['sections']['changelog'] ?? '',
+            'homepage' => $plugin['homepage'] ?? '',
+            'download_link' => $plugin['download_link'] ?? '',
+            'tags' => is_array($plugin['tags'] ?? null) ? array_keys($plugin['tags']) : array(),
+            'screenshots' => $plugin['screenshots'] ?? array(),
+            'banners' => $plugin['banners'] ?? array(),
+            'is_installed' => $is_installed,
+            'installed_file' => $installed_file,
+            'is_active' => $is_installed ? is_plugin_active($installed_file) : false
+        );
+    }
+
+    /**
+     * Install a plugin from WordPress.org repository
+     */
+    public function wp_install_repo_plugin($args) {
+        if (!current_user_can('install_plugins')) {
+            throw new Exception('Insufficient permissions. User must have install_plugins capability.');
+        }
+
+        $slug = $args['slug'] ?? '';
+        $activate = $args['activate'] ?? false;
+
+        if (empty($slug)) {
+            throw new Exception('Plugin slug is required');
+        }
+
+        // Check if plugin is already installed
+        $installed_plugins = get_plugins();
+        foreach ($installed_plugins as $file => $details) {
+            if (strpos($file, $slug . '/') === 0 || $file === $slug . '.php') {
+                if ($activate && !is_plugin_active($file)) {
+                    $activation_result = activate_plugin($file);
+                    if (is_wp_error($activation_result)) {
+                        throw new Exception('Plugin is already installed but failed to activate: ' . $activation_result->get_error_message());
+                    }
+                    return array(
+                        'success' => true,
+                        'message' => 'Plugin was already installed and has been activated',
+                        'plugin_file' => $file,
+                        'activated' => true
+                    );
+                }
+                return array(
+                    'success' => true,
+                    'message' => 'Plugin is already installed',
+                    'plugin_file' => $file,
+                    'activated' => is_plugin_active($file)
+                );
+            }
+        }
+
+        // Include required WordPress files
+        if (!function_exists('plugins_api')) {
+            require_once ABSPATH . 'wp-admin/includes/plugin-install.php';
+        }
+        if (!class_exists('\WP_Upgrader')) {
+            require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+        }
+
+        // Get plugin information
+        $api = plugins_api('plugin_information', array(
+            'slug' => $slug,
+            'fields' => array(
+                'sections' => false,
+                'tags' => false,
+                'ratings' => false,
+                'screenshots' => false,
+                'changelog' => false,
+                'description' => false,
+                'tested' => false,
+                'requires' => true,
+                'requires_php' => true,
+                'downloaded' => false,
+                'last_updated' => false
+            )
+        ));
+
+        if (is_wp_error($api)) {
+            throw new Exception('Failed to get plugin information: ' . $api->get_error_message());
+        }
+
+        // Check WordPress version compatibility
+        if (!empty($api->requires) && version_compare(get_bloginfo('version'), $api->requires, '<')) {
+            throw new Exception('Plugin requires WordPress version ' . $api->requires . ' or higher. Current version: ' . get_bloginfo('version'));
+        }
+
+        // Check PHP version compatibility
+        if (!empty($api->requires_php) && version_compare(PHP_VERSION, $api->requires_php, '<')) {
+            throw new Exception('Plugin requires PHP version ' . $api->requires_php . ' or higher. Current version: ' . PHP_VERSION);
+        }
+
+        // Install the plugin
+        $upgrader = new \Plugin_Upgrader(new \WP_Ajax_Upgrader_Skin());
+        $install_result = $upgrader->install($api->download_link);
+
+        if (is_wp_error($install_result)) {
+            throw new Exception('Plugin installation failed: ' . $install_result->get_error_message());
+        }
+
+        if (!$install_result) {
+            throw new Exception('Plugin installation failed: Unknown error');
+        }
+
+        $plugin_file = $upgrader->plugin_info();
+        if (!$plugin_file) {
+            throw new Exception('Plugin installed but could not determine plugin file');
+        }
+
+        $result = array(
+            'success' => true,
+            'message' => 'Plugin installed successfully',
+            'plugin_file' => $plugin_file,
+            'activated' => false
+        );
+
+        // Activate if requested
+        if ($activate) {
+            $activation_result = activate_plugin($plugin_file);
+            if (is_wp_error($activation_result)) {
+                $result['message'] .= ' but failed to activate: ' . $activation_result->get_error_message();
+            } else {
+                $result['activated'] = true;
+                $result['message'] = 'Plugin installed and activated successfully';
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Search WordPress.org theme repository
+     */
+    public function wp_search_repo_themes($args) {
+        if (!current_user_can('install_themes')) {
+            throw new Exception('Insufficient permissions. User must have install_themes capability.');
+        }
+
+        $search = $args['search'] ?? '';
+        $tag = $args['tag'] ?? '';
+        $author = $args['author'] ?? '';
+        $per_page = min(intval($args['per_page'] ?? 12), 24);
+        $page = max(intval($args['page'] ?? 1), 1);
+        $browse = $args['browse'] ?? 'popular';
+
+        $url = 'https://api.wordpress.org/themes/info/1.2/';
+        $request_data = array(
+            'action' => 'query_themes',
+            'request' => array(
+                'per_page' => $per_page,
+                'page' => $page,
+                'browse' => $browse,
+                'fields' => array(
+                    'description' => false,
+                    'sections' => false,
+                    'rating' => true,
+                    'ratings' => false,
+                    'downloaded' => true,
+                    'download_link' => false,
+                    'last_updated' => true,
+                    'homepage' => true,
+                    'tags' => true,
+                    'screenshot_url' => true,
+                    'preview_url' => true
+                )
+            )
+        );
+
+        if (!empty($search)) {
+            $request_data['request']['search'] = $search;
+        }
+        if (!empty($tag)) {
+            $request_data['request']['tag'] = array($tag);
+        }
+        if (!empty($author)) {
+            $request_data['request']['author'] = $author;
+        }
+
+        $response = wp_remote_get(add_query_arg($request_data, $url), array(
+            'timeout' => 15,
+            'user-agent' => 'WordPress/' . get_bloginfo('version') . '; ' . home_url()
+        ));
+
+        if (is_wp_error($response)) {
+            throw new Exception('Failed to search WordPress.org: ' . $response->get_error_message());
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new Exception('Invalid response from WordPress.org');
+        }
+
+        $themes = array();
+        if (isset($data['themes']) && is_array($data['themes'])) {
+            foreach ($data['themes'] as $theme) {
+                $themes[] = array(
+                    'name' => $theme['name'] ?? '',
+                    'slug' => $theme['slug'] ?? '',
+                    'version' => $theme['version'] ?? '',
+                    'author' => strip_tags($theme['author']['display_name'] ?? $theme['author'] ?? ''),
+                    'rating' => floatval($theme['rating'] ?? 0),
+                    'num_ratings' => intval($theme['num_ratings'] ?? 0),
+                    'downloaded' => intval($theme['downloaded'] ?? 0),
+                    'last_updated' => $theme['last_updated'] ?? '',
+                    'requires' => $theme['requires'] ?? '',
+                    'requires_php' => $theme['requires_php'] ?? '',
+                    'homepage' => $theme['homepage'] ?? '',
+                    'preview_url' => $theme['preview_url'] ?? '',
+                    'screenshot_url' => $theme['screenshot_url'] ?? '',
+                    'tags' => is_array($theme['tags'] ?? null) ? array_keys($theme['tags']) : array()
+                );
+            }
+        }
+
+        return array(
+            'themes' => $themes,
+            'info' => array(
+                'page' => $page,
+                'pages' => intval($data['info']['pages'] ?? 1),
+                'results' => intval($data['info']['results'] ?? 0)
+            )
+        );
+    }
+
+    /**
+     * Get detailed information about a specific theme from WordPress.org repository
+     */
+    public function wp_get_repo_theme_info($args) {
+        $slug = $args['slug'] ?? '';
+
+        if (empty($slug)) {
+            throw new Exception('Theme slug is required');
+        }
+
+        $url = 'https://api.wordpress.org/themes/info/1.2/';
+        $request_data = array(
+            'action' => 'theme_information',
+            'request' => array(
+                'slug' => $slug,
+                'fields' => array(
+                    'description' => true,
+                    'sections' => true,
+                    'rating' => true,
+                    'ratings' => true,
+                    'downloaded' => true,
+                    'download_link' => true,
+                    'last_updated' => true,
+                    'homepage' => true,
+                    'tags' => true,
+                    'screenshot_url' => true,
+                    'screenshots' => true,
+                    'preview_url' => true
+                )
+            )
+        );
+
+        $response = wp_remote_get(add_query_arg($request_data, $url), array(
+            'timeout' => 15,
+            'user-agent' => 'WordPress/' . get_bloginfo('version') . '; ' . home_url()
+        ));
+
+        if (is_wp_error($response)) {
+            throw new Exception('Failed to get theme info from WordPress.org: ' . $response->get_error_message());
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $theme = json_decode($body, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE || empty($theme)) {
+            throw new Exception('Theme not found or invalid response from WordPress.org');
+        }
+
+        // Check if already installed
+        $installed_themes = wp_get_themes();
+        $is_installed = isset($installed_themes[$slug]);
+        $current_theme = get_stylesheet();
+
+        return array(
+            'name' => $theme['name'] ?? '',
+            'slug' => $theme['slug'] ?? '',
+            'version' => $theme['version'] ?? '',
+            'author' => strip_tags($theme['author']['display_name'] ?? $theme['author'] ?? ''),
+            'rating' => floatval($theme['rating'] ?? 0),
+            'num_ratings' => intval($theme['num_ratings'] ?? 0),
+            'downloaded' => intval($theme['downloaded'] ?? 0),
+            'last_updated' => $theme['last_updated'] ?? '',
+            'requires' => $theme['requires'] ?? '',
+            'requires_php' => $theme['requires_php'] ?? '',
+            'description' => $theme['sections']['description'] ?? '',
+            'homepage' => $theme['homepage'] ?? '',
+            'preview_url' => $theme['preview_url'] ?? '',
+            'download_link' => $theme['download_link'] ?? '',
+            'screenshot_url' => $theme['screenshot_url'] ?? '',
+            'screenshots' => $theme['screenshots'] ?? array(),
+            'tags' => is_array($theme['tags'] ?? null) ? array_keys($theme['tags']) : array(),
+            'is_installed' => $is_installed,
+            'is_active' => ($current_theme === $slug)
+        );
+    }
+
+    /**
+     * Install a theme from WordPress.org repository
+     */
+    public function wp_install_repo_theme($args) {
+        if (!current_user_can('install_themes')) {
+            throw new Exception('Insufficient permissions. User must have install_themes capability.');
+        }
+
+        $slug = $args['slug'] ?? '';
+        $activate = $args['activate'] ?? false;
+
+        if (empty($slug)) {
+            throw new Exception('Theme slug is required');
+        }
+
+        // Check if theme is already installed
+        $installed_themes = wp_get_themes();
+        if (isset($installed_themes[$slug])) {
+            if ($activate && get_stylesheet() !== $slug) {
+                switch_theme($slug);
+                return array(
+                    'success' => true,
+                    'message' => 'Theme was already installed and has been activated',
+                    'theme_slug' => $slug,
+                    'activated' => true
+                );
+            }
+            return array(
+                'success' => true,
+                'message' => 'Theme is already installed',
+                'theme_slug' => $slug,
+                'activated' => (get_stylesheet() === $slug)
+            );
+        }
+
+        // Include required WordPress files
+        if (!function_exists('themes_api')) {
+            require_once ABSPATH . 'wp-admin/includes/theme-install.php';
+        }
+        if (!class_exists('\WP_Upgrader')) {
+            require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+        }
+
+        // Get theme information
+        $api = themes_api('theme_information', array(
+            'slug' => $slug,
+            'fields' => array(
+                'sections' => false,
+                'tags' => false,
+                'ratings' => false,
+                'screenshots' => false,
+                'description' => false,
+                'requires' => true,
+                'requires_php' => true,
+                'downloaded' => false,
+                'last_updated' => false
+            )
+        ));
+
+        if (is_wp_error($api)) {
+            throw new Exception('Failed to get theme information: ' . $api->get_error_message());
+        }
+
+        // Check WordPress version compatibility
+        if (!empty($api->requires) && version_compare(get_bloginfo('version'), $api->requires, '<')) {
+            throw new Exception('Theme requires WordPress version ' . $api->requires . ' or higher. Current version: ' . get_bloginfo('version'));
+        }
+
+        // Check PHP version compatibility
+        if (!empty($api->requires_php) && version_compare(PHP_VERSION, $api->requires_php, '<')) {
+            throw new Exception('Theme requires PHP version ' . $api->requires_php . ' or higher. Current version: ' . PHP_VERSION);
+        }
+
+        // Install the theme
+        $upgrader = new \Theme_Upgrader(new \WP_Ajax_Upgrader_Skin());
+        $install_result = $upgrader->install($api->download_link);
+
+        if (is_wp_error($install_result)) {
+            throw new Exception('Theme installation failed: ' . $install_result->get_error_message());
+        }
+
+        if (!$install_result) {
+            throw new Exception('Theme installation failed: Unknown error');
+        }
+
+        $theme_slug = $upgrader->theme_info();
+        if (!$theme_slug) {
+            $theme_slug = $slug; // Fallback to provided slug
+        }
+
+        $result = array(
+            'success' => true,
+            'message' => 'Theme installed successfully',
+            'theme_slug' => $theme_slug,
+            'activated' => false
+        );
+
+        // Activate if requested
+        if ($activate) {
+            switch_theme($theme_slug);
+            $result['activated'] = true;
+            $result['message'] = 'Theme installed and activated successfully';
+        }
+
+        return $result;
+    }
+
+    /**
+     * Check for available plugin updates
+     */
+    public function wp_check_plugin_updates($args) {
+        if (!current_user_can('update_plugins')) {
+            throw new Exception('Insufficient permissions. User must have update_plugins capability.');
+        }
+
+        // Force check for updates
+        wp_update_plugins();
+
+        $updates = get_site_transient('update_plugins');
+        $installed_plugins = get_plugins();
+        
+        $plugins_with_updates = array();
+
+        if (!empty($updates->response)) {
+            foreach ($updates->response as $plugin_file => $plugin_data) {
+                if (isset($installed_plugins[$plugin_file])) {
+                    $plugins_with_updates[] = array(
+                        'name' => $installed_plugins[$plugin_file]['Name'],
+                        'plugin_file' => $plugin_file,
+                        'current_version' => $installed_plugins[$plugin_file]['Version'],
+                        'new_version' => $plugin_data->new_version,
+                        'package' => $plugin_data->package ?? '',
+                        'is_active' => is_plugin_active($plugin_file),
+                        'update_info' => array(
+                            'requires' => $plugin_data->requires ?? '',
+                            'tested' => $plugin_data->tested ?? '',
+                            'requires_php' => $plugin_data->requires_php ?? ''
+                        )
+                    );
+                }
+            }
+        }
+
+        return array(
+            'plugins_with_updates' => $plugins_with_updates,
+            'total_updates' => count($plugins_with_updates),
+            'last_checked' => get_site_transient('update_plugins')->last_checked ?? null
+        );
+    }
+
+    /**
+     * Update a specific plugin
+     */
+    public function wp_update_plugin($args) {
+        if (!current_user_can('update_plugins')) {
+            throw new Exception('Insufficient permissions. User must have update_plugins capability.');
+        }
+
+        $plugin_file = $args['plugin_file'] ?? '';
+
+        if (empty($plugin_file)) {
+            throw new Exception('Plugin file is required');
+        }
+
+        // Check if plugin exists
+        $installed_plugins = get_plugins();
+        if (!isset($installed_plugins[$plugin_file])) {
+            throw new Exception('Plugin not found: ' . $plugin_file);
+        }
+
+        // Check if update is available
+        wp_update_plugins();
+        $updates = get_site_transient('update_plugins');
+        
+        if (!isset($updates->response[$plugin_file])) {
+            return array(
+                'success' => true,
+                'message' => 'Plugin is already up to date',
+                'plugin_name' => $installed_plugins[$plugin_file]['Name'],
+                'current_version' => $installed_plugins[$plugin_file]['Version'],
+                'updated' => false
+            );
+        }
+
+        // Include required WordPress files
+        if (!class_exists('\WP_Upgrader')) {
+            require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+        }
+
+        $was_active = is_plugin_active($plugin_file);
+        $plugin_name = $installed_plugins[$plugin_file]['Name'];
+        $old_version = $installed_plugins[$plugin_file]['Version'];
+        $new_version = $updates->response[$plugin_file]->new_version;
+
+        // Perform the update
+        $upgrader = new \Plugin_Upgrader(new \WP_Ajax_Upgrader_Skin());
+        $result = $upgrader->upgrade($plugin_file);
+
+        if (is_wp_error($result)) {
+            throw new Exception('Plugin update failed: ' . $result->get_error_message());
+        }
+
+        if (!$result) {
+            throw new Exception('Plugin update failed: Unknown error');
+        }
+
+        // Reactivate plugin if it was active before update
+        if ($was_active) {
+            $activation_result = activate_plugin($plugin_file);
+            if (is_wp_error($activation_result)) {
+                throw new Exception('Plugin updated but failed to reactivate: ' . $activation_result->get_error_message());
+            }
+        }
+
+        return array(
+            'success' => true,
+            'message' => 'Plugin updated successfully',
+            'plugin_name' => $plugin_name,
+            'plugin_file' => $plugin_file,
+            'old_version' => $old_version,
+            'new_version' => $new_version,
+            'was_active' => $was_active,
+            'updated' => true
+        );
+    }
+
+    /**
+     * Update all plugins that have updates available
+     */
+    public function wp_update_all_plugins($args) {
+        if (!current_user_can('update_plugins')) {
+            throw new Exception('Insufficient permissions. User must have update_plugins capability.');
+        }
+
+        // Get available updates
+        $check_result = $this->wp_check_plugin_updates(array());
+        $plugins_to_update = $check_result['plugins_with_updates'];
+
+        if (empty($plugins_to_update)) {
+            return array(
+                'success' => true,
+                'message' => 'All plugins are already up to date',
+                'updated_plugins' => array(),
+                'total_updated' => 0,
+                'failed_updates' => array()
+            );
+        }
+
+        $updated_plugins = array();
+        $failed_updates = array();
+
+        foreach ($plugins_to_update as $plugin) {
+            try {
+                $update_result = $this->wp_update_plugin(array('plugin_file' => $plugin['plugin_file']));
+                if ($update_result['updated']) {
+                    $updated_plugins[] = $update_result;
+                }
+            } catch (Exception $e) {
+                $failed_updates[] = array(
+                    'plugin_name' => $plugin['name'],
+                    'plugin_file' => $plugin['plugin_file'],
+                    'error' => $e->getMessage()
+                );
+            }
+        }
+
+        $message = '';
+        if (!empty($updated_plugins)) {
+            $message .= 'Successfully updated ' . count($updated_plugins) . ' plugin(s)';
+        }
+        if (!empty($failed_updates)) {
+            if (!empty($message)) $message .= '. ';
+            $message .= count($failed_updates) . ' plugin(s) failed to update';
+        }
+
+        return array(
+            'success' => true,
+            'message' => $message,
+            'updated_plugins' => $updated_plugins,
+            'total_updated' => count($updated_plugins),
+            'failed_updates' => $failed_updates
+        );
+    }
+
+    /**
+     * Check for available theme updates
+     */
+    public function wp_check_theme_updates($args) {
+        if (!current_user_can('update_themes')) {
+            throw new Exception('Insufficient permissions. User must have update_themes capability.');
+        }
+
+        // Force check for updates
+        wp_update_themes();
+
+        $updates = get_site_transient('update_themes');
+        $installed_themes = wp_get_themes();
+        
+        $themes_with_updates = array();
+
+        if (!empty($updates->response)) {
+            foreach ($updates->response as $theme_slug => $theme_data) {
+                if (isset($installed_themes[$theme_slug])) {
+                    $theme = $installed_themes[$theme_slug];
+                    $themes_with_updates[] = array(
+                        'name' => $theme->get('Name'),
+                        'theme_slug' => $theme_slug,
+                        'current_version' => $theme->get('Version'),
+                        'new_version' => $theme_data['new_version'],
+                        'package' => $theme_data['package'] ?? '',
+                        'is_active' => (get_stylesheet() === $theme_slug),
+                        'update_info' => array(
+                            'requires' => $theme_data['requires'] ?? '',
+                            'tested' => $theme_data['tested'] ?? '',
+                            'requires_php' => $theme_data['requires_php'] ?? ''
+                        )
+                    );
+                }
+            }
+        }
+
+        return array(
+            'themes_with_updates' => $themes_with_updates,
+            'total_updates' => count($themes_with_updates),
+            'last_checked' => get_site_transient('update_themes')->last_checked ?? null
+        );
+    }
+
+    /**
+     * Update a specific theme
+     */
+    public function wp_update_theme($args) {
+        if (!current_user_can('update_themes')) {
+            throw new Exception('Insufficient permissions. User must have update_themes capability.');
+        }
+
+        $theme_slug = $args['theme_slug'] ?? '';
+
+        if (empty($theme_slug)) {
+            throw new Exception('Theme slug is required');
+        }
+
+        // Check if theme exists
+        $installed_themes = wp_get_themes();
+        if (!isset($installed_themes[$theme_slug])) {
+            throw new Exception('Theme not found: ' . $theme_slug);
+        }
+
+        // Check if update is available
+        wp_update_themes();
+        $updates = get_site_transient('update_themes');
+        
+        if (!isset($updates->response[$theme_slug])) {
+            return array(
+                'success' => true,
+                'message' => 'Theme is already up to date',
+                'theme_name' => $installed_themes[$theme_slug]->get('Name'),
+                'current_version' => $installed_themes[$theme_slug]->get('Version'),
+                'updated' => false
+            );
+        }
+
+        // Include required WordPress files
+        if (!class_exists('\WP_Upgrader')) {
+            require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+        }
+
+        $was_active = (get_stylesheet() === $theme_slug);
+        $theme_name = $installed_themes[$theme_slug]->get('Name');
+        $old_version = $installed_themes[$theme_slug]->get('Version');
+        $new_version = $updates->response[$theme_slug]['new_version'];
+
+        // Perform the update
+        $upgrader = new \Theme_Upgrader(new \WP_Ajax_Upgrader_Skin());
+        $result = $upgrader->upgrade($theme_slug);
+
+        if (is_wp_error($result)) {
+            throw new Exception('Theme update failed: ' . $result->get_error_message());
+        }
+
+        if (!$result) {
+            throw new Exception('Theme update failed: Unknown error');
+        }
+
+        return array(
+            'success' => true,
+            'message' => 'Theme updated successfully',
+            'theme_name' => $theme_name,
+            'theme_slug' => $theme_slug,
+            'old_version' => $old_version,
+            'new_version' => $new_version,
+            'was_active' => $was_active,
+            'updated' => true
+        );
+    }
+
+    /**
+     * Update all themes that have updates available
+     */
+    public function wp_update_all_themes($args) {
+        if (!current_user_can('update_themes')) {
+            throw new Exception('Insufficient permissions. User must have update_themes capability.');
+        }
+
+        // Get available updates
+        $check_result = $this->wp_check_theme_updates(array());
+        $themes_to_update = $check_result['themes_with_updates'];
+
+        if (empty($themes_to_update)) {
+            return array(
+                'success' => true,
+                'message' => 'All themes are already up to date',
+                'updated_themes' => array(),
+                'total_updated' => 0,
+                'failed_updates' => array()
+            );
+        }
+
+        $updated_themes = array();
+        $failed_updates = array();
+
+        foreach ($themes_to_update as $theme) {
+            try {
+                $update_result = $this->wp_update_theme(array('theme_slug' => $theme['theme_slug']));
+                if ($update_result['updated']) {
+                    $updated_themes[] = $update_result;
+                }
+            } catch (Exception $e) {
+                $failed_updates[] = array(
+                    'theme_name' => $theme['name'],
+                    'theme_slug' => $theme['theme_slug'],
+                    'error' => $e->getMessage()
+                );
+            }
+        }
+
+        $message = '';
+        if (!empty($updated_themes)) {
+            $message .= 'Successfully updated ' . count($updated_themes) . ' theme(s)';
+        }
+        if (!empty($failed_updates)) {
+            if (!empty($message)) $message .= '. ';
+            $message .= count($failed_updates) . ' theme(s) failed to update';
+        }
+
+        return array(
+            'success' => true,
+            'message' => $message,
+            'updated_themes' => $updated_themes,
+            'total_updated' => count($updated_themes),
+            'failed_updates' => $failed_updates
+        );
     }
 }

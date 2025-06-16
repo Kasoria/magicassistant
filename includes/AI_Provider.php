@@ -87,6 +87,51 @@ class AI_Provider {
             'callback' => array($this, 'get_analytics'),
             'permission_callback' => array($this, 'check_permissions'),
         ));
+        
+        // Shared conversations endpoints
+        register_rest_route('magicassistant/v1', '/shared-conversations', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'create_shared_conversation'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        register_rest_route('magicassistant/v1', '/shared-conversations', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_user_shared_conversations'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        register_rest_route('magicassistant/v1', '/shared-conversations/(?P<share_id>[a-zA-Z0-9]+)', array(
+            'methods' => 'DELETE',
+            'callback' => array($this, 'delete_shared_conversation'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        register_rest_route('magicassistant/v1', '/shared-conversations/(?P<share_id>[a-zA-Z0-9]+)', array(
+            'methods' => 'PUT',
+            'callback' => array($this, 'update_shared_conversation'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        // Public endpoint for viewing shared conversations (no auth required)
+        register_rest_route('magicassistant/v1', '/public/shared/(?P<share_id>[a-zA-Z0-9]+)', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_public_shared_conversation'),
+            'permission_callback' => '__return_true',
+        ));
+        
+        // LAST SESSION ENDPOINTS
+        register_rest_route('magicassistant/v1', '/last-session', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_last_session'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        register_rest_route('magicassistant/v1', '/last-session', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'set_last_session'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
     }
     
     public function handle_chat($request) {
@@ -119,6 +164,11 @@ class AI_Provider {
                     'user',
                     $message
                 );
+                
+                // Persist the mode for this session so the frontend can reopen in the same state
+                if (method_exists($this->db, 'set_chat_session_mode')) {
+                    $this->db->set_chat_session_mode($user_id, $session_id, $agent_mode);
+                }
             }
             
             // Get AI provider settings
@@ -190,7 +240,8 @@ class AI_Provider {
                 'session_id' => $session_id,
                 'response_time' => $response_time,
                 'tokens_used' => $result['tokens_used'] ?? null,
-                'cost' => $result['cost'] ?? 0
+                'cost' => $result['cost'] ?? 0,
+                'debug_tool_data' => $result['debug_tool_data'] ?? null
             );
             
         } catch (Exception $e) {
@@ -230,60 +281,21 @@ class AI_Provider {
     }
     
     private function determine_agent_mode($message) {
-        $setting = $this->settings['agent_mode'] ?? 'auto';
+        $setting = $this->settings['agent_mode'] ?? 'always';
         
         switch ($setting) {
             case 'always':
                 return true;
             case 'never':
-                return false;
-            case 'auto':
             default:
-                return $this->should_use_agent_mode($message);
+                return false;
         }
     }
     
+    // This method is no longer needed since we removed auto detection
+    // but keeping it for backwards compatibility in case it's referenced elsewhere
     private function should_use_agent_mode($message) {
-        $message_lower = strtolower($message);
-        
-        // Check for comprehensive data requests that need multiple fetches
-        $comprehensive_triggers = [
-            'all.*endpoints?', 'all.*posts?', 'all.*products?', 'all.*orders?', 'all.*users?',
-            'show.*all', 'list.*all', 'get.*all', 'fetch.*all', 'retrieve.*all',
-            'complete.*list', 'full.*list', 'entire.*list', 'comprehensive.*list',
-            'everything', 'every.*endpoint', 'every.*post', 'every.*product'
-        ];
-        
-        foreach ($comprehensive_triggers as $trigger) {
-            if (preg_match('/' . $trigger . '/', $message_lower)) {
-                return true;
-            }
-        }
-        
-        // Check if the message contains multiple tasks or complex requests
-        $agent_triggers = [
-            'create.*and.*', 'add.*and.*', 'update.*and.*', 'delete.*and.*',
-            'first.*then.*', 'after.*do.*', 'next.*', 'also.*',
-            'multiple', 'several', 'both', 'all of the following',
-            'step by step', 'workflow', 'automation', 'batch',
-            'analyze.*create', 'find.*update', 'search.*create',
-            'list.*add', 'get.*create', 'show.*update'
-        ];
-        
-        foreach ($agent_triggers as $trigger) {
-            if (preg_match('/' . $trigger . '/', $message_lower)) {
-                return true;
-            }
-        }
-        
-        // Count potential actions in the message
-        $action_words = ['create', 'add', 'update', 'delete', 'list', 'get', 'find', 'search', 'show', 'set', 'change', 'modify'];
-        $action_count = 0;
-        foreach ($action_words as $action) {
-            $action_count += substr_count($message_lower, $action);
-        }
-        
-        return $action_count >= 2;
+        return false; // Always return false since auto mode is removed
     }
     
     private function handle_chat_mode($message, $conversation_history, $provider, $api_key) {
@@ -297,7 +309,11 @@ class AI_Provider {
             [['role' => 'user', 'content' => $message]]
         );
         
-        // Call AI provider
+        $tool_calls_count = 0;
+        $total_tokens = 0;
+        $total_cost = 0;
+        
+        // Initial AI call
         if ($provider === 'openai') {
             $response = $this->call_openai($messages, $api_key);
         } elseif ($provider === 'anthropic') {
@@ -306,23 +322,95 @@ class AI_Provider {
             throw new Exception('Unsupported AI provider: ' . $provider);
         }
         
-        // Process any tool calls
-        $final_response = $this->process_ai_response($response);
+        // Update usage tracking
+        $total_tokens += $this->extract_token_count($response, $provider) ?? 0;
+        $total_cost += $response['cost'] ?? 0;
         
-        // Extract token usage and cost
-        $tokens_used = $this->extract_token_count($response, $provider);
-        $cost = $response['cost'] ?? 0;
+        // Check if AI wants to use tools
+        $has_tool_calls = isset($response['tool_calls']) && !empty($response['tool_calls']);
         
+        if ($has_tool_calls) {
+            // Execute tools
+            $tool_results = $this->execute_tools($response['tool_calls']);
+            $tool_calls_count = count($response['tool_calls']);
+            
+            // Add AI response to conversation (format for provider)
+            if ($provider === 'anthropic') {
+                $messages[] = array(
+                    'role' => 'assistant',
+                    'content' => array(
+                        array(
+                            'type' => 'text',
+                            'text' => $response['content'] ?? ''
+                        )
+                    )
+                );
+                
+                // Add tool results for Anthropic
+                foreach ($tool_results as $result) {
+                    $messages[] = array(
+                        'role' => 'user',
+                        'content' => array(
+                            array(
+                                'type' => 'tool_result',
+                                'tool_use_id' => $result['tool_call_id'], // Use the actual tool call ID
+                                'content' => json_encode($result)
+                            )
+                        )
+                    );
+                }
+            } else {
+                // OpenAI format
+                $messages[] = array(
+                    'role' => 'assistant',
+                    'content' => $response['content'] ?? '',
+                    'tool_calls' => $response['tool_calls']
+                );
+                
+                // Add tool results to conversation
+                foreach ($tool_results as $result) {
+                    $messages[] = array(
+                        'role' => 'tool',
+                        'tool_call_id' => $result['tool_call_id'], // Required by OpenAI API
+                        'content' => json_encode($result)
+                    );
+                }
+            }
+            
+            // Call AI again to get final response with the tool data
+            $final_response = null;
+            if ($provider === 'openai') {
+                $final_response = $this->call_openai($messages, $api_key);
+            } elseif ($provider === 'anthropic') {
+                $final_response = $this->call_anthropic($messages, $api_key);
+            } else {
+                throw new Exception('Unsupported AI provider: ' . $provider);
+            }
+            
+            // Update usage tracking for the second call
+            $total_tokens += $this->extract_token_count($final_response, $provider) ?? 0;
+            $total_cost += $final_response['cost'] ?? 0;
+            
+            return array(
+                'response' => $final_response['content'] ?? '',
+                'tool_calls_count' => $tool_calls_count,
+                'tokens_used' => $total_tokens,
+                'cost' => $total_cost,
+                'debug_tool_data' => $this->format_debug_tool_results($tool_results) // For future debugging feature
+            );
+        }
+        
+        // No tool calls, return direct response
         return array(
-            'response' => $final_response,
-            'tool_calls_count' => isset($response['tool_calls']) ? count($response['tool_calls']) : 0,
-            'tokens_used' => $tokens_used,
-            'cost' => $cost
+            'response' => $response['content'] ?? '',
+            'tool_calls_count' => 0,
+            'tokens_used' => $total_tokens,
+            'cost' => $total_cost
         );
     }
     
     private function handle_agent_mode($message, $conversation_history, $provider, $api_key) {
-        $max_iterations = $this->settings['max_agent_iterations'] ?? 5; // Prevent infinite loops
+        $max_iterations = $this->settings['max_agent_iterations'] ?? 10; // Prevent infinite loops
         $iteration = 0;
         $reasoning_chain = [];
         $total_tool_calls = 0;
@@ -340,6 +428,10 @@ class AI_Provider {
         
         $final_response = '';
         
+        // Track total tokens & cost across all AI calls in agent mode
+        $total_tokens = 0;
+        $total_cost   = 0;
+        
         while ($iteration < $max_iterations) {
             $iteration++;
             
@@ -351,6 +443,10 @@ class AI_Provider {
             } else {
                 throw new Exception('Unsupported AI provider: ' . $provider);
             }
+            
+            // Accumulate tokens & cost from this AI call before deciding next step
+            $total_tokens += $this->extract_token_count($response, $provider) ?? 0;
+            $total_cost   += $response['cost'] ?? 0;
             
             $has_tool_calls = isset($response['tool_calls']) && !empty($response['tool_calls']);
             
@@ -381,7 +477,7 @@ class AI_Provider {
                             'content' => array(
                                 array(
                                     'type' => 'tool_result',
-                                    'tool_use_id' => $result['tool'] . '_' . uniqid(),
+                                    'tool_use_id' => $result['tool_call_id'], // Use the actual tool call ID
                                     'content' => json_encode($result)
                                 )
                             )
@@ -414,13 +510,7 @@ class AI_Provider {
                     'tool_results' => $tool_results // Store results for reference
                 );
                 
-                // Continue the conversation to let AI process results and potentially make more calls
-                $continue_message = "Please continue processing the user's request. If you need to perform additional actions, use the appropriate tools. If you're done, provide a final summary of what you've accomplished INCLUDING the detailed results from the tools you used.";
-                $messages[] = array(
-                    'role' => 'user',
-                    'content' => $continue_message
-                );
-                
+                // Tokens & cost for this call were already added above
             } else {
                 // No more tool calls, this is the final response
                 $final_response = $response['content'] ?? '';
@@ -437,41 +527,20 @@ class AI_Provider {
             $final_response .= "\n\n⚠️ Agent reached maximum iteration limit. Task may be partially complete.";
         }
         
-        // If the final response doesn't contain detailed tool results, add them
-        if ($total_tool_calls > 0 && !empty($all_tool_results)) {
-            // Check if the final response already contains detailed data
-            $has_detailed_results = false;
-            foreach ($all_tool_results as $result) {
-                if ($result['tool'] === 'list_api_functions' && 
-                    strpos($final_response, 'GET /') !== false && 
-                    strpos($final_response, 'POST /') !== false) {
-                    $has_detailed_results = true;
-                    break;
-                }
-            }
-            
-            // If AI didn't include detailed results, add them
-            if (!$has_detailed_results) {
-                $final_response .= "\n\n## Detailed Results\n";
-                $final_response .= $this->format_tool_results($all_tool_results);
-            }
-            
+        // Format the agent response with summary
+        if ($total_tool_calls > 0) {
             $final_response = $this->format_agent_response($final_response, $reasoning_chain, $total_tool_calls);
         }
         
-        // Calculate total tokens and cost across all iterations
-        $total_tokens = 0;
-        $total_cost = 0;
-        
-        // Note: In agent mode, we need to track usage across multiple API calls
-        // This is a simplified approach - ideally we'd track each call separately
+        // After loop ends, $total_tokens & $total_cost already include all calls
         
         return array(
             'response' => $final_response,
             'reasoning' => $reasoning_chain,
             'tool_calls_count' => $total_tool_calls,
-            'tokens_used' => $total_tokens, // Will be 0 for now in agent mode
-            'cost' => $total_cost // Will be 0 for now in agent mode
+            'tokens_used' => $total_tokens,
+            'cost' => $total_cost,
+            'debug_tool_data' => !empty($all_tool_results) ? $this->format_debug_tool_results($all_tool_results) : null // For future debugging feature
         );
     }
     
@@ -479,9 +548,10 @@ class AI_Provider {
         $tool_results = [];
         
         foreach ($tool_calls as $tool_call) {
+            // Handle both OpenAI and Anthropic formats
             $tool_name = $tool_call['function']['name'] ?? $tool_call['name'] ?? '';
             $tool_args = json_decode($tool_call['function']['arguments'] ?? '{}', true) ?: $tool_call['input'] ?? [];
-            $tool_call_id = $tool_call['id'] ?? null; // Extract the tool call ID for OpenAI
+            $tool_call_id = $tool_call['id'] ?? null; // Tool call ID (works for both OpenAI and Anthropic)
             
             try {
                 $result = $this->execute_mcp_tool($tool_name, $tool_args);
@@ -561,8 +631,8 @@ IMPORTANT AGENT MODE INSTRUCTIONS:
 - You can perform multiple tool calls in sequence to complete complex requests
 - After each tool execution, assess if more actions are needed to fully satisfy the user's request
 - Break down complex requests into logical steps
-- Continue using tools until the user's complete request is fulfilled
-- Provide reasoning for each step you take
+- IMPORTANT: Only continue if you need MORE data or need to perform MORE actions
+- STOP when you have gathered sufficient information to answer the user's question completely
 - When finished, provide a comprehensive summary of all actions taken INCLUDING the detailed results from ALL tool executions
 
 AUTOMATIC DATA FETCHING:
@@ -571,10 +641,13 @@ AUTOMATIC DATA FETCHING:
 - For large datasets, prioritize the most relevant results first, then fetch additional data as needed
 - If user asks for \"all\" items or comprehensive lists, automatically fetch all available data using pagination
 
-CRITICAL: ALWAYS SHOW DETAILED RESULTS
-- When you complete your tasks, include ALL the detailed data you retrieved (e.g., the full list of endpoints, posts, products, etc.)
-- Don't just summarize that you \"found 35 endpoints\" - actually LIST all 35 endpoints with their methods and paths
-- Users need to see the complete data, not just summaries
+RESPONSE FORMATTING - IMPORTANT:
+- Present information naturally and conversationally based on the user's request
+- For detailed analysis requests, provide comprehensive data and insights
+- For quick questions, provide concise but complete answers
+- Always include the actual data (names, numbers, lists) not just counts
+- Adapt your response style to match the user's intent (brief overview vs detailed analysis)
+- Present data in a logical, easy-to-read format that makes sense for the context
 
 TOOL SELECTION GUIDANCE:
 - For common WordPress tasks, use dedicated tools (wp_get_posts, wp_get_users, wp_create_post, etc.)
@@ -602,11 +675,18 @@ Always explain what you're doing and why, especially when breaking down complex 
 In Agent Mode, you should:
 1. Analyze complex requests and break them into logical steps
 2. Execute multiple tools as needed to complete the full request
-3. Continue working until the user's complete request is satisfied
-4. Provide clear reasoning for each action you take
-5. Summarize all actions taken at the end
+3. STOP when you have enough data to provide a comprehensive answer
+4. Only make additional tool calls if you need more specific information
+5. Present information naturally based on what the user is asking for
+6. Provide insights and analysis, not just raw data
 
-Be proactive, thorough, and systematic in completing multi-step tasks.";
+RESPONSE APPROACH:
+- For analysis requests: Craft detailed, insightful responses that interpret the data
+- For management tasks: Explain what you did and the results clearly
+- For information requests: Present data in an organized, conversational way
+- Always adapt your response style to match the user's needs and intent
+
+Be proactive and thorough, but focus on creating natural, helpful responses rather than technical data dumps.";
     }
 
     private function build_system_message() {
@@ -649,13 +729,15 @@ TOOL SELECTION GUIDANCE:
 - Use list_api_functions to discover available endpoints when you need to explore capabilities
 - Use get_function_details to understand endpoint parameters before using run_api_function
 
-AUTOMATIC DATA FETCHING - IMPORTANT:
-- When you see \"🔄 **FETCH_MORE_SUGGESTED**\" or \"🔄 **FETCH_MORE_AVAILABLE**\" in tool results, you SHOULD automatically fetch the additional data if it's relevant to answering the user's question
-- When you see \"🤖 **RECOMMENDED_NEXT_ACTION**\" in tool results, you SHOULD follow the recommended action to fetch more data
-- Use the suggested parameters (offset, per_page, pagination, filters) to get complete data sets
-- If the user asks for listings like \"show me all endpoints\", \"list all posts\", \"get all products\", you MUST automatically fetch all available data using pagination
-- Continue fetching until you have all the data the user needs, or until you've provided a comprehensive answer
-- Don't just show the fetch-more message - actually USE the tools to fetch the additional data!
+RESPONSE STYLE - IMPORTANT:
+- Interpret the user's request and respond accordingly:
+  * For analysis requests: Provide detailed insights, comparisons, and comprehensive data
+  * For quick questions: Give direct, concise answers with key details
+  * For \"list\" or \"show\" requests: Present data in an organized, readable format
+- Use natural language and conversational tone
+- Present tool results as part of your natural response, not as separate technical outputs
+- Focus on what the user actually wants to know, not just what the tools returned
+- Provide context and insights, not just raw data dumps
 
 When the user asks you to perform WordPress-related tasks like:
 - Creating blog posts
@@ -673,6 +755,12 @@ Always be helpful and explain what you're doing when using these tools.
         return "You are MagicAssistant, a helpful AI assistant for WordPress websites. You can help users manage their WordPress site, create content, and provide guidance.
 
 {$tools_info}
+
+IMPORTANT: Respond naturally and conversationally. When you use tools to gather information:
+- Present the results as part of your natural response, not as separate technical outputs
+- Adapt your response style to the user's request (detailed analysis vs. quick answers)
+- Focus on providing insights and useful information, not just raw data
+- Use a helpful, friendly tone that matches the user's intent
 
 Be conversational, helpful, and proactive in suggesting how you can help with WordPress tasks.";
     }
@@ -708,6 +796,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
         
         $body = wp_remote_retrieve_body($response);
+        // Optional debug logging of raw API response
+        if (!empty($this->settings['debug_log_raw_responses'])) {
+            error_log('[MagicAssistant] OpenAI raw response: ' . $body);
+        }
+        
         $data = json_decode($body, true);
         
         if (isset($data['error'])) {
@@ -779,6 +872,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
         
         $body = wp_remote_retrieve_body($response);
+        // Optional debug logging of raw API response
+        if (!empty($this->settings['debug_log_raw_responses'])) {
+            error_log('[MagicAssistant] Anthropic raw response: ' . $body);
+        }
+        
         $data = json_decode($body, true);
         
         if (isset($data['error'])) {
@@ -844,47 +942,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     }
     
     private function process_ai_response($response) {
-        // Check if AI wants to use tools
-        if (isset($response['tool_calls']) && !empty($response['tool_calls'])) {
-            $tool_results = [];
-            $has_fetch_more_recommendations = false;
-            
-            foreach ($response['tool_calls'] as $tool_call) {
-                $tool_name = $tool_call['function']['name'] ?? $tool_call['name'] ?? '';
-                $tool_args = json_decode($tool_call['function']['arguments'] ?? '{}', true) ?: $tool_call['input'] ?? [];
-                
-                try {
-                    $result = $this->execute_mcp_tool($tool_name, $tool_args);
-                    $tool_results[] = array(
-                        'tool' => $tool_name,
-                        'result' => $result,
-                        'success' => true
-                    );
-                } catch (Exception $e) {
-                    $tool_results[] = array(
-                        'tool' => $tool_name,
-                        'error' => $e->getMessage(),
-                        'success' => false
-                    );
-                }
-            }
-            
-            // Format response with tool results
-            $content = $response['content'] ?? '';
-            if (!empty($tool_results)) {
-                $formatted_results = $this->format_tool_results($tool_results);
-                $content .= "\n\n" . $formatted_results;
-                
-                // Check if any tool results suggest fetching more data
-                if (strpos($formatted_results, '🤖 **RECOMMENDED_NEXT_ACTION**') !== false) {
-                    $has_fetch_more_recommendations = true;
-                    $content .= "\n\n💡 **Note**: I can fetch the remaining data if you'd like to see everything. Just let me know!";
-                }
-            }
-            
-            return $content;
-        }
-        
+        // This method is now only used for legacy purposes
+        // Chat mode now feeds tool results back to AI for proper responses
         return $response['content'] ?? '';
     }
     
@@ -970,984 +1029,24 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         return $html;
     }
     
-    private function format_tool_results($results) {
-        $output = "";
-
+    /**
+     * Format tool results for debugging purposes
+     * This creates a clean JSON representation for the "Show Raw Data" feature
+     */
+    private function format_debug_tool_results($results) {
+        $debug_data = array();
+        
         foreach ($results as $result) {
-            if (!$result['success']) {
-                $output .= "\n❌ Failed to execute {$result['tool']}: {$result['error']}";
-                continue;
-            }
-
-            $tool = $result['tool'];
-            $data = $result['result'];
-
-            switch ($tool) {
-                case 'wp_get_posts':
-                    $output .= "\n✅ Successfully executed wp_get_posts - Found {$data['total']} posts";
-                    if (!empty($data['posts'])) {
-                        $max = 12; // Show more posts initially
-                        $output .= "\nPosts:";
-                        foreach (array_slice($data['posts'], 0, $max) as $post) {
-                            $output .= "\n • {$post['title']} (ID: {$post['id']})";
-                        }
-                        if ($data['total'] > $max) {
-                            $remaining = $data['total'] - $max;
-                            $output .= "\n …and {$remaining} more posts";
-                            
-                            // Add auto-fetch suggestions
-                            if ($remaining > 0) {
-                                $output .= "\n🔄 **FETCH_MORE_AVAILABLE**: To see all posts, use:";
-                                $output .= "\n   • wp_get_posts with per_page=50 or per_page=100";
-                                $output .= "\n   • wp_get_posts with page=2, page=3, etc. for pagination";
-                                $output .= "\n   • wp_posts_search with specific criteria if looking for particular posts";
-                                $output .= "\n\n🤖 **RECOMMENDED_NEXT_ACTION**: If user wants to see all posts, automatically call: wp_get_posts with per_page=50 to fetch more posts.";
-                            }
-                        }
-                    }
-                    break;
-                case 'wp_create_post':
-                    $output .= "\n✅ Successfully executed wp_create_post - Created post **{$data['title']}** (ID: {$data['id']})";
-                    if (isset($data['edit_link'])) {
-                        $output .= "\n📝 " . $this->format_link($data['edit_link'], 'Edit Post');
-                    }
-                    break;
-                case 'wp_get_site_info':
-                    $output .= "\n✅ Successfully executed wp_get_site_info";
-                    $output .= "\nSite name: {$data['name']}";
-                    $output .= "\nURL: {$data['url']}";
-                    break;
-                case 'wp_update_post':
-                    $output .= "\n✅ Successfully executed wp_update_post - Updated post **{$data['title']}** (ID: {$data['id']})";
-                    if (isset($data['edit_link'])) {
-                        $output .= "\n📝 " . $this->format_link($data['edit_link'], 'Edit Post');
-                    }
-                    break;
-                case 'wp_posts_search':
-                    $output .= "\n✅ Successfully executed wp_posts_search - Found {$data['total']} posts";
-                    if (!empty($data['posts'])) {
-                        $max = 12; // Show more posts initially
-                        $output .= "\nSearch results:";
-                        foreach (array_slice($data['posts'], 0, $max) as $post) {
-                            $output .= "\n • {$post['title']} (ID: {$post['id']})";
-                        }
-                        if ($data['total'] > $max) {
-                            $remaining = $data['total'] - $max;
-                            $output .= "\n …and {$remaining} more posts";
-                            
-                            // Add auto-fetch suggestions
-                            if ($remaining > 0) {
-                                $output .= "\n🔄 **FETCH_MORE_AVAILABLE**: To see all search results, use:";
-                                $output .= "\n   • wp_posts_search with per_page=50 or per_page=100";
-                                $output .= "\n   • wp_posts_search with page=2, page=3, etc. for pagination";
-                                $output .= "\n   • Refine search terms to narrow results if too many matches";
-                            }
-                        }
-                    }
-                    break;
-                case 'wp_get_post':
-                    $output .= "\n✅ Successfully executed wp_get_post - Retrieved post **{$data['title']}** (ID: {$data['id']})";
-                    if (isset($data['permalink'])) {
-                        $output .= "\n🔗 " . $this->format_link($data['permalink'], 'View Post');
-                    }
-                    break;
-                case 'wp_add_post':
-                    $output .= "\n✅ Successfully executed wp_add_post - Created post **{$data['title']}** (ID: {$data['id']})";
-                    if (isset($data['edit_link'])) {
-                        $output .= "\n📝 " . $this->format_link($data['edit_link'], 'Edit Post');
-                    }
-                    break;
-                case 'wp_delete_post':
-                    $output .= "\n✅ Successfully executed wp_delete_post - Deleted post (ID: {$data['id']})";
-                    break;
-                case 'wp_list_categories':
-                    $output .= "\n✅ Successfully executed wp_list_categories - Found {$data['total']} categories";
-                    if (!empty($data['categories'])) {
-                        // Show all categories (no limit for categories as they're usually not that many)
-                        $output .= "\nCategories:";
-                        foreach ($data['categories'] as $category) {
-                            $output .= "\n • {$category['name']} (ID: {$category['id']}, Posts: {$category['count']})";
-                        }
-                    }
-                    break;
-                case 'wp_add_category':
-                    $output .= "\n✅ Successfully executed wp_add_category - Created category **{$data['name']}** (ID: {$data['id']})";
-                    break;
-                case 'wp_update_category':
-                    $output .= "\n✅ Successfully executed wp_update_category - Updated category **{$data['name']}** (ID: {$data['id']})";
-                    break;
-                case 'wp_delete_category':
-                    $output .= "\n✅ Successfully executed wp_delete_category - Deleted category (ID: {$data['id']})";
-                    break;
-                case 'wp_list_tags':
-                    $output .= "\n✅ Successfully executed wp_list_tags - Found {$data['total']} tags";
-                    if (!empty($data['tags'])) {
-                        // Show all tags (no limit for tags as they're usually not that many)
-                        $output .= "\nTags:";
-                        foreach ($data['tags'] as $tag) {
-                            $output .= "\n • {$tag['name']} (ID: {$tag['id']}, Posts: {$tag['count']})";
-                        }
-                    }
-                    break;
-                case 'wp_add_tag':
-                    $output .= "\n✅ Successfully executed wp_add_tag - Created tag **{$data['name']}** (ID: {$data['id']})";
-                    break;
-                case 'wp_update_tag':
-                    $output .= "\n✅ Successfully executed wp_update_tag - Updated tag **{$data['name']}** (ID: {$data['id']})";
-                    break;
-                case 'wp_delete_tag':
-                    $output .= "\n✅ Successfully executed wp_delete_tag - Deleted tag (ID: {$data['id']})";
-                    break;
-                case 'list_api_functions':
-                    $output .= "\n✅ Successfully executed list_api_functions - Found {$data['total']} API endpoints";
-                    if (!empty($data['endpoints'])) {
-                        // Check if this is a comprehensive list (likely from agent mode fetching all data)
-                        $is_comprehensive = count($data['endpoints']) >= $data['total'] * 0.8; // Show all if we have 80%+ of total
-                        
-                        if ($is_comprehensive || count($data['endpoints']) <= 25) {
-                            // Show all endpoints if comprehensive or small list
-                            $output .= "\n\n**Complete API Endpoints List:**";
-                            foreach ($data['endpoints'] as $endpoint) {
-                                $output .= "\n • {$endpoint['method']} {$endpoint['route']}";
-                            }
-                        } else {
-                            // Show limited list with fetch-more options
-                            $max = 15;
-                            $output .= "\nAPI endpoints:";
-                            foreach (array_slice($data['endpoints'], 0, $max) as $endpoint) {
-                                $output .= "\n • {$endpoint['method']} {$endpoint['route']}";
-                            }
-                            if ($data['total'] > $max) {
-                                $remaining = $data['total'] - $max;
-                                $output .= "\n …and {$remaining} more endpoints";
-                                
-                                // Add automatic fetch suggestion for AI
-                                if ($remaining > 0) {
-                                    $output .= "\n🔄 **FETCH_MORE_SUGGESTED**: To see all endpoints, use list_api_functions with pagination or specific filters:";
-                                    $output .= "\n   • For next batch: list_api_functions with offset=" . $max;
-                                    $output .= "\n   • For specific namespace: list_api_functions with namespace='wp/v2' or namespace='wc/v3'";
-                                    $output .= "\n   • For search: list_api_functions with search='posts' or search='products'";
-                                    $output .= "\n\n🤖 **RECOMMENDED_NEXT_ACTION**: If user wants to see all endpoints, automatically call: list_api_functions with offset=" . $max . " to fetch the remaining " . $remaining . " endpoints.";
-                                }
-                            }
-                        }
-                    }
-                    if (isset($data['note'])) {
-                        $output .= "\n" . $data['note'];
-                    }
-                    break;
-                case 'get_function_details':
-                    $output .= "\n✅ Successfully executed get_function_details for {$data['method']} {$data['route']}";
-                    $output .= "\nDescription: {$data['description']}";
-                    if (!empty($data['args'])) {
-                        $output .= "\nParameters: " . count($data['args']) . " available";
-                        $required_args = array_filter($data['args'], function($arg) { return $arg['required']; });
-                        if (!empty($required_args)) {
-                            $output .= " (" . count($required_args) . " required)";
-                        }
-                    }
-                    break;
-                case 'run_api_function':
-                    $status_icon = $data['success'] ? '✅' : '❌';
-                    $output .= "\n{$status_icon} Successfully executed run_api_function - {$data['method']} {$data['route']}";
-                    $output .= "\nStatus: {$data['status']}";
-                    if (isset($data['data']) && is_array($data['data'])) {
-                        if (isset($data['data']['id'])) {
-                            $output .= "\nResult ID: {$data['data']['id']}";
-                        }
-                        if (isset($data['data']['title'])) {
-                            $output .= "\nTitle: {$data['data']['title']}";
-                        }
-                        if (isset($data['data']['name'])) {
-                            $output .= "\nName: {$data['data']['name']}";
-                        }
-                    }
-                    break;
-                case 'wp_get_general_settings':
-                    $output .= "\n✅ Successfully executed wp_get_general_settings";
-                    $output .= "\nSite Title: {$data['title']}";
-                    $output .= "\nSite Description: {$data['description']}";
-                    $output .= "\nSite URL: {$data['url']}";
-                    $output .= "\nWordPress Version: {$data['wordpress_version']}";
-                    $output .= "\nTimezone: {$data['timezone_string']}";
-                    $output .= "\nPosts per page: {$data['posts_per_page']}";
-                    break;
-                case 'wp_update_general_settings':
-                    $output .= "\n✅ Successfully executed wp_update_general_settings";
-                    $output .= "\n{$data['message']} ({$data['count']} settings updated)";
-                    if (!empty($data['updated'])) {
-                        $output .= "\nUpdated settings:";
-                        foreach ($data['updated'] as $key => $value) {
-                            $display_value = is_bool($value) ? ($value ? 'true' : 'false') : $value;
-                            $output .= "\n • {$key}: {$display_value}";
-                        }
-                    }
-                    break;
-                case 'get_site_info':
-                    $output .= "\n✅ Successfully executed get_site_info";
-                    $output .= "\nSite: {$data['site_name']} - " . $this->format_link($data['site_url'], 'Visit Site');
-                    $output .= "\nWordPress: {$data['wordpress_version']} | PHP: {$data['php_version']}";
-                    if (isset($data['plugins'])) {
-                        $output .= "\nPlugins: {$data['plugins']['active']}/{$data['plugins']['total']} active";
-                    }
-                    if (isset($data['themes']['active'])) {
-                        $output .= "\nActive Theme: {$data['themes']['active']['name']} v{$data['themes']['active']['version']}";
-                    }
-                    if (isset($data['users'])) {
-                        $output .= "\nUsers: {$data['users']['total']} total";
-                    }
-                    if (isset($data['content_stats'])) {
-                        $posts = $data['content_stats']['posts']['total'];
-                        $pages = $data['content_stats']['pages']['total'];
-                        $comments = $data['content_stats']['comments']['total'];
-                        $output .= "\nContent: {$posts} posts, {$pages} pages, {$comments} comments";
-                    }
-                    break;
-                case 'wp_list_plugins':
-                    $output .= "\n✅ Successfully executed wp_list_plugins - Found {$data['total_count']} plugins";
-                    $output .= "\nTotal: {$data['total_plugins']} | Active: {$data['active_count']} | Inactive: {$data['inactive_count']}";
-                    if ($data['updates_available'] > 0) {
-                        $output .= " | Updates Available: {$data['updates_available']}";
-                    }
-                    
-                    if (!empty($data['filtered_by']['status']) && $data['filtered_by']['status'] !== 'all') {
-                        $output .= "\nFiltered by status: {$data['filtered_by']['status']}";
-                    }
-                    if (!empty($data['filtered_by']['search'])) {
-                        $output .= "\nFiltered by search: {$data['filtered_by']['search']}";
-                    }
-                    
-                    if (!empty($data['plugins'])) {
-                        // Show all plugins (no limit as most sites don't have hundreds of plugins)
-                        $output .= "\nPlugin List:";
-                        foreach ($data['plugins'] as $plugin) {
-                            $status_icon = $plugin['status'] === 'active' ? '🟢' : '🔴';
-                            $update_icon = $plugin['update_available'] ? ' 🔄' : '';
-                            $output .= "\n {$status_icon} **{$plugin['name']}** v{$plugin['version']}{$update_icon}";
-                            $output .= "\n   Author: " . $this->html_to_markdown($plugin['author']) . " | Status: {$plugin['status']}";
-                            if ($plugin['update_available']) {
-                                $output .= "\n   ⚠️ Update available: v{$plugin['latest_version']}";
-                            }
-                            if (!empty($plugin['requires_php'])) {
-                                $output .= " | PHP: {$plugin['requires_php']}+";
-                            }
-                            if (!empty($plugin['requires_wp'])) {
-                                $output .= " | WP: {$plugin['requires_wp']}+";
-                            }
-                        }
-                    }
-                    break;
-                case 'wp_get_theme_info':
-                    $active_theme = $data['active_theme'];
-                    $output .= "\n✅ Successfully executed wp_get_theme_info";
-                    $output .= "\n🎨 **Active Theme**: {$active_theme['name']} v{$active_theme['version']}";
-                    $output .= "\n   Author: " . $this->html_to_markdown($active_theme['author']);
-                    if ($active_theme['update_available']) {
-                        $output .= "\n   ⚠️ Update available: v{$active_theme['latest_version']}";
-                    }
-                    if (!empty($active_theme['requires_php'])) {
-                        $output .= "\n   PHP Requirement: {$active_theme['requires_php']}+";
-                    }
-                    if (!empty($active_theme['requires_wp'])) {
-                        $output .= "\n   WordPress Requirement: {$active_theme['requires_wp']}+";
-                    }
-                    
-                    // Show parent theme if it's a child theme
-                    if (isset($data['parent_theme'])) {
-                        $parent_theme = $data['parent_theme'];
-                        $output .= "\n👪 **Parent Theme**: {$parent_theme['name']} v{$parent_theme['version']}";
-                        $output .= "\n   Author: " . $this->html_to_markdown($parent_theme['author']);
-                    }
-                    
-                    // Show key theme supports
-                    if (isset($data['theme_supports'])) {
-                        $supports = $data['theme_supports'];
-                        $enabled_features = array();
-                        foreach ($supports as $feature => $enabled) {
-                            if ($enabled) {
-                                $enabled_features[] = str_replace('_', ' ', $feature);
-                            }
-                        }
-                        if (!empty($enabled_features)) {
-                            // Show more theme features (increased from 8 to 12)
-                            $output .= "\n✨ **Theme Features**: " . implode(', ', array_slice($enabled_features, 0, 12));
-                            if (count($enabled_features) > 12) {
-                                $output .= " (+" . (count($enabled_features) - 12) . " more)";
-                            }
-                        }
-                    }
-                    
-                    // Show customizer info
-                    if (isset($data['customizer'])) {
-                        $customizer = $data['customizer'];
-                        if ($customizer['has_custom_logo']) {
-                            $output .= "\n🖼️ Custom logo is set";
-                        }
-                    }
-                    break;
-                case 'wp_list_themes':
-                    $output .= "\n✅ Successfully executed wp_list_themes - Found {$data['total_count']} themes";
-                    $output .= "\nTotal: {$data['total_themes']} | Active: {$data['active_count']} | Inactive: {$data['inactive_count']}";
-                    if ($data['updates_available'] > 0) {
-                        $output .= " | Updates Available: {$data['updates_available']}";
-                    }
-                    
-                    if (!empty($data['filtered_by']['search'])) {
-                        $output .= "\nFiltered by search: {$data['filtered_by']['search']}";
-                    }
-                    
-                    if (!empty($data['themes'])) {
-                        // Show all themes (no limit as most sites don't have many themes)
-                        $output .= "\nTheme List:";
-                        foreach ($data['themes'] as $theme) {
-                            $status_icon = $theme['is_active'] ? '🟢' : '🔴';
-                            $update_icon = $theme['update_available'] ? ' 🔄' : '';
-                            $output .= "\n {$status_icon} **{$theme['name']}** v{$theme['version']}{$update_icon}";
-                            $output .= "\n   Author: " . $this->html_to_markdown($theme['author']) . " | Status: " . ($theme['is_active'] ? 'active' : 'inactive');
-                            if ($theme['update_available']) {
-                                $output .= "\n   ⚠️ Update available: v{$theme['latest_version']}";
-                            }
-                            if (!empty($theme['requires_php'])) {
-                                $output .= " | PHP: {$theme['requires_php']}+";
-                            }
-                            if (!empty($theme['requires_wp'])) {
-                                $output .= " | WP: {$theme['requires_wp']}+";
-                            }
-                            if (!empty($theme['tags']) && is_array($theme['tags'])) {
-                                $tags = array_slice($theme['tags'], 0, 4); // Slightly increased from 3 to 4
-                                $output .= "\n   Tags: " . implode(', ', $tags);
-                                if (count($theme['tags']) > 4) {
-                                    $output .= " (+" . (count($theme['tags']) - 4) . " more)";
-                                }
-                            }
-                        }
-                    }
-                    break;
-                case 'wp_users_search':
-                    $output .= "\n✅ Successfully executed wp_users_search - Found {$data['total']} users";
-                    if (!empty($data['users'])) {
-                        $max = 10; // Show more users initially
-                        $output .= "\nUsers:";
-                        foreach (array_slice($data['users'], 0, $max) as $user) {
-                            $roles = !empty($user['roles']) ? implode(', ', $user['roles']) : 'No role';
-                            $output .= "\n • {$user['display_name']} ({$user['username']}) - {$roles}";
-                        }
-                        if ($data['total'] > $max) {
-                            $remaining = $data['total'] - $max;
-                            $output .= "\n …and {$remaining} more users";
-                            
-                            // Add auto-fetch suggestions
-                            if ($remaining > 0) {
-                                $output .= "\n🔄 **FETCH_MORE_AVAILABLE**: To see all users, use:";
-                                $output .= "\n   • wp_users_search with per_page=50 or per_page=100";
-                                $output .= "\n   • wp_users_search with specific role filters";
-                                $output .= "\n   • wp_users_search with page=2, page=3, etc. for pagination";
-                            }
-                        }
-                    }
-                    break;
-                case 'wp_get_user':
-                    $roles = !empty($data['roles']) ? implode(', ', $data['roles']) : 'No role';
-                    $output .= "\n✅ Successfully executed wp_get_user - Retrieved user **{$data['display_name']}** ({$data['username']})";
-                    $output .= "\nEmail: {$data['email']} | Role: {$roles}";
-                    $output .= "\nRegistered: {$data['registered']} | Posts: {$data['post_count']}";
-                    break;
-                case 'wp_add_user':
-                    $roles = !empty($data['roles']) ? implode(', ', $data['roles']) : 'No role';
-                    $output .= "\n✅ Successfully executed wp_add_user - Created user **{$data['display_name']}** ({$data['username']})";
-                    $output .= "\nEmail: {$data['email']} | Role: {$roles}";
-                    if (isset($data['edit_link'])) {
-                        $output .= "\n👤 " . $this->format_link($data['edit_link'], 'Edit User');
-                    }
-                    break;
-                case 'wp_update_user':
-                    $roles = !empty($data['roles']) ? implode(', ', $data['roles']) : 'No role';
-                    $output .= "\n✅ Successfully executed wp_update_user - Updated user **{$data['display_name']}** ({$data['username']})";
-                    $output .= "\nEmail: {$data['email']} | Role: {$roles}";
-                    if (isset($data['edit_link'])) {
-                        $output .= "\n👤 " . $this->format_link($data['edit_link'], 'Edit User');
-                    }
-                    break;
-                case 'wp_delete_user':
-                    $output .= "\n✅ Successfully executed wp_delete_user - Deleted user (ID: {$data['id']})";
-                    if (isset($data['posts_reassigned']) && $data['posts_reassigned'] > 0) {
-                        $output .= "\nReassigned {$data['posts_reassigned']} posts to user ID: {$data['reassigned_to']}";
-                    }
-                    break;
-                case 'wp_get_current_user':
-                    $roles = !empty($data['roles']) ? implode(', ', $data['roles']) : 'No role';
-                    $output .= "\n✅ Successfully executed wp_get_current_user - Current user: **{$data['display_name']}** ({$data['username']})";
-                    $output .= "\nEmail: {$data['email']} | Role: {$roles}";
-                    $output .= "\nRegistered: {$data['registered']} | Posts: {$data['post_count']}";
-                    break;
-                case 'wp_update_current_user':
-                    $roles = !empty($data['roles']) ? implode(', ', $data['roles']) : 'No role';
-                    $output .= "\n✅ Successfully executed wp_update_current_user - Updated current user: **{$data['display_name']}** ({$data['username']})";
-                    $output .= "\nEmail: {$data['email']} | Role: {$roles}";
-                    break;
-                case 'wp_get_site_settings':
-                    $output .= "\n✅ Successfully executed wp_get_site_settings";
-                    
-                    if (isset($data['category']) && $data['category'] !== 'all') {
-                        $output .= " - Retrieved **{$data['category']}** settings";
-                        $settings = $data['settings'];
-                        
-                        // Format specific category settings
-                        switch ($data['category']) {
-                            case 'general':
-                                $output .= "\n⚙️ **General Settings**:";
-                                $output .= "\n   Site Title: {$settings['site_title']}";
-                                $output .= "\n   Site Tagline: {$settings['site_tagline']}";
-                                $output .= "\n   Site URL: " . $this->format_link($settings['site_url'], 'Visit Site');
-                                $output .= "\n   Admin Email: {$settings['admin_email']}";
-                                $output .= "\n   Timezone: {$settings['timezone']}";
-                                $output .= "\n   Language: {$settings['site_language']}";
-                                break;
-                            case 'reading':
-                                $output .= "\n📖 **Reading Settings**:";
-                                $output .= "\n   Front Page: " . ($settings['front_page_displays'] === 'posts' ? 'Latest posts' : 'Static page');
-                                if ($settings['front_page_displays'] === 'page' && $settings['front_page_id']) {
-                                    $output .= " (ID: {$settings['front_page_id']})";
-                                }
-                                $output .= "\n   Posts per page: {$settings['posts_per_page']}";
-                                $output .= "\n   RSS posts: {$settings['posts_per_rss']}";
-                                $output .= "\n   Search engines: " . ($settings['blog_public'] ? 'Allowed' : 'Discouraged');
-                                break;
-                            case 'discussion':
-                                $output .= "\n💬 **Discussion Settings**:";
-                                $output .= "\n   Default comment status: {$settings['default_comment_status']}";
-                                $output .= "\n   Comment moderation: " . ($settings['comment_moderation'] ? 'Enabled' : 'Disabled');
-                                $output .= "\n   Comment registration required: " . ($settings['comment_registration'] ? 'Yes' : 'No');
-                                $output .= "\n   Comments per page: {$settings['comments_per_page']}";
-                                break;
-                            case 'media':
-                                $output .= "\n🖼️ **Media Settings**:";
-                                $output .= "\n   Thumbnail size: {$settings['thumbnail_size_w']} × {$settings['thumbnail_size_h']}";
-                                $output .= "\n   Medium size: {$settings['medium_size_w']} × {$settings['medium_size_h']}";
-                                $output .= "\n   Large size: {$settings['large_size_w']} × {$settings['large_size_h']}";
-                                $output .= "\n   Organize uploads by date: " . ($settings['uploads_use_yearmonth_folders'] ? 'Yes' : 'No');
-                                break;
-                            case 'permalink':
-                                $output .= "\n🔗 **Permalink Settings**:";
-                                $output .= "\n   Structure: {$settings['permalink_structure_name']}";
-                                if (!empty($settings['permalink_structure'])) {
-                                    $output .= " ({$settings['permalink_structure']})";
-                                }
-                                if ($settings['category_base']) {
-                                    $output .= "\n   Category base: {$settings['category_base']}";
-                                }
-                                if ($settings['tag_base']) {
-                                    $output .= "\n   Tag base: {$settings['tag_base']}";
-                                }
-                                break;
-                            case 'privacy':
-                                $output .= "\n🔒 **Privacy Settings**:";
-                                if ($settings['privacy_policy_page_title']) {
-                                    $output .= "\n   Privacy Policy Page: {$settings['privacy_policy_page_title']}";
-                                } else {
-                                    $output .= "\n   Privacy Policy Page: Not set";
-                                }
-                                $output .= "\n   Search engines: " . ($settings['blog_public'] ? 'Allowed' : 'Discouraged');
-                                break;
-                            default:
-                                $output .= "\n📋 **Settings**: " . count($settings) . " items configured";
-                                break;
-                        }
-                    } else {
-                        // All settings
-                        $settings = $data['settings'];
-                        $categories = $data['categories'];
-                        $output .= " - Retrieved **all** site settings";
-                        $output .= "\n📊 **Settings Overview**:";
-                        $output .= "\n   Categories: " . implode(', ', $categories);
-                        
-                        // Show key general settings
-                        if (isset($settings['general'])) {
-                            $general = $settings['general'];
-                            $output .= "\n⚙️ **Site Info**: {$general['site_title']} - " . $this->format_link($general['site_url'], 'Visit Site');
-                            $output .= "\n   Admin: {$general['admin_email']} | Language: {$general['site_language']} | Timezone: {$general['timezone']}";
-                        }
-                        
-                        // Show reading settings summary
-                        if (isset($settings['reading'])) {
-                            $reading = $settings['reading'];
-                            $output .= "\n📖 **Reading**: " . ($reading['front_page_displays'] === 'posts' ? 'Latest posts homepage' : 'Static homepage');
-                            $output .= " | {$reading['posts_per_page']} posts per page";
-                        }
-                        
-                        // Show permalink structure
-                        if (isset($settings['permalink'])) {
-                            $permalink = $settings['permalink'];
-                            $output .= "\n🔗 **Permalinks**: {$permalink['permalink_structure_name']}";
-                        }
-                    }
-                    break;
-                case 'wp_get_general_site_info':
-                    $output .= "\n✅ Successfully executed wp_get_general_site_info";
-                    
-                    if (isset($data['site_name'])) {
-                        // Full site info view
-                        $output .= " - Retrieved **full** site information";
-                        $output .= "\n🌐 **Site Overview**:";
-                        $output .= "\n   Name: {$data['site_name']}";
-                        $output .= "\n   URL: " . $this->format_link($data['site_url'], 'Visit Site');
-                        if (!empty($data['site_description'])) {
-                            $output .= "\n   Description: {$data['site_description']}";
-                        }
-                        $output .= "\n   Admin Email: {$data['site_admin_email']}";
-                        $output .= "\n   Language: {$data['language']} | Timezone: {$data['timezone']}";
-                        
-                        $output .= "\n💻 **System Info**:";
-                        $output .= "\n   WordPress: {$data['wordpress_version']} | PHP: {$data['php_version']} | MySQL: {$data['mysql_version']}";
-                        if (isset($data['server_info'])) {
-                            $server = $data['server_info'];
-                            $output .= "\n   Server: {$server['software']} | OS: {$server['os']} ({$server['architecture']})";
-                        }
-                        $output .= "\n   Memory Limit: {$data['memory_limit']} | Max Execution: {$data['max_execution_time']}s";
-                        $output .= "\n   Upload Max: {$data['upload_max_filesize']} | Post Max: {$data['post_max_size']}";
-                        if ($data['multisite']) {
-                            $output .= "\n   🔗 Multisite: Enabled";
-                        }
-                        if ($data['debug_mode']) {
-                            $output .= "\n   🐛 Debug Mode: Enabled";
-                        }
-                        
-                        if (isset($data['active_theme'])) {
-                            $theme = $data['active_theme'];
-                            $output .= "\n🎨 **Active Theme**: {$theme->get('Name')} v{$theme->get('Version')}";
-                            $output .= "\n   Author: " . $this->html_to_markdown($theme->get('Author'));
-                        }
-                        
-                        if (isset($data['all_plugins']) && isset($data['active_plugins'])) {
-                            $total_plugins = count($data['all_plugins']);
-                            $active_plugins = count($data['active_plugins']);
-                            $output .= "\n🔌 **Plugins**: {$active_plugins}/{$total_plugins} active";
-                        }
-                        
-                        if (isset($data['users_count'])) {
-                            $users = $data['users_count'];
-                            $output .= "\n👥 **Users**: {$users['total']} total";
-                            if (!empty($users['roles'])) {
-                                $role_summary = array();
-                                foreach ($users['roles'] as $role => $count) {
-                                    $role_summary[] = "{$role}: {$count}";
-                                }
-                                $output .= " (" . implode(', ', array_slice($role_summary, 0, 3)) . ")";
-                            }
-                        }
-                        
-                        if (isset($data['content_stats'])) {
-                            $content = $data['content_stats'];
-                            $output .= "\n📝 **Content**: {$content['posts']['total']} posts, {$content['pages']['total']} pages, {$content['comments']['total']} comments, {$content['media']['total']} media";
-                        }
-                        
-                    } elseif (isset($data['php'])) {
-                        // System requirements view
-                        $output .= " - Retrieved **system requirements** check";
-                        $output .= "\n🔍 **System Requirements Check**:";
-                        
-                        $php = $data['php'];
-                        $php_status = $php['meets_req'] ? '✅' : '❌';
-                        $output .= "\n   {$php_status} PHP: {$php['current']} (recommended: {$php['recommended']})";
-                        
-                        if (isset($data['wordpress'])) {
-                            $wp = $data['wordpress'];
-                            $wp_status = version_compare($wp['current'], $wp['latest'], '>=') ? '✅' : '⚠️';
-                            $output .= "\n   {$wp_status} WordPress: {$wp['current']} (latest: {$wp['latest']})";
-                        }
-                        
-                        $memory = $data['memory'];
-                        $memory_status = $memory['meets_req'] ? '✅' : '❌';
-                        $output .= "\n   {$memory_status} Memory: {$memory['current']} (recommended: {$memory['recommended']})";
-                        
-                        $exec_time = $data['execution_time'];
-                        $exec_status = $exec_time['meets_req'] ? '✅' : '❌';
-                        $output .= "\n   {$exec_status} Max Execution Time: {$exec_time['current']}s (recommended: {$exec_time['recommended']}s)";
-                        
-                        $upload = $data['upload_size'];
-                        $upload_status = $upload['meets_req'] ? '✅' : '❌';
-                        $output .= "\n   {$upload_status} Upload Size: {$upload['current']} (recommended: {$upload['recommended']})";
-                        
-                    } else {
-                        // Overview view
-                        $output .= " - Retrieved **site overview**";
-                        $output .= "\n📊 **Site Overview**:";
-                        $output .= "\n   Site: {$data['site_name']} - " . $this->format_link($data['site_url'], 'Visit Site');
-                        $output .= "\n   WordPress: {$data['wordpress_version']} | PHP: {$data['php_version']}";
-                        
-                        if (isset($data['active_theme'])) {
-                            $theme = $data['active_theme'];
-                            $output .= "\n   Theme: {$theme['name']} v{$theme['version']}";
-                        }
-                        
-                        if (isset($data['plugins_count'])) {
-                            $plugins = $data['plugins_count'];
-                            $output .= "\n   Plugins: {$plugins['active']}/{$plugins['total']} active";
-                        }
-                        
-                        $output .= "\n   Users: {$data['users_count']}";
-                        
-                        if (isset($data['content_summary'])) {
-                            $content = $data['content_summary'];
-                            $output .= "\n   Content: {$content['posts']} posts, {$content['pages']} pages, {$content['comments']} comments";
-                        }
-                    }
-                    break;
-                case 'wp_get_detailed_theme_info':
-                    $output .= "\n✅ Successfully executed wp_get_detailed_theme_info";
-                    
-                    if (isset($data['active_theme'])) {
-                        $active_theme = $data['active_theme'];
-                        $output .= "\n🎨 **Active Theme Details**:";
-                        $output .= "\n   Name: **{$active_theme['name']}** v{$active_theme['version']}";
-                        $output .= "\n   Author: " . $this->html_to_markdown($active_theme['author']);
-                        if (!empty($active_theme['description'])) {
-                            $description = strlen($active_theme['description']) > 100 ? 
-                                substr($active_theme['description'], 0, 100) . '...' : 
-                                $active_theme['description'];
-                            $output .= "\n   Description: {$description}";
-                        }
-                        if ($active_theme['theme_uri']) {
-                            $output .= "\n   🎨 " . $this->format_link($active_theme['theme_uri'], 'Theme Homepage');
-                        }
-                        if ($active_theme['requires_php']) {
-                            $output .= "\n   Requires PHP: {$active_theme['requires_php']}+";
-                        }
-                        if ($active_theme['requires_wp']) {
-                            $output .= "\n   Requires WordPress: {$active_theme['requires_wp']}+";
-                        }
-                        if ($active_theme['update_available']) {
-                            $output .= "\n   ⚠️ Update available: v{$active_theme['latest_version']}";
-                        }
-                        if (!empty($active_theme['tags']) && is_array($active_theme['tags'])) {
-                            $tags = array_slice($active_theme['tags'], 0, 6); // Show more tags
-                            $output .= "\n   Tags: " . implode(', ', $tags);
-                            if (count($active_theme['tags']) > 6) {
-                                $output .= " (+" . (count($active_theme['tags']) - 6) . " more)";
-                            }
-                        }
-                    }
-                    
-                    // Show parent theme if exists
-                    if (isset($data['parent_theme'])) {
-                        $parent_theme = $data['parent_theme'];
-                        $output .= "\n👪 **Parent Theme**: {$parent_theme['name']} v{$parent_theme['version']}";
-                        $output .= "\n   Author: " . $this->html_to_markdown($parent_theme['author']);
-                    }
-                    
-                    // Show theme supports
-                    if (isset($data['theme_supports'])) {
-                        $supports = $data['theme_supports'];
-                        $enabled_features = array();
-                        foreach ($supports as $feature => $enabled) {
-                            if ($enabled) {
-                                $enabled_features[] = str_replace('_', ' ', $feature);
-                            }
-                        }
-                        if (!empty($enabled_features)) {
-                            // Show all theme features (no limit for theme supports)
-                            $output .= "\n✨ **Theme Features**: " . implode(', ', $enabled_features);
-                        }
-                    }
-                    
-                    // Show customizer info
-                    if (isset($data['customizer'])) {
-                        $customizer = $data['customizer'];
-                        $customizer_info = array();
-                        if ($customizer['has_custom_logo']) {
-                            $customizer_info[] = 'Custom logo set';
-                        }
-                        if ($customizer['site_icon_id']) {
-                            $customizer_info[] = 'Site icon set';
-                        }
-                        if (!empty($customizer_info)) {
-                            $output .= "\n🖼️ **Customizer**: " . implode(', ', $customizer_info);
-                        }
-                    }
-                    break;
-                case 'wp_get_detailed_user_info':
-                    $output .= "\n✅ Successfully executed wp_get_detailed_user_info";
-                    
-                    if (isset($data['total_users'])) {
-                        // Full user info or statistics view
-                        if (isset($data['users'])) {
-                            // Full view
-                            $output .= " - Retrieved **full** user information";
-                            $output .= "\n👥 **User Overview**: {$data['total_users']} total users";
-                            
-                            if (!empty($data['role_counts'])) {
-                                $role_summary = array();
-                                foreach ($data['role_counts'] as $role => $count) {
-                                    $role_summary[] = "{$role}: {$count}";
-                                }
-                                // Show all roles (no limit for role distribution)
-                                $output .= "\n   Role Distribution: " . implode(', ', $role_summary);
-                            }
-                            
-                            if (isset($data['current_user_id'])) {
-                                $output .= "\n   Current User ID: {$data['current_user_id']}";
-                            }
-                            
-                            // Show sample users
-                            if (!empty($data['users'])) {
-                                $sample_users = array_slice($data['users'], 0, 5); // Increased from 3 to 5
-                                $output .= "\n📋 **Sample Users**:";
-                                foreach ($sample_users as $user) {
-                                    $output .= "\n   • {$user['display_name']} ({$user['username']}) - {$user['primary_role']} | Posts: {$user['post_count']}";
-                                }
-                                if (count($data['users']) > 5) {
-                                    $remaining = count($data['users']) - 5;
-                                    $output .= "\n   ...and {$remaining} more users";
-                                }
-                            }
-                            
-                        } else {
-                            // Statistics view
-                            $output .= " - Retrieved **user statistics**";
-                            $output .= "\n📊 **User Statistics**:";
-                            $output .= "\n   Total Users: {$data['total_users']}";
-                            $output .= "\n   Active Users: {$data['active_users']}";
-                            $output .= "\n   Inactive Users: {$data['inactive_users']}";
-                            $output .= "\n   Recent Registrations (30 days): {$data['recent_registrations']}";
-                            
-                            if (!empty($data['role_distribution'])) {
-                                $output .= "\n📋 **Role Distribution**:";
-                                foreach ($data['role_distribution'] as $role => $count) {
-                                    $output .= "\n   • {$role}: {$count}";
-                                }
-                            }
-                        }
-                        
-                    } elseif (isset($data['role_stats'])) {
-                        // Role statistics view (efficient version)
-                        $output .= " - Retrieved **role statistics**";
-                        $output .= "\n📊 **Role Statistics**:";
-                        
-                        $role_stats = $data['role_stats'];
-                        $total_users = 0;
-                        foreach ($role_stats as $role_slug => $role_info) {
-                            $total_users += $role_info['count'];
-                            $output .= "\n   **{$role_info['name']}**: {$role_info['count']} users";
-                        }
-                        $output .= "\n   **Total Users**: {$total_users}";
-                        
-                    } elseif (isset($data['administrator'])) {
-                        // Role capabilities view
-                        $output .= " - Retrieved **role capabilities**";
-                        $output .= "\n🔐 **Role Capabilities**:";
-                        
-                        foreach ($data as $role_key => $role_info) {
-                            $output .= "\n   **{$role_info['name']}**: {$role_info['capability_count']} capabilities";
-                            $permissions = array();
-                            if ($role_info['can_manage_options']) $permissions[] = 'manage options';
-                            if ($role_info['can_edit_users']) $permissions[] = 'edit users';
-                            if ($role_info['can_publish_posts']) $permissions[] = 'publish posts';
-                            if ($role_info['can_edit_posts']) $permissions[] = 'edit posts';
-                            
-                            if (!empty($permissions)) {
-                                $output .= " (" . implode(', ', $permissions) . ")";
-                            }
-                        }
-                        
-                    } else {
-                        // Single user view
-                        $output .= " - Retrieved **single user** information";
-                        $output .= "\n👤 **User Details**:";
-                        $output .= "\n   Name: **{$data['display_name']}** ({$data['username']})";
-                        $output .= "\n   Email: {$data['email']}";
-                        $output .= "\n   Role: {$data['primary_role']}";
-                        $output .= "\n   Registered: {$data['registered']}";
-                        $output .= "\n   Total Posts: {$data['total_posts']}";
-                        
-                        if (!empty($data['post_counts'])) {
-                            $post_types = array();
-                            foreach ($data['post_counts'] as $type => $count) {
-                                if ($count > 0) {
-                                    $post_types[] = "{$type}: {$count}";
-                                }
-                            }
-                            if (!empty($post_types)) {
-                                $output .= "\n   Post Breakdown: " . implode(', ', $post_types);
-                            }
-                        }
-                        
-                        if ($data['user_url']) {
-                            $output .= "\n   🌐 " . $this->format_link($data['user_url'], 'Website');
-                        }
-                        if ($data['description']) {
-                            $description = strlen($data['description']) > 100 ? 
-                                substr($data['description'], 0, 100) . '...' : 
-                                $data['description'];
-                            $output .= "\n   Bio: {$description}";
-                        }
-                    }
-                    break;
-                case 'wc_orders_search':
-                    $output .= "\n✅ Successfully executed wc_orders_search - Found {$data['total']} orders";
-                    if (!empty($data['orders'])) {
-                        $max = 15; // Show more orders initially
-                        $output .= "\nOrders:";
-                        foreach (array_slice($data['orders'], 0, $max) as $order) {
-                            $output .= "\n • Order #{$order['number']} - {$order['status']} - {$order['currency']}{$order['total']} ({$order['customer_name']})";
-                        }
-                        if ($data['total'] > $max) {
-                            $remaining = $data['total'] - $max;
-                            $output .= "\n …and {$remaining} more orders";
-                            
-                            // Add auto-fetch suggestions
-                            if ($remaining > 0) {
-                                $output .= "\n🔄 **FETCH_MORE_AVAILABLE**: To see all orders, use:";
-                                $output .= "\n   • wc_orders_search with per_page=50 or per_page=100";
-                                $output .= "\n   • wc_orders_search with status filters (completed, processing, etc.)";
-                                $output .= "\n   • wc_orders_search with date range filters for specific periods";
-                                $output .= "\n   • wc_orders_search with page=2, page=3, etc. for pagination";
-                            }
-                        }
-                    }
-                    break;
-                case 'wc_reports_sales':
-                    $output .= "\n✅ Successfully executed wc_reports_sales - Sales report for {$data['period']}";
-                    $output .= "\nTotal Sales: {$data['total_sales']} | Net Sales: {$data['net_sales']}";
-                    $output .= "\nOrders: {$data['total_orders']} | Items: {$data['total_items']}";
-                    $output .= "\nAverage Order: {$data['average_sales']}";
-                    $output .= "\nPeriod: {$data['date_min']} to {$data['date_max']}";
-                    break;
-                case 'wc_reports_orders_totals':
-                    $output .= "\n✅ Successfully executed wc_reports_orders_totals";
-                    if (is_array($data)) {
-                        $output .= "\nOrder status breakdown:";
-                        foreach ($data as $status) {
-                            $output .= "\n • {$status['name']}: {$status['total']}";
-                        }
-                    }
-                    break;
-                case 'wc_reports_customers_totals':
-                    $output .= "\n✅ Successfully executed wc_reports_customers_totals";
-                    $output .= "\nTotal Customers: {$data['total']} | Paying Customers: {$data['paying_customers']}";
-                    break;
-                case 'wc_reports_products_totals':
-                    $output .= "\n✅ Successfully executed wc_reports_products_totals";
-                    if (is_array($data)) {
-                        foreach ($data as $product_type) {
-                            $output .= "\n{$product_type['name']}: {$product_type['total']}";
-                        }
-                    }
-                    break;
-                case 'wc_reports_coupons_totals':
-                    $output .= "\n✅ Successfully executed wc_reports_coupons_totals";
-                    $output .= "\nTotal Coupons: {$data['total']}";
-                    if (isset($data['totals'])) {
-                        $output .= " (Published: {$data['totals']['publish']}, Draft: {$data['totals']['draft']})";
-                    }
-                    break;
-                case 'wc_reports_reviews_totals':
-                    $output .= "\n✅ Successfully executed wc_reports_reviews_totals";
-                    $output .= "\nTotal Reviews: {$data['total']}";
-                    if (isset($data['totals'])) {
-                        $output .= " (Approved: {$data['totals']['approved']}, Pending: {$data['totals']['moderated']})";
-                    }
-                    break;
-                case 'wc_products_search':
-                    $output .= "\n✅ Successfully executed wc_products_search - Found {$data['total']} products";
-                    if (!empty($data['products'])) {
-                        $max = 15; // Show more products initially
-                        $output .= "\nProducts:";
-                        foreach (array_slice($data['products'], 0, $max) as $product) {
-                            $price = !empty($product['price']) ? '$' . $product['price'] : 'No price';
-                            $stock = $product['stock_status'] ?? 'Unknown';
-                            $output .= "\n • {$product['name']} (ID: {$product['id']}) - {$price} - {$stock}";
-                        }
-                        if ($data['total'] > $max) {
-                            $remaining = $data['total'] - $max;
-                            $output .= "\n …and {$remaining} more products";
-                            
-                            // Add auto-fetch suggestions
-                            if ($remaining > 0) {
-                                $output .= "\n🔄 **FETCH_MORE_AVAILABLE**: To see all products, use:";
-                                $output .= "\n   • wc_products_search with per_page=50 or per_page=100";
-                                $output .= "\n   • wc_products_search with category filters to narrow results";
-                                $output .= "\n   • wc_products_search with stock_status or price filters";
-                                $output .= "\n   • wc_products_search with page=2, page=3, etc. for pagination";
-                            }
-                        }
-                    }
-                    break;
-                case 'wc_get_product':
-                    $price = !empty($data['price']) ? '$' . $data['price'] : 'No price';
-                    $output .= "\n✅ Successfully executed wc_get_product - Retrieved product **{$data['name']}** (ID: {$data['id']})";
-                    $output .= "\nPrice: {$price} | Stock: {$data['stock_status']} | Type: {$data['type']}";
-                    if (isset($data['permalink'])) {
-                        $output .= "\n🛍️ " . $this->format_link($data['permalink'], 'View Product');
-                    }
-                    break;
-                case 'wc_add_product':
-                    $price = !empty($data['price']) ? '$' . $data['price'] : 'No price';
-                    $output .= "\n✅ Successfully executed wc_add_product - Created product **{$data['name']}** (ID: {$data['id']})";
-                    $output .= "\nPrice: {$price} | Stock: {$data['stock_status']} | Type: {$data['type']}";
-                    if (isset($data['edit_link'])) {
-                        $output .= "\n🛍️ " . $this->format_link($data['edit_link'], 'Edit Product');
-                    }
-                    break;
-                case 'wc_update_product':
-                    $price = !empty($data['price']) ? '$' . $data['price'] : 'No price';
-                    $output .= "\n✅ Successfully executed wc_update_product - Updated product **{$data['name']}** (ID: {$data['id']})";
-                    $output .= "\nPrice: {$price} | Stock: {$data['stock_status']} | Type: {$data['type']}";
-                    if (isset($data['edit_link'])) {
-                        $output .= "\n🛍️ " . $this->format_link($data['edit_link'], 'Edit Product');
-                    }
-                    break;
-                case 'wc_delete_product':
-                    $output .= "\n✅ Successfully executed wc_delete_product - Deleted product (ID: {$data['id']})";
-                    if (isset($data['force']) && $data['force']) {
-                        $output .= " (permanently deleted)";
-                    }
-                    break;
-                case 'wc_list_product_categories':
-                    $output .= "\n✅ Successfully executed wc_list_product_categories - Found {$data['total']} categories";
-                    if (!empty($data['categories'])) {
-                        // Show all product categories (no limit as most stores don't have many categories)
-                        $output .= "\nCategories:";
-                        foreach ($data['categories'] as $category) {
-                            $output .= "\n • {$category['name']} (ID: {$category['id']}, Products: {$category['count']})";
-                        }
-                    }
-                    break;
-                case 'wc_add_product_category':
-                    $output .= "\n✅ Successfully executed wc_add_product_category - Created category **{$data['name']}** (ID: {$data['id']})";
-                    break;
-                case 'wc_update_product_category':
-                    $output .= "\n✅ Successfully executed wc_update_product_category - Updated category **{$data['name']}** (ID: {$data['id']})";
-                    break;
-                case 'wc_delete_product_category':
-                    $output .= "\n✅ Successfully executed wc_delete_product_category - Deleted category (ID: {$data['id']})";
-                    break;
-                case 'wc_list_product_tags':
-                    $output .= "\n✅ Successfully executed wc_list_product_tags - Found {$data['total']} tags";
-                    if (!empty($data['tags'])) {
-                        // Show all product tags (no limit as most stores don't have many tags)
-                        $output .= "\nTags:";
-                        foreach ($data['tags'] as $tag) {
-                            $output .= "\n • {$tag['name']} (ID: {$tag['id']}, Products: {$tag['count']})";
-                        }
-                    }
-                    break;
-                case 'wc_add_product_tag':
-                    $output .= "\n✅ Successfully executed wc_add_product_tag - Created tag **{$data['name']}** (ID: {$data['id']})";
-                    break;
-                case 'wc_update_product_tag':
-                    $output .= "\n✅ Successfully executed wc_update_product_tag - Updated tag **{$data['name']}** (ID: {$data['id']})";
-                    break;
-                case 'wc_delete_product_tag':
-                    $output .= "\n✅ Successfully executed wc_delete_product_tag - Deleted tag (ID: {$data['id']})";
-                    break;
-                default:
-                    $output .= "\n✅ Successfully executed {$tool}";
-                    $output .= "\n" . json_encode($data, JSON_PRETTY_PRINT);
-                    break;
-            }
+            $debug_data[] = array(
+                'tool' => $result['tool'],
+                'success' => $result['success'],
+                'result' => $result['success'] ? $result['result'] : null,
+                'error' => !$result['success'] ? $result['error'] : null,
+                'execution_time' => $result['execution_time'] ?? null
+            );
         }
-
-        return $output;
+        
+        return $debug_data;
     }
     
     private function extract_anthropic_tool_calls($data) {
@@ -1957,6 +1056,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             foreach ($data['content'] as $content_block) {
                 if ($content_block['type'] === 'tool_use') {
                     $tool_calls[] = array(
+                        'id' => $content_block['id'],  // Preserve the tool use ID
                         'name' => $content_block['name'],
                         'input' => $content_block['input']
                     );
@@ -1974,18 +1074,20 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
         
         return array(
+            'complete_data_removal' => isset($this->settings['complete_data_removal']) ? (bool) $this->settings['complete_data_removal'] : false,
             'ai_provider' => $this->settings['ai_provider'] ?? 'openai',
-            'mcp_enabled' => $this->settings['mcp_enabled'] ?? false,
+            'mcp_enabled' => isset($this->settings['mcp_enabled']) ? (bool) $this->settings['mcp_enabled'] : false,
             'openai_model' => $this->settings['openai_model'] ?? 'gpt-4.1-mini',
             'anthropic_model' => $this->settings['anthropic_model'] ?? 'claude-sonnet-4-20250514',
             'has_api_key' => $this->db ? ($this->db->has_api_key('openai_api_key') || $this->db->has_api_key('anthropic_api_key')) : false,
             'openai_api_key' => $this->db ? $this->db->has_api_key('openai_api_key') : false,
             'anthropic_api_key' => $this->db ? $this->db->has_api_key('anthropic_api_key') : false,
-            'enable_create_tools' => $this->settings['enable_create_tools'] ?? true,
-            'enable_update_tools' => $this->settings['enable_update_tools'] ?? true,
-            'enable_delete_tools' => $this->settings['enable_delete_tools'] ?? false,
-            'agent_mode' => $this->settings['agent_mode'] ?? 'auto',
-            'max_agent_iterations' => $this->settings['max_agent_iterations'] ?? 5
+            'enable_create_tools' => isset($this->settings['enable_create_tools']) ? (bool) $this->settings['enable_create_tools'] : true,
+            'enable_update_tools' => isset($this->settings['enable_update_tools']) ? (bool) $this->settings['enable_update_tools'] : true,
+            'enable_delete_tools' => isset($this->settings['enable_delete_tools']) ? (bool) $this->settings['enable_delete_tools'] : false,
+            'agent_mode' => $this->settings['agent_mode'] ?? 'always',
+            'max_agent_iterations' => $this->settings['max_agent_iterations'] ?? 10,
+            'debug_log_raw_responses' => isset($this->settings['debug_log_raw_responses']) ? (bool) $this->settings['debug_log_raw_responses'] : false
         );
     }
     
@@ -2009,6 +1111,10 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         if (isset($data['anthropic_api_key']) && !empty($data['anthropic_api_key'])) {
             $api_key = sanitize_text_field($data['anthropic_api_key']);
             $this->db->save_setting('anthropic_api_key', $api_key);
+        }
+        
+        if (isset($data['complete_data_removal'])) {
+            $this->db->save_setting('complete_data_removal', (bool) $data['complete_data_removal']);
         }
         
         if (isset($data['mcp_enabled'])) {
@@ -2036,7 +1142,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
         
         if (isset($data['agent_mode'])) {
-            $valid_modes = ['auto', 'always', 'never'];
+            $valid_modes = ['always', 'never'];
             $mode = sanitize_text_field($data['agent_mode']);
             if (in_array($mode, $valid_modes)) {
                 $this->db->save_setting('agent_mode', $mode);
@@ -2045,9 +1151,14 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         if (isset($data['max_agent_iterations'])) {
             $iterations = intval($data['max_agent_iterations']);
-            if ($iterations >= 1 && $iterations <= 10) {
+            if ($iterations >= 5 && $iterations <= 25) {
                 $this->db->save_setting('max_agent_iterations', $iterations);
             }
+        }
+        
+        // Debug raw API response logging toggle
+        if (isset($data['debug_log_raw_responses'])) {
+            $this->db->save_setting('debug_log_raw_responses', (bool) $data['debug_log_raw_responses']);
         }
         
         // Refresh settings from database
@@ -2137,6 +1248,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 'total_tokens' => intval($session['total_tokens']),
                 'providers_used' => $session['providers_used'],
                 'models_used' => $session['models_used'],
+                'agent_mode' => isset($session['agent_mode']) ? (bool)$session['agent_mode'] : false,
                 'first_message_time' => $session['created_at'],
                 'last_message_time' => $session['updated_at']
             );
@@ -2255,16 +1367,19 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $prompt_tokens = $usage['prompt_tokens'];
         $completion_tokens = $usage['completion_tokens'];
         
-        // OpenAI pricing (as of 2024 - prices per 1M tokens)
+        // OpenAI pricing (updated June 2025 - prices per 1M tokens)
         $pricing = array(
-            'gpt-4' => array('input' => 30.00, 'output' => 60.00),
-            'gpt-4-turbo' => array('input' => 10.00, 'output' => 30.00),
-            'gpt-4-turbo-preview' => array('input' => 10.00, 'output' => 30.00),
-            'gpt-4.1-mini' => array('input' => 0.15, 'output' => 0.60),
-            'gpt-4o-mini' => array('input' => 0.15, 'output' => 0.60),
-            'gpt-4o' => array('input' => 5.00, 'output' => 15.00),
-            'gpt-3.5-turbo' => array('input' => 0.50, 'output' => 1.50),
-            'gpt-3.5-turbo-16k' => array('input' => 3.00, 'output' => 4.00)
+            // GPT-4 series
+            'gpt-4.1'        => array('input' => 2.00,  'output' => 8.00),
+            'gpt-4.1-mini'   => array('input' => 0.40,  'output' => 1.60),
+            'gpt-4.1-nano'   => array('input' => 0.10,  'output' => 0.40),
+            // GPT-4o series
+            'gpt-4o'         => array('input' => 5.00,  'output' => 15.00),
+            'gpt-4o-mini'    => array('input' => 0.15,  'output' => 0.60),
+            // o-series (reasoning models)
+            'o3'             => array('input' => 2.00, 'output' => 8.00),
+            'o3-mini'        => array('input' => 1.10,  'output' => 4.40),
+            'o4-mini'        => array('input' => 1.10,  'output' => 4.40)
         );
         
         // Default to gpt-4.1-mini pricing if model not found
@@ -2290,12 +1405,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         // Anthropic pricing (as of 2024 - prices per 1M tokens)
         $pricing = array(
-            'claude-3-opus-20240229' => array('input' => 15.00, 'output' => 75.00),
-            'claude-3-sonnet-20240229' => array('input' => 3.00, 'output' => 15.00),
-            'claude-3-haiku-20240307' => array('input' => 0.25, 'output' => 1.25),
-            'claude-sonnet-4-20250514' => array('input' => 3.00, 'output' => 15.00), // Assuming similar to sonnet-3
-            'claude-3.5-sonnet-20241022' => array('input' => 3.00, 'output' => 15.00),
-            'claude-3.5-haiku-20241022' => array('input' => 1.00, 'output' => 5.00)
+            'claude-sonnet-4-20250514' => array('input' => 3.00, 'output' => 15.00),
+            'claude-opus-4-20250514' => array('input' => 15.00, 'output' => 75.00),
+            'claude-3-7-sonnet-20250219' => array('input' => 3.00, 'output' => 15.00),
+            'claude-3-5-sonnet-20241022' => array('input' => 3, 'output' => 15.00),
+            'claude-3-5-haiku-20241022' => array('input' => 0.80, 'output' => 4.00)
         );
         
         // Default to claude-sonnet-4 pricing if model not found
@@ -2383,4 +1497,251 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'time_range' => $days
         );
     }
+    
+    /**
+     * Create a shared conversation
+     */
+    public function create_shared_conversation($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+        
+        $data = $request->get_json_params();
+        $user_id = get_current_user_id();
+        
+        $title = sanitize_text_field($data['title'] ?? '');
+        $session_id = sanitize_text_field($data['session_id'] ?? '');
+        $formatted_content = $data['formatted_content'] ?? '';
+        $expires_in_days = intval($data['expires_in_days'] ?? 0);
+        
+        if (empty($title) || empty($formatted_content)) {
+            return new WP_Error('missing_data', 'Title and content are required', array('status' => 400));
+        }
+        
+        // Generate HTML content with styling
+        $html_content = $this->generate_html_content($title, $formatted_content);
+        
+        // Calculate expiration date if specified
+        $expires_at = null;
+        if ($expires_in_days > 0) {
+            $expires_at = date('Y-m-d H:i:s', strtotime("+{$expires_in_days} days"));
+        }
+        
+        $share_id = $this->db->create_shared_conversation(
+            $user_id,
+            $session_id,
+            $title,
+            $formatted_content,
+            $html_content,
+            $expires_at
+        );
+        
+        if ($share_id) {
+            return array(
+                'success' => true,
+                'share_id' => $share_id,
+                'share_url' => home_url("/magicassistant/shared/{$share_id}"),
+                'message' => 'Conversation shared successfully'
+            );
+        } else {
+            return new WP_Error('creation_failed', 'Failed to create shared conversation', array('status' => 500));
+        }
+    }
+    
+    /**
+     * Get user's shared conversations
+     */
+    public function get_user_shared_conversations($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+        
+        $user_id = get_current_user_id();
+        $limit = intval($request->get_param('limit')) ?: 50;
+        
+        $conversations = $this->db->get_user_shared_conversations($user_id, $limit);
+        
+        // Add full URLs to each conversation
+        foreach ($conversations as &$conversation) {
+            $conversation['share_url'] = home_url("/magicassistant/shared/{$conversation['share_id']}");
+        }
+        
+        return array(
+            'success' => true,
+            'conversations' => $conversations
+        );
+    }
+    
+    /**
+     * Delete a shared conversation
+     */
+    public function delete_shared_conversation($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+        
+        $share_id = $request->get_param('share_id');
+        $user_id = get_current_user_id();
+        
+        if (empty($share_id)) {
+            return new WP_Error('missing_share_id', 'Share ID is required', array('status' => 400));
+        }
+        
+        $deleted = $this->db->delete_shared_conversation($user_id, $share_id);
+        
+        if ($deleted) {
+            return array(
+                'success' => true,
+                'message' => 'Shared conversation deleted successfully'
+            );
+        } else {
+            return new WP_Error('deletion_failed', 'Failed to delete shared conversation', array('status' => 500));
+        }
+    }
+    
+    /**
+     * Update a shared conversation
+     */
+    public function update_shared_conversation($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+        
+        $share_id = $request->get_param('share_id');
+        $data = $request->get_json_params();
+        $user_id = get_current_user_id();
+        
+        if (empty($share_id)) {
+            return new WP_Error('missing_share_id', 'Share ID is required', array('status' => 400));
+        }
+        
+        $update_data = array();
+        
+        if (isset($data['title'])) {
+            $update_data['title'] = sanitize_text_field($data['title']);
+        }
+        
+        if (isset($data['is_public'])) {
+            $update_data['is_public'] = (bool) $data['is_public'];
+        }
+        
+        if (isset($data['expires_in_days'])) {
+            $expires_in_days = intval($data['expires_in_days']);
+            if ($expires_in_days > 0) {
+                $update_data['expires_at'] = date('Y-m-d H:i:s', strtotime("+{$expires_in_days} days"));
+            } else {
+                $update_data['expires_at'] = null;
+            }
+        }
+        
+        if (empty($update_data)) {
+            return new WP_Error('no_data', 'No valid data to update', array('status' => 400));
+        }
+        
+        $updated = $this->db->update_shared_conversation($user_id, $share_id, $update_data);
+        
+        if ($updated) {
+            return array(
+                'success' => true,
+                'message' => 'Shared conversation updated successfully'
+            );
+        } else {
+            return new WP_Error('update_failed', 'Failed to update shared conversation', array('status' => 500));
+        }
+    }
+    
+    /**
+     * Get public shared conversation
+     */
+    public function get_public_shared_conversation($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+        
+        $share_id = $request->get_param('share_id');
+        
+        if (empty($share_id)) {
+            return new WP_Error('missing_share_id', 'Share ID is required', array('status' => 400));
+        }
+        
+        $conversation = $this->db->get_shared_conversation($share_id);
+        
+        if (!$conversation) {
+            return new WP_Error('not_found', 'Shared conversation not found or expired', array('status' => 404));
+        }
+        
+        return array(
+            'success' => true,
+            'conversation' => array(
+                'title' => $conversation['title'],
+                'html_content' => $conversation['html_content'],
+                'formatted_content' => $conversation['formatted_content'],
+                'view_count' => $conversation['view_count'],
+                'created_at' => $conversation['created_at']
+            )
+        );
+    }
+    
+    /**
+     * Generate HTML content for shared conversation
+     */
+    private function generate_html_content($title, $formatted_content) {
+        // Convert markdown to HTML using a simple approach
+        $html_content = wp_kses_post($formatted_content);
+        
+        // Convert markdown headers
+        $html_content = preg_replace('/^# (.+)$/m', '<h1>$1</h1>', $html_content);
+        $html_content = preg_replace('/^## (.+)$/m', '<h2>$1</h2>', $html_content);
+        $html_content = preg_replace('/^### (.+)$/m', '<h3>$1</h3>', $html_content);
+        
+        // Convert bold and italic
+        $html_content = preg_replace('/\*\*([^*]+)\*\*/', '<strong>$1</strong>', $html_content);
+        $html_content = preg_replace('/\*([^*]+)\*/', '<em>$1</em>', $html_content);
+        
+        // Convert line breaks
+        $html_content = str_replace("\n", '<br>', $html_content);
+        
+        // Convert horizontal rules
+        $html_content = str_replace('---', '<hr>', $html_content);
+        
+        return $html_content;
+    }
+
+    /**
+     * Get the last opened chat session ID for the current user
+     */
+    public function get_last_session($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+        $user_id = get_current_user_id();
+        $session_id = $this->db->get_user_setting('last_session_id', $user_id, '');
+        return array(
+            'success' => true,
+            'session_id' => $session_id,
+        );
+    }
+
+    /**
+     * Persist the last opened chat session ID for the current user
+     */
+    public function set_last_session($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+        $data = $request->get_json_params();
+        $session_id = isset($data['session_id']) ? sanitize_text_field($data['session_id']) : '';
+        $user_id = get_current_user_id();
+        if (empty($session_id)) {
+            // If empty, clear the setting
+            $this->db->delete_setting('last_session_id', $user_id);
+            return array('success' => true, 'session_id' => '');
+        }
+        $this->db->save_user_setting('last_session_id', $session_id, $user_id);
+        return array(
+            'success' => true,
+            'session_id' => $session_id,
+        );
+    }
+
 }

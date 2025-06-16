@@ -1,45 +1,60 @@
 import { useState, useEffect } from 'react'
-import { Card, Select, Label, TextInput, Button } from 'flowbite-react'
+import { Card, Label, TextInput, Button } from 'flowbite-react'
+import CustomSelect from './CustomSelect'
 import ConfirmationModal from './ConfirmationModal'
 import { useToast } from './Toast'
+import SharedConversations from './SharedConversations'
 
 const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onToggleDarkMode }) => {
   const [apiKey, setApiKey] = useState('')
   const [activeTab, setActiveTab] = useState('general')
   const [showDeleteModal, setShowDeleteModal] = useState(false)
-  const [completeDataRemoval, setCompleteDataRemoval] = useState(false)
+  const [showApiKeyDeleteModal, setShowApiKeyDeleteModal] = useState(false)
+  const [pendingApiKeyDelete, setPendingApiKeyDelete] = useState(null)
+  const [localSettings, setLocalSettings] = useState({})
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const { showSuccess, showWarning } = useToast()
 
   // Sync local state with props
   useEffect(() => {
     if (settings) {
-      setCompleteDataRemoval(settings.complete_data_removal || false)
+      setLocalSettings({
+        complete_data_removal: settings.complete_data_removal === true,
+        ai_provider: settings.ai_provider || 'openai',
+        openai_model: settings.openai_model || 'gpt-4.1-mini',
+        anthropic_model: settings.anthropic_model || 'claude-sonnet-4-20250514',
+        agent_mode: settings.agent_mode || 'never',
+        max_agent_iterations: parseInt(settings.max_agent_iterations) || 10,
+        mcp_enabled: settings.mcp_enabled === true,
+        enable_create_tools: settings.enable_create_tools === true,
+        enable_update_tools: settings.enable_update_tools === true,
+        enable_delete_tools: settings.enable_delete_tools === true,
+        debug_log_raw_responses: settings.debug_log_raw_responses === true
+      })
+      setHasUnsavedChanges(false)
     }
   }, [settings])
 
-  const handleSettingsChange = (key, value) => {
-    console.log('Settings change:', key, value) // Debug log
-    onSaveSettings({ [key]: value })
-  }
-
-  const handleCompleteDataRemovalChange = (checked) => {
-    console.log('Complete data removal change:', checked) // Debug log
-    setCompleteDataRemoval(checked) // Update local state immediately
-    onSaveSettings({ complete_data_removal: checked }) // Save to server
+  const handleLocalChange = (key, value) => {
+    console.log('Local change:', key, value) // Debug log
+    setLocalSettings(prev => ({
+      ...prev,
+      [key]: value
+    }))
+    setHasUnsavedChanges(true)
   }
 
   const handleDeleteToolsChange = (checked) => {
     if (checked) {
       setShowDeleteModal(true)
     } else {
-      handleSettingsChange('enable_delete_tools', false)
-      showSuccess('Delete operations disabled for safety')
+      handleLocalChange('enable_delete_tools', false)
     }
   }
 
   const confirmDeleteTools = () => {
-    handleSettingsChange('enable_delete_tools', true)
-    showWarning('Delete operations enabled - use with caution!')
+    handleLocalChange('enable_delete_tools', true)
+    showWarning('Delete operations will be enabled when you save these settings')
   }
 
   const handleApiKeySubmit = (provider) => {
@@ -50,8 +65,13 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     }
   }
 
-  const handleDeleteApiKey = async (provider) => {
-    if (!window.matAdminData?.restUrl) return
+  const handleDeleteApiKeyClick = (provider) => {
+    setPendingApiKeyDelete(provider)
+    setShowApiKeyDeleteModal(true)
+  }
+
+  const confirmDeleteApiKey = async () => {
+    if (!pendingApiKeyDelete || !window.matAdminData?.restUrl) return
     
     try {
       const response = await fetch(`${window.matAdminData.restUrl}delete-api-key`, {
@@ -60,7 +80,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           'Content-Type': 'application/json',
           'X-WP-Nonce': window.matAdminData.nonces.wp_rest,
         },
-        body: JSON.stringify({ provider })
+        body: JSON.stringify({ provider: pendingApiKeyDelete })
       })
       
       if (response.ok) {
@@ -74,6 +94,39 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     } catch (error) {
       console.error('Failed to delete API key:', error)
     }
+    
+    setPendingApiKeyDelete(null)
+  }
+
+  const handleSaveTab = () => {
+    const tabSettings = getTabSettings()
+    onSaveSettings(tabSettings)
+    setHasUnsavedChanges(false)
+    showSuccess('Settings saved successfully!')
+  }
+
+  const getTabSettings = () => {
+    switch (activeTab) {
+      case 'general':
+        return {
+          complete_data_removal: localSettings.complete_data_removal
+        }
+      case 'ai':
+        return {
+          ai_provider: localSettings.ai_provider,
+          openai_model: localSettings.openai_model,
+          anthropic_model: localSettings.anthropic_model,
+          agent_mode: localSettings.agent_mode,
+          max_agent_iterations: localSettings.max_agent_iterations,
+          mcp_enabled: localSettings.mcp_enabled,
+          enable_create_tools: localSettings.enable_create_tools,
+          enable_update_tools: localSettings.enable_update_tools,
+          enable_delete_tools: localSettings.enable_delete_tools,
+          debug_log_raw_responses: localSettings.debug_log_raw_responses
+        }
+      default:
+        return {}
+    }
   }
 
   const openaiModels = [
@@ -82,7 +135,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     { value: 'gpt-4o', label: 'GPT-4o' },
     { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
     { value: 'o3', label: 'o3' },
-    { value: 'o3-mini', label: 'o3 Mini' },
+    { value: 'o4-mini', label: 'o4 Mini' },
   ]
 
   const anthropicModels = [
@@ -93,11 +146,27 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku' }
   ]
 
+  const aiProviderOptions = [
+    { value: 'openai', label: 'OpenAI' },
+    { value: 'anthropic', label: 'Anthropic (Claude)' }
+  ]
+
+  const agentModeOptions = [
+    { value: 'never', label: 'Chat Mode' },
+    { value: 'always', label: 'Agent Mode' }
+  ]
+
+  const maxIterationsOptions = [
+    { value: 5, label: '5 iterations (Basic)' },
+    { value: 10, label: '10 iterations (Recommended)' },
+    { value: 15, label: '15 iterations (Complex)' },
+    { value: 25, label: '25 iterations (Advanced)' }
+  ]
+
   const tabs = [
     { id: 'general', label: 'General', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
     { id: 'ai', label: 'AI Configuration', icon: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z' },
-    { id: 'agent', label: 'Agent Mode', icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
-    { id: 'mcp', label: 'MCP Settings', icon: 'M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1' }
+    { id: 'sharing', label: 'Shared Conversations', icon: 'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z' }
   ]
 
   const renderTabContent = () => {
@@ -141,8 +210,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                   <label className="inline-flex items-center cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={completeDataRemoval}
-                      onChange={(e) => handleCompleteDataRemovalChange(e.target.checked)}
+                      checked={localSettings.complete_data_removal === true}
+                      onChange={(e) => handleLocalChange('complete_data_removal', e.target.checked)}
                       disabled={isSavingSettings}
                       className="sr-only peer"
                     />
@@ -154,12 +223,31 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                 </div>
               </div>
             </div>
+
+            {/* Save Button */}
+            <div className="pt-4 border-t border-gray-200 dark:border-gray-600">
+              <div className="flex items-center justify-between">
+                {hasUnsavedChanges && (
+                  <p className="text-sm text-amber-600 dark:text-amber-400">
+                    ⚠️ You have unsaved changes
+                  </p>
+                )}
+                <Button
+                  onClick={handleSaveTab}
+                  disabled={isSavingSettings || !hasUnsavedChanges}
+                  className="ml-auto"
+                >
+                  {isSavingSettings ? 'Saving...' : 'Save General Settings'}
+                </Button>
+              </div>
+            </div>
           </div>
         )
 
       case 'ai':
         return (
-          <div className="space-y-4">
+          <div className="space-y-6">
+            {/* AI Provider Section */}
             <div className="p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
               <h4 className="font-medium text-brand-dark dark:text-white mb-3">AI Provider</h4>
               <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
@@ -171,35 +259,32 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <div>
                   <Label htmlFor="ai-provider" value="Provider" className="mb-2" />
-                  <Select
+                  <CustomSelect
                     id="ai-provider"
-                    value={settings?.ai_provider || 'openai'}
-                    onChange={(e) => handleSettingsChange('ai_provider', e.target.value)}
-                    disabled={isSavingSettings}
-                  >
-                    <option value="openai">OpenAI</option>
-                    <option value="anthropic">Anthropic (Claude)</option>
-                  </Select>
+                    value={aiProviderOptions.find(option => option.value === (localSettings.ai_provider || 'openai'))}
+                    onChange={(selectedOption) => handleLocalChange('ai_provider', selectedOption.value)}
+                    isDisabled={isSavingSettings}
+                    options={aiProviderOptions}
+                    darkMode={darkMode}
+                  />
                 </div>
               </div>
 
-              {(settings?.ai_provider === 'openai' || !settings?.ai_provider) && (
+              {(localSettings.ai_provider === 'openai' || !localSettings.ai_provider) && (
                 <div className="space-y-4 border-t border-gray-200 dark:border-gray-600 pt-4">
                   <h5 className="font-medium text-brand-dark dark:text-white">OpenAI Configuration</h5>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <Label htmlFor="openai-model" value="Model" className="mb-2" />
-                      <Select
+                      <CustomSelect
                         id="openai-model"
-                        value={settings?.openai_model || 'gpt-4.1-mini'}
-                        onChange={(e) => handleSettingsChange('openai_model', e.target.value)}
-                        disabled={isSavingSettings}
-                      >
-                        {openaiModels.map(model => (
-                          <option key={model.value} value={model.value}>{model.label}</option>
-                        ))}
-                      </Select>
+                        value={openaiModels.find(option => option.value === (localSettings.openai_model || 'gpt-4.1-mini'))}
+                        onChange={(selectedOption) => handleLocalChange('openai_model', selectedOption.value)}
+                        isDisabled={isSavingSettings}
+                        options={openaiModels}
+                        darkMode={darkMode}
+                      />
                     </div>
                   </div>
 
@@ -230,9 +315,9 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                         </p>
                         <Button
                           size="xs"
-                          color="failure"
-                          onClick={() => handleDeleteApiKey('openai')}
+                          onClick={() => handleDeleteApiKeyClick('openai')}
                           disabled={isSavingSettings}
+                          className="bg-red-600 hover:bg-red-700 focus:ring-red-300 dark:bg-red-500 dark:hover:bg-red-600 dark:focus:ring-red-900"
                         >
                           Delete Key
                         </Button>
@@ -242,23 +327,21 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                 </div>
               )}
 
-              {settings?.ai_provider === 'anthropic' && (
+              {localSettings.ai_provider === 'anthropic' && (
                 <div className="space-y-4 border-t border-gray-200 dark:border-gray-600 pt-4">
                   <h5 className="font-medium text-brand-dark dark:text-white">Anthropic Configuration</h5>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <Label htmlFor="anthropic-model" value="Model" className="mb-2" />
-                      <Select
+                      <CustomSelect
                         id="anthropic-model"
-                        value={settings?.anthropic_model || 'claude-sonnet-4-20250514'}
-                        onChange={(e) => handleSettingsChange('anthropic_model', e.target.value)}
-                        disabled={isSavingSettings}
-                      >
-                        {anthropicModels.map(model => (
-                          <option key={model.value} value={model.value}>{model.label}</option>
-                        ))}
-                      </Select>
+                        value={anthropicModels.find(option => option.value === (localSettings.anthropic_model || 'claude-sonnet-4-20250514'))}
+                        onChange={(selectedOption) => handleLocalChange('anthropic_model', selectedOption.value)}
+                        isDisabled={isSavingSettings}
+                        options={anthropicModels}
+                        darkMode={darkMode}
+                      />
                     </div>
                   </div>
 
@@ -290,7 +373,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                         <Button
                           size="xs"
                           color="failure"
-                          onClick={() => handleDeleteApiKey('anthropic')}
+                          onClick={() => handleDeleteApiKeyClick('anthropic')}
                           disabled={isSavingSettings}
                         >
                           Delete Key
@@ -301,12 +384,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                 </div>
               )}
             </div>
-          </div>
-        )
 
-      case 'agent':
-        return (
-          <div className="space-y-4">
+            {/* Agent Mode Section */}
             <div className="p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
               <h4 className="font-medium text-brand-dark dark:text-white mb-3">Agent Mode Configuration</h4>
               <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
@@ -319,34 +398,29 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <div>
                   <Label htmlFor="agent-mode" value="Agent Mode" className="mb-2" />
-                  <Select
+                  <CustomSelect
                     id="agent-mode"
-                    value={settings?.agent_mode || 'auto'}
-                    onChange={(e) => handleSettingsChange('agent_mode', e.target.value)}
-                    disabled={isSavingSettings}
-                  >
-                    <option value="auto">Auto (Smart Detection)</option>
-                    <option value="always">Always Agent Mode</option>
-                    <option value="never">Never Agent Mode</option>
-                  </Select>
+                    value={agentModeOptions.find(option => option.value === (localSettings.agent_mode || 'never'))}
+                    onChange={(selectedOption) => handleLocalChange('agent_mode', selectedOption.value)}
+                    isDisabled={isSavingSettings}
+                    options={agentModeOptions}
+                    darkMode={darkMode}
+                  />
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Auto mode detects complex requests and switches to agent mode automatically
+                    Chat Mode: Single response per message. Agent Mode: Multi-step task execution.
                   </p>
                 </div>
                 
                 <div>
                   <Label htmlFor="max-agent-iterations" value="Max Agent Iterations" className="mb-2" />
-                  <Select
+                  <CustomSelect
                     id="max-agent-iterations"
-                    value={settings?.max_agent_iterations || 5}
-                    onChange={(e) => handleSettingsChange('max_agent_iterations', parseInt(e.target.value))}
-                    disabled={isSavingSettings}
-                  >
-                    <option value={3}>3 iterations</option>
-                    <option value={5}>5 iterations</option>
-                    <option value={7}>7 iterations</option>
-                    <option value={10}>10 iterations</option>
-                  </Select>
+                    value={maxIterationsOptions.find(option => option.value === (localSettings.max_agent_iterations || 10))}
+                    onChange={(selectedOption) => handleLocalChange('max_agent_iterations', parseInt(selectedOption.value))}
+                    isDisabled={isSavingSettings}
+                    options={maxIterationsOptions}
+                    darkMode={darkMode}
+                  />
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                     Maximum number of reasoning/tool execution cycles per request
                   </p>
@@ -389,12 +463,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                 </p>
               </div>
             </div>
-          </div>
-        )
 
-      case 'mcp':
-        return (
-          <div className="space-y-4">
+            {/* MCP Settings Section */}
             <div className="p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
               <h4 className="font-medium text-brand-dark dark:text-white mb-3">MCP (Model Context Protocol)</h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -402,8 +472,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                   <input
                     type="checkbox"
                     id="mcp-enabled"
-                    checked={settings?.mcp_enabled || false}
-                    onChange={(e) => handleSettingsChange('mcp_enabled', e.target.checked)}
+                    checked={localSettings.mcp_enabled === true}
+                    onChange={(e) => handleLocalChange('mcp_enabled', e.target.checked)}
                     disabled={isSavingSettings}
                     className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 rounded focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
                   />
@@ -423,8 +493,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                     <input
                       type="checkbox"
                       id="enable-create-tools"
-                      checked={settings?.enable_create_tools !== false}
-                      onChange={(e) => handleSettingsChange('enable_create_tools', e.target.checked)}
+                      checked={localSettings.enable_create_tools === true}
+                      onChange={(e) => handleLocalChange('enable_create_tools', e.target.checked)}
                       disabled={isSavingSettings}
                       className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 rounded focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
                     />
@@ -436,8 +506,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                     <input
                       type="checkbox"
                       id="enable-update-tools"
-                      checked={settings?.enable_update_tools !== false}
-                      onChange={(e) => handleSettingsChange('enable_update_tools', e.target.checked)}
+                      checked={localSettings.enable_update_tools === true}
+                      onChange={(e) => handleLocalChange('enable_update_tools', e.target.checked)}
                       disabled={isSavingSettings}
                       className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 rounded focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
                     />
@@ -449,7 +519,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                     <input
                       type="checkbox"
                       id="enable-delete-tools"
-                      checked={settings?.enable_delete_tools || false}
+                      checked={localSettings.enable_delete_tools === true}
                       onChange={(e) => handleDeleteToolsChange(e.target.checked)}
                       disabled={isSavingSettings}
                       className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 rounded focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
@@ -466,9 +536,53 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                 </div>
               </div>
             </div>
+
+            {/* Debug Logging Section */}
+            <div className="p-4 border border-red-200 dark:border-red-600 rounded-lg">
+              <h4 className="font-medium text-brand-dark dark:text-white mb-2">Debug: Raw API Response Logging</h4>
+              <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+                Logs the full raw JSON responses from OpenAI / Anthropic to the PHP error log. These responses can contain sensitive data. Only enable when troubleshooting and disable afterwards.
+              </p>
+              <label className="inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={localSettings.debug_log_raw_responses === true}
+                  onChange={(e) => handleLocalChange('debug_log_raw_responses', e.target.checked)}
+                  disabled={isSavingSettings}
+                  className="sr-only peer"
+                />
+                <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-accent/20 dark:peer-focus:ring-brand-accent/30 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-brand-accent dark:peer-checked:bg-brand-accent peer-disabled:opacity-50 peer-disabled:cursor-not-allowed"></div>
+                <span className="ms-3 text-sm font-medium text-gray-900 dark:text-gray-300">
+                  Enable raw response logging
+                </span>
+              </label>
+            </div>
+
+            {/* Save Button */}
+            <div className="pt-4 border-t border-gray-200 dark:border-gray-600">
+              <div className="flex items-center justify-between">
+                {hasUnsavedChanges && (
+                  <p className="text-sm text-amber-600 dark:text-amber-400">
+                    ⚠️ You have unsaved changes
+                  </p>
+                )}
+                <Button
+                  onClick={handleSaveTab}
+                  disabled={isSavingSettings || !hasUnsavedChanges}
+                  className="ml-auto"
+                >
+                  {isSavingSettings ? 'Saving...' : 'Save AI Settings'}
+                </Button>
+              </div>
+            </div>
           </div>
         )
 
+      case 'sharing':
+        return (
+          <SharedConversations adminData={window.matAdminData} />
+        )
+        
       default:
         return null
     }
@@ -511,28 +625,49 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         {/* Tab Content */}
         <div>
           {renderTabContent()}
-                 </div>
-       </Card>
+        </div>
+      </Card>
 
-       {/* Confirmation Modal */}
-       <ConfirmationModal
-         isOpen={showDeleteModal}
-         onClose={() => setShowDeleteModal(false)}
-         onConfirm={confirmDeleteTools}
-         title="Enable Delete Operations?"
-         message="Are you sure you want to enable delete operations? This will allow the AI to permanently delete content from your WordPress site."
-         confirmText="Yes, enable delete operations"
-         cancelText="No, keep them disabled"
-         confirmButtonClass="bg-red-600 hover:bg-red-700 focus:ring-red-300 dark:bg-red-500 dark:hover:bg-red-600 dark:focus:ring-red-900"
-         icon="delete"
-         items={[
-           "AI can delete posts, pages, and media",
-           "AI can delete users and their content", 
-           "AI can delete WooCommerce products and orders",
-           "These actions cannot be undone"
-         ]}
-       />
-     </div>
+      {/* Delete Tools Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={showDeleteModal}
+        onClose={() => setShowDeleteModal(false)}
+        onConfirm={confirmDeleteTools}
+        title="Enable Delete Operations?"
+        message="Are you sure you want to enable delete operations? This will allow the AI to permanently delete content from your WordPress site."
+        confirmText="Yes, enable delete operations"
+        cancelText="No, keep them disabled"
+        confirmButtonClass="bg-red-600 hover:bg-red-700 focus:ring-red-300 dark:bg-red-500 dark:hover:bg-red-600 dark:focus:ring-red-900"
+        icon="delete"
+        items={[
+          "AI can delete posts, pages, and media",
+          "AI can delete users and their content", 
+          "AI can delete WooCommerce products and orders",
+          "These actions cannot be undone"
+        ]}
+      />
+
+      {/* API Key Delete Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={showApiKeyDeleteModal}
+        onClose={() => {
+          setShowApiKeyDeleteModal(false)
+          setPendingApiKeyDelete(null)
+        }}
+        onConfirm={confirmDeleteApiKey}
+        title="Delete API Key?"
+        message={`Are you sure you want to delete the ${pendingApiKeyDelete} API key? This action cannot be undone.`}
+        confirmText="Yes, delete API key"
+        cancelText="No, keep it"
+        confirmButtonClass="bg-red-600 hover:bg-red-700 focus:ring-red-300 dark:bg-red-500 dark:hover:bg-red-600 dark:focus:ring-red-900"
+        icon="delete"
+        items={[
+          "The encrypted API key will be permanently removed",
+          "You will need to re-enter the API key to use AI features",
+          "This will not affect your account with the provider"
+        ]}
+      />
+    </div>
   )
 }
 

@@ -9,12 +9,12 @@ const navigationItems = [
   {
     id: 'dashboard',
     label: 'Dashboard',
-    icon: "M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
+    icon: "M10 0c5.523 0 10 4.477 10 10s-4.477 10-10 10S0 15.523 0 10S4.477 0 10 0Zm.667 1.359v1.035a.667.667 0 0 1-1.334 0V1.359A8.614 8.614 0 0 0 5.637 2.51l.522.584a.667.667 0 0 1-.995.888l-.63-.707a8.714 8.714 0 0 0-1.776 1.962l.843.506a.667.667 0 0 1-.686 1.143l-.803-.481a8.607 8.607 0 0 0-.709 2.491h.907a.667.667 0 1 1 0 1.334l-.973-.001v.031a8.627 8.627 0 0 0 .742 3.263l.836-.559a.667.667 0 0 1 .741 1.109l-.939.627A8.66 8.66 0 0 0 10 18.667a8.662 8.662 0 0 0 7.447-4.23l-1.132-.757a.667.667 0 0 1 .74-1.109l.989.661a8.633 8.633 0 0 0 .62-3.003H17.58a.667.667 0 0 1 0-1.333h1.017a8.608 8.608 0 0 0-.57-2.168l-.95.492a.667.667 0 1 1-.612-1.184l.965-.5a8.71 8.71 0 0 0-1.839-2.158l-.602.789a.667.667 0 1 1-1.06-.81l.58-.76a8.615 8.615 0 0 0-3.842-1.238Zm3.248 5.46a.667.667 0 0 1-.104.937l-2.04 1.631l.007.12c0 .692-.529 1.262-1.205 1.326l-.129.006a1.333 1.333 0 1 1 .558-2.544l1.976-1.58a.667.667 0 0 1 .937.104Z"
   },
   {
     id: 'chat',
     label: 'AI Assistant',
-    icon: "M8 12h.01M12 12h.01M16 12h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+    icon: "M12 21.25a9.25 9.25 0 1 0-8.307-5.177c.108.22.144.468.089.706l-.816 3.536a.6.6 0 0 0 .72.72l3.535-.817a1.06 1.06 0 0 1 .706.09A9.2 9.2 0 0 0 12 21.25M7.97 9.886h8.06m-8.06 4.228h5.748"
   },
   {
     id: 'analytics',
@@ -306,9 +306,11 @@ const AdminApp = () => {
           <div className="flex gap-2 items-center justify-between flex-shrink-0 p-4">
             <div className="flex items-center">
               <div className="w-8 h-8 mr-3 bg-brand-accent rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6 text-brand-dark" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5z"/>
-                </svg>
+                <img 
+                  src={adminData?.pluginUrl ? `${adminData.pluginUrl}assets/magicassistant-icon.svg` : '/wp-content/plugins/magicassistant/assets/magicassistant-icon.svg'} 
+                  alt="MagicAssistant" 
+                  className="w-8 h-8" 
+                />
               </div>
               {!sidebarCollapsed && (
                 <span className="text-xl font-bold text-brand-dark dark:text-white">MagicAssistant</span>
@@ -350,18 +352,32 @@ const AdminApp = () => {
                     }`}
                     title={sidebarCollapsed ? item.label : undefined}
                   >
-                    <svg
-                      className={`w-6 h-6 flex-shrink-0 ${sidebarCollapsed ? '' : 'mr-3'} ${
-                        activeTab === item.id
-                          ? 'text-brand-dark'
-                          : 'text-gray-500 dark:text-gray-400'
-                      }`}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
-                    </svg>
+                    {item.id === 'dashboard' ? (
+                      <svg
+                        className={`w-6 h-6 flex-shrink-0 ${sidebarCollapsed ? '' : 'mr-3'} ${
+                          activeTab === item.id
+                            ? 'text-brand-dark'
+                            : 'text-gray-500 dark:text-gray-400'
+                        }`}
+                        fill="currentColor"
+                        viewBox="0 0 20 20"
+                      >
+                        <path d={item.icon} />
+                      </svg>
+                    ) : (
+                      <svg
+                        className={`w-6 h-6 flex-shrink-0 ${sidebarCollapsed ? '' : 'mr-3'} ${
+                          activeTab === item.id
+                            ? 'text-brand-dark'
+                            : 'text-gray-500 dark:text-gray-400'
+                        }`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
+                      </svg>
+                    )}
                     {!sidebarCollapsed && item.label}
                   </button>
                 </li>

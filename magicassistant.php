@@ -40,6 +40,7 @@ class MagicAssistant {
   private $mcp_server;
   private $ai_provider;
   private $db;
+  private $public_share;
   
   public function __construct() {
     add_action('plugins_loaded', array($this, 'init'));
@@ -59,6 +60,10 @@ class MagicAssistant {
     $this->ai_provider = new MagicAssistant\AI_Provider();
     $this->ai_provider->set_mcp_server($this->mcp_server);
     $this->ai_provider->set_db($this->db);
+    
+    // Initialize public sharing
+    $this->public_share = new MagicAssistant\Public_Share();
+    $this->public_share->set_db($this->db);
     
     // Initialize admin functionality
     if (is_admin()) {

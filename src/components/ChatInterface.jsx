@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Button, Card, TextInput, Spinner, Drawer } from 'flowbite-react'
+import CustomSelect from './CustomSelect'
 import { useToast } from './Toast'
 import ConfirmationModal from './ConfirmationModal'
 import ReactMarkdown from 'react-markdown'
@@ -10,13 +11,14 @@ const ChatInterface = ({ adminData }) => {
     {
       role: 'assistant',
       content: 'Hello! I\'m your WordPress AI assistant. I can help you create content, manage your site, and answer questions. What would you like to do today?',
-      timestamp: new Date()
+      timestamp: new Date(),
+      isWelcomeMessage: true // Mark this as the welcome message
     }
   ])
   const [inputMessage, setInputMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [settings, setSettings] = useState(null)
-  const [forceAgentMode, setForceAgentMode] = useState(null)
+  const [forceAgentMode, setForceAgentMode] = useState(true)
   const messagesEndRef = useRef(null)
   const { showError, showSuccess } = useToast()
   const [isHistoryOpen, setIsHistoryOpen] = useState(false)
@@ -28,6 +30,59 @@ const ChatInterface = ({ adminData }) => {
   const [customTitle, setCustomTitle] = useState('')
   const [editingMessageIndex, setEditingMessageIndex] = useState(null)
   const [editingMessageContent, setEditingMessageContent] = useState('')
+  const [showingDebugData, setShowingDebugData] = useState({})
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false)
+  const [shareAsPermanent, setShareAsPermanent] = useState(false)
+  const [shareExpiry, setShareExpiry] = useState(30)
+  const [isCreatingShare, setIsCreatingShare] = useState(false)
+
+  // Agent mode options for react-select
+  const agentModeOptions = [
+    { value: 'false', label: 'Chat Mode' },
+    { value: 'true', label: 'Agent Mode' }
+  ]
+
+  // Determine if we're in dark mode by checking the document class
+  const isDarkMode = document.documentElement.classList.contains('dark')
+
+  // Helper: save last opened session ID to usermeta via REST
+  const saveLastSession = async (sessionId) => {
+    try {
+      await fetch(`${adminData.restUrl}last-session`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-WP-Nonce': adminData.nonces.wp_rest,
+        },
+        body: JSON.stringify({ session_id: sessionId || '' })
+      })
+    } catch (error) {
+      console.error('Failed to save last session:', error)
+    }
+  }
+
+  // Helper: fetch last opened session ID and automatically load it
+  const loadLastSession = async (sessionsList = []) => {
+    try {
+      const response = await fetch(`${adminData.restUrl}last-session`, {
+        headers: {
+          'X-WP-Nonce': adminData.nonces.wp_rest,
+        },
+      })
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success && data.session_id) {
+          const match = sessionsList.find(s => s.id === data.session_id)
+          if (match) {
+            // Delay loading slightly to ensure UI ready
+            setTimeout(() => loadSession(match), 0)
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load last session:', error)
+    }
+  }
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -69,7 +124,10 @@ const ChatInterface = ({ adminData }) => {
       
       if (response.ok) {
         const data = await response.json()
-        setChatSessions(data.sessions || [])
+        const sessions = data.sessions || []
+        setChatSessions(sessions)
+        // Attempt to reopen last session automatically
+        loadLastSession(sessions)
       }
     } catch (error) {
       console.error('Failed to load chat sessions:', error)
@@ -123,6 +181,8 @@ const ChatInterface = ({ adminData }) => {
           setCurrentSessionId(data.session_id)
           // Refresh chat sessions list to include the new session
           loadChatSessions()
+          // Persist as last opened session
+          saveLastSession(data.session_id)
         }
         
         const assistantMessage = {
@@ -133,14 +193,13 @@ const ChatInterface = ({ adminData }) => {
           model: data.model,
           agent_mode: data.agent_mode,
           reasoning: data.reasoning,
-          tool_calls_count: data.tool_calls_count
+          tool_calls_count: data.tool_calls_count,
+          debug_tool_data: data.debug_tool_data,
+          tokens_used: data.tokens_used,
+          cost: data.cost,
+          response_time: data.response_time
         }
         setMessages(prev => [...prev, assistantMessage])
-        
-        // Reset force agent mode after message is sent
-        if (forceAgentMode !== null) {
-          setForceAgentMode(null)
-        }
       } else {
         const errorMessage = {
           role: 'assistant',
@@ -203,17 +262,20 @@ const ChatInterface = ({ adminData }) => {
       {
         role: 'assistant',
         content: 'Chat cleared! How can I help you today?',
-        timestamp: new Date()
+        timestamp: new Date(),
+        isWelcomeMessage: true
       }
     ])
     setCurrentSessionId(null) // Reset session ID for new conversation
     setCustomTitle('') // Reset custom title
     setIsEditingTitle(false) // Stop editing if in edit mode
+    setForceAgentMode(true)   // Default back to Agent Mode
   }
 
   const startNewChat = () => {
     clearChat()
     loadChatSessions() // Refresh the sessions list
+    setForceAgentMode(true)
   }
 
   const loadSession = async (session) => {
@@ -231,12 +293,19 @@ const ChatInterface = ({ adminData }) => {
           const formattedMessages = data.history.map(msg => ({
             role: msg.role,
             content: msg.content,
-            timestamp: msg.created_at ? new Date(msg.created_at) : new Date(),
+            timestamp: msg.created_at ? new Date(msg.created_at) : new Date(msg.timestamp || Date.now()),
             provider: msg.provider,
             model: msg.model,
             userId: msg.user_id,
             userName: msg.user_name,
-            userAvatar: msg.user_avatar
+            userAvatar: msg.user_avatar,
+            agent_mode: msg.agent_mode,
+            reasoning: msg.reasoning,
+            tool_calls_count: msg.tool_calls_count,
+            debug_tool_data: msg.debug_tool_data,
+            tokens_used: msg.tokens_used,
+            cost: msg.cost,
+            response_time: msg.response_time
           }))
           
           setMessages(formattedMessages)
@@ -244,6 +313,12 @@ const ChatInterface = ({ adminData }) => {
           // Load the custom title from the session
           setCustomTitle(session.title || '')
           setIsHistoryOpen(false)
+          // Update Agent Mode to reflect the saved session preference
+          if (typeof session.agent_mode !== 'undefined') {
+            setForceAgentMode(session.agent_mode)
+          }
+          // Persist last opened session
+          saveLastSession(session.id)
         }
       }
     } catch (error) {
@@ -452,14 +527,13 @@ const ChatInterface = ({ adminData }) => {
           model: data.model,
           agent_mode: data.agent_mode,
           reasoning: data.reasoning,
-          tool_calls_count: data.tool_calls_count
+          tool_calls_count: data.tool_calls_count,
+          debug_tool_data: data.debug_tool_data,
+          tokens_used: data.tokens_used,
+          cost: data.cost,
+          response_time: data.response_time
         }
         setMessages(prev => [...prev, assistantMessage])
-        
-        // Reset force agent mode after message is sent
-        if (forceAgentMode !== null) {
-          setForceAgentMode(null)
-        }
       } else {
         const errorMessage = {
           role: 'assistant',
@@ -510,6 +584,153 @@ const ChatInterface = ({ adminData }) => {
     }
   }
 
+  const toggleDebugData = (messageIndex) => {
+    setShowingDebugData(prev => ({
+      ...prev,
+      [messageIndex]: !prev[messageIndex]
+    }))
+  }
+
+  const formatConversationForSharing = () => {
+    const chatTitle = getChatTitle()
+    
+    // Filter out system messages, welcome messages, and get the actual conversation
+    const shareableMessages = messages.filter(msg => 
+      msg.role !== 'system' && !msg.isWelcomeMessage
+    )
+    
+    if (shareableMessages.length === 0) {
+      return `# ${chatTitle}\n\n*No conversation to share yet.*`
+    }
+    
+    // Get the date from the first actual message, not the current date
+    const firstMessageDate = shareableMessages[0]?.timestamp || new Date()
+    const conversationDate = firstMessageDate.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    })
+    
+    let formattedText = `# ${chatTitle}\n\n`
+    formattedText += `*Conversation from ${conversationDate}*\n\n`
+    formattedText += `---\n\n`
+    
+    shareableMessages.forEach((message, index) => {
+      // Use the actual timestamp from when the message was created
+      const timestamp = message.timestamp.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      })
+      
+      const messageDate = message.timestamp.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric'
+      })
+      
+      if (message.role === 'user') {
+        const userName = message.userName || adminData?.currentUser?.name || 'User'
+        formattedText += `**👤 ${userName}** *${messageDate} at ${timestamp}*\n\n`
+        formattedText += `${message.content}\n\n`
+      } else if (message.role === 'assistant') {
+        formattedText += `**🤖 AI Assistant** *${messageDate} at ${timestamp}*`
+        if (message.agent_mode) {
+          formattedText += ` • Agent Mode`
+        }
+        if (message.provider) {
+          formattedText += ` • ${message.provider}`
+        }
+        formattedText += `\n\n`
+        formattedText += `${message.content}\n\n`
+      }
+      
+      // Add separator between messages except for the last one
+      if (index < shareableMessages.length - 1) {
+        formattedText += `---\n\n`
+      }
+    })
+    
+    formattedText += `\n*Generated by MagicAssistant - AI-Powered WordPress Assistant*`
+    
+    return formattedText
+  }
+
+  const copyConversationToClipboard = async () => {
+    try {
+      const formattedConversation = formatConversationForSharing()
+      await navigator.clipboard.writeText(formattedConversation)
+      showSuccess('Conversation copied to clipboard!')
+    } catch (err) {
+      console.error('Failed to copy conversation: ', err)
+      showError('Failed to copy conversation')
+    }
+  }
+
+  const openShareModal = () => {
+    const shareableMessages = messages.filter(msg => 
+      msg.role !== 'system' && !msg.isWelcomeMessage
+    )
+    
+    if (shareableMessages.length === 0) {
+      showError('Start a conversation before sharing')
+      return
+    }
+    
+    // Reset share modal state
+    setShareAsPermanent(false)
+    setShareExpiry(30)
+    setIsCreatingShare(false)
+    setIsShareModalOpen(true)
+  }
+
+  const createPermanentShare = async () => {
+    if (isCreatingShare) return
+    
+    setIsCreatingShare(true)
+    
+    try {
+      const formattedText = formatConversationForSharing()
+      const title = getChatTitle()
+      
+      const response = await fetch(`${adminData.restUrl}shared-conversations`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-WP-Nonce': adminData.nonces.wp_rest,
+        },
+        body: JSON.stringify({
+          title: title,
+          session_id: currentSessionId,
+          formatted_content: formattedText,
+          expires_in_days: shareExpiry > 0 ? shareExpiry : 0
+        })
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        showSuccess(`Conversation shared! URL: ${data.share_url}`)
+        
+        // Copy URL to clipboard automatically
+        try {
+          await navigator.clipboard.writeText(data.share_url)
+          showSuccess('Share URL copied to clipboard!')
+        } catch (err) {
+          console.error('Failed to copy URL:', err)
+        }
+        
+        setIsShareModalOpen(false)
+      } else {
+        showError('Failed to create permanent share: ' + (data.message || 'Unknown error'))
+      }
+    } catch (error) {
+      console.error('Error creating permanent share:', error)
+      showError('Failed to create permanent share')
+    }
+    
+    setIsCreatingShare(false)
+  }
+
   return (
     
     <div className="flex flex-col h-[calc(100vh-15rem)]">
@@ -518,6 +739,12 @@ const ChatInterface = ({ adminData }) => {
         <div className="flex items-center space-x-2">
           <Button size="sm" color="gray" onClick={() => setIsSettingsOpen(true)}>Settings</Button>
           <Button size="sm" color="gray" onClick={() => setIsHistoryOpen(true)}>History</Button>
+          <Button size="sm" color="gray" onClick={openShareModal} disabled={messages.filter(msg => msg.role !== 'system' && !msg.isWelcomeMessage).length === 0}>
+            <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
+            </svg>
+            Share
+          </Button>
         </div>
         
         {/* Chat Title */}
@@ -564,18 +791,17 @@ const ChatInterface = ({ adminData }) => {
           )}
         </div>
         
-        <div className="flex items-center space-x-2">
-          <select
-            value={forceAgentMode || 'auto'}
-            onChange={(e) => setForceAgentMode(e.target.value === 'auto' ? null : e.target.value === 'true')}
-            className="text-xs border border-gray-300 rounded px-2 py-1 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-          >
-            <option value="auto">Auto Mode</option>
-            <option value="true">Force Agent</option>
-            <option value="false">Force Chat</option>
-          </select>
-          <Button size="sm" onClick={startNewChat}>New chat</Button>
-        </div>
+                  <div className="flex items-center space-x-2">
+            <CustomSelect
+              value={agentModeOptions.find(option => option.value === forceAgentMode.toString())}
+              onChange={(option) => setForceAgentMode(option.value === 'true')}
+              options={agentModeOptions}
+              isDisabled={!settings?.has_api_key}
+              darkMode={isDarkMode}
+              size="compact"
+            />
+            <Button size="sm" onClick={startNewChat}>New chat</Button>
+          </div>
       </div>
 
       {/* Messages */}
@@ -644,6 +870,59 @@ const ChatInterface = ({ adminData }) => {
                   </div>
                 )}
                 
+                {/* Debug Tool Data */}
+                {showingDebugData[index] && (
+                  <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600">
+                    {message.debug_tool_data && message.debug_tool_data.length > 0 ? (
+                      <>
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">🔧 Raw Tool Data</span>
+                          <span className="text-xs text-gray-500 dark:text-gray-400">({message.debug_tool_data.length} tools)</span>
+                        </div>
+                        <div className="space-y-2 max-h-96 overflow-y-auto">
+                          {message.debug_tool_data.map((toolData, toolIndex) => (
+                            <div key={toolIndex} className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-200 dark:border-gray-600">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className={`text-xs px-2 py-1 rounded ${
+                                  toolData.success 
+                                    ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' 
+                                    : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                                }`}>
+                                  {toolData.success ? '✅' : '❌'} {toolData.tool}
+                                </span>
+                                {toolData.execution_time && (
+                                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                                    {toolData.execution_time}ms
+                                  </span>
+                                )}
+                              </div>
+                              <pre className="text-xs bg-gray-100 dark:bg-gray-900 p-2 rounded overflow-x-auto text-gray-800 dark:text-gray-200 font-mono">
+                                {JSON.stringify(toolData.success ? toolData.result : toolData.error, null, 2)}
+                              </pre>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-sm text-gray-600 dark:text-gray-400">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="font-medium">🔧 Debug Information</span>
+                        </div>
+                        <div className="space-y-1 text-xs">
+                          <div><strong>Role:</strong> {message.role}</div>
+                          <div><strong>Provider:</strong> {message.provider || 'N/A'}</div>
+                          <div><strong>Agent Mode:</strong> {message.agent_mode ? 'Yes' : 'No'}</div>
+                          <div><strong>Tool Calls:</strong> {message.tool_calls_count || 0}</div>
+                          <div><strong>Timestamp:</strong> {message.timestamp.toISOString()}</div>
+                          <div><strong>Tokens Used:</strong> {message.tokens_used || 'N/A'}</div>
+                          <div><strong>Cost:</strong> {message.cost ? `$${message.cost.toFixed(6)}` : 'N/A'}</div>
+                          {message.response_time && <div><strong>Response Time:</strong> {(message.response_time * 1000).toFixed(0)}ms</div>}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                
                 {/* Meta information */}
                 <div className="text-xs mt-3 text-gray-500 dark:text-gray-400 flex items-center gap-2 flex-wrap">
                   <span>{message.timestamp.toLocaleDateString()} {message.timestamp.toLocaleTimeString()}</span>
@@ -694,6 +973,20 @@ const ChatInterface = ({ adminData }) => {
                     <span className="px-2 py-1 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 rounded text-xs">
                       {message.tool_calls_count} tools used
                     </span>
+                  )}
+                  {message.role === 'assistant' && (
+                    <button
+                      type="button"
+                      onClick={() => toggleDebugData(index)}
+                      className={`px-2 py-1 rounded text-xs transition-all cursor-pointer opacity-0 group-hover:opacity-100 ${
+                        message.debug_tool_data && message.debug_tool_data.length > 0
+                          ? 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200 hover:bg-orange-200 dark:hover:bg-orange-800'
+                          : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+                      }`}
+                      title={message.debug_tool_data && message.debug_tool_data.length > 0 ? "Toggle raw tool data" : "Show debug information"}
+                    >
+                      🔧 {showingDebugData[index] ? 'Hide' : 'Debug'}
+                    </button>
                   )}
                 </div>
               </div>
@@ -837,6 +1130,194 @@ const ChatInterface = ({ adminData }) => {
         confirmButtonClass="bg-red-600 hover:bg-red-700 focus:ring-red-300 dark:bg-red-500 dark:hover:bg-red-600 dark:focus:ring-red-900"
         icon="delete"
       />
+
+      {/* Share Conversation Modal */}
+      <ConfirmationModal
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        title="Share Conversation"
+        showActions={false}
+        maxWidth="max-w-4xl"
+      >
+        <div className="space-y-6">
+          {/* Permanent Share Options */}
+          <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border border-blue-200 dark:border-blue-800">
+            <div className="flex items-center mb-3">
+              <input
+                type="checkbox"
+                id="shareAsPermanent"
+                checked={shareAsPermanent}
+                onChange={(e) => setShareAsPermanent(e.target.checked)}
+                className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+              />
+              <label htmlFor="shareAsPermanent" className="ml-2 text-sm font-medium text-blue-900 dark:text-blue-100 cursor-pointer">
+                🔗 Create permanent shareable link
+              </label>
+            </div>
+            
+            {shareAsPermanent && (
+              <div className="mt-3 space-y-3">
+                <p className="text-sm text-blue-800 dark:text-blue-200">
+                  This will create a public URL that anyone can access to view this conversation.
+                </p>
+                
+                <div className="flex items-center space-x-3">
+                  <label className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                    Expire after:
+                  </label>
+                  <select
+                    value={shareExpiry}
+                    onChange={(e) => setShareExpiry(parseInt(e.target.value))}
+                    className="px-3 py-1 border border-blue-300 dark:border-blue-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  >
+                    <option value={0}>Never</option>
+                    <option value={1}>1 day</option>
+                    <option value={7}>1 week</option>
+                    <option value={30}>30 days</option>
+                    <option value={90}>90 days</option>
+                    <option value={365}>1 year</option>
+                  </select>
+                </div>
+                
+                <Button
+                  onClick={createPermanentShare}
+                  disabled={isCreatingShare}
+                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  {isCreatingShare ? (
+                    <>
+                      <Spinner size="sm" className="mr-2" />
+                      Creating Share Link...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
+                      </svg>
+                      Create Permanent Link
+                    </>
+                  )}
+                </Button>
+              </div>
+            )}
+          </div>
+
+          <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
+            <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">Preview</h3>
+            <div className="max-h-96 overflow-y-auto">
+              <div className="prose prose-sm max-w-none dark:prose-invert">
+                <ReactMarkdown remarkPlugins={[remarkBreaks]}>
+                  {formatConversationForSharing()}
+                </ReactMarkdown>
+              </div>
+            </div>
+          </div>
+          
+          {!shareAsPermanent && (
+            <div className="flex flex-col sm:flex-row gap-3">
+              <Button
+                onClick={copyConversationToClipboard}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                Copy to Clipboard
+              </Button>
+              
+              <Button
+                onClick={() => {
+                  const formattedText = formatConversationForSharing()
+                  const blob = new Blob([formattedText], { type: 'text/markdown' })
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = `${getChatTitle().replace(/[^a-z0-9]/gi, '_').toLowerCase()}_conversation.md`
+                  document.body.appendChild(a)
+                  a.click()
+                  document.body.removeChild(a)
+                  URL.revokeObjectURL(url)
+                  showSuccess('Conversation downloaded as Markdown file!')
+                }}
+                color="gray"
+                className="flex-1"
+              >
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Download as Markdown
+              </Button>
+              
+              <Button
+                onClick={() => {
+                  const formattedText = formatConversationForSharing()
+                  const dataUri = 'data:text/plain;charset=utf-8,' + encodeURIComponent(formattedText)
+                  const newWindow = window.open()
+                  if (newWindow) {
+                    newWindow.document.write(`
+                      <html>
+                        <head>
+                          <title>${getChatTitle()} - Conversation</title>
+                          <meta charset="utf-8">
+                          <meta name="viewport" content="width=device-width, initial-scale=1">
+                          <style>
+                            body { 
+                              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+                              max-width: 800px; 
+                              margin: 2rem auto; 
+                              padding: 2rem; 
+                              line-height: 1.6; 
+                              color: #333;
+                              background: #fff;
+                            }
+                            h1 { color: #2563eb; border-bottom: 2px solid #e5e7eb; padding-bottom: 1rem; }
+                            h2 { color: #1f2937; }
+                            pre { background: #f3f4f6; padding: 1rem; border-radius: 8px; overflow-x: auto; }
+                            code { background: #f3f4f6; padding: 0.2rem 0.4rem; border-radius: 4px; }
+                            blockquote { border-left: 4px solid #e5e7eb; margin: 1rem 0; padding-left: 1rem; color: #6b7280; }
+                            hr { border: none; height: 1px; background: #e5e7eb; margin: 2rem 0; }
+                            @media (prefers-color-scheme: dark) {
+                              body { background: #1f2937; color: #f9fafb; }
+                              h1 { color: #60a5fa; border-bottom-color: #374151; }
+                              h2 { color: #f9fafb; }
+                              pre, code { background: #374151; }
+                              blockquote { border-left-color: #4b5563; color: #9ca3af; }
+                              hr { background: #4b5563; }
+                            }
+                          </style>
+                        </head>
+                        <body>
+                          <div id="content"></div>
+                          <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+                          <script>
+                            document.getElementById('content').innerHTML = marked.parse(\`${formattedText.replace(/`/g, '\\`')}\`);
+                          </script>
+                        </body>
+                      </html>
+                    `)
+                    newWindow.document.close()
+                  } else {
+                    showError('Unable to open preview window. Please allow popups.')
+                  }
+                }}
+                color="gray"
+                className="flex-1"
+              >
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+                Open in New Tab
+              </Button>
+            </div>
+          )}
+          
+          <div className="flex justify-end">
+            <Button color="gray" onClick={() => setIsShareModalOpen(false)}>
+              Close
+            </Button>
+          </div>
+        </div>
+      </ConfirmationModal>
     </div>
   )
 }

@@ -1,11 +1,22 @@
 import { useState, useEffect } from 'react'
 import { Card } from 'flowbite-react'
+import CustomSelect from './CustomSelect'
 
 const Analytics = ({ adminData }) => {
   const [analyticsData, setAnalyticsData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [timeRange, setTimeRange] = useState(30) // days
+
+  // Time range options for react-select
+  const timeRangeOptions = [
+    { value: 7, label: 'Last 7 days' },
+    { value: 30, label: 'Last 30 days' },
+    { value: 90, label: 'Last 90 days' }
+  ]
+
+  // Determine if we're in dark mode by checking the document class
+  const isDarkMode = document.documentElement.classList.contains('dark')
 
   useEffect(() => {
     if (adminData) {
@@ -106,17 +117,14 @@ const Analytics = ({ adminData }) => {
               AI assistant usage insights for the last {timeRange} days
             </p>
           </div>
-          <div className="mt-4 sm:mt-0">
-            <select
-              value={timeRange}
-              onChange={(e) => setTimeRange(parseInt(e.target.value))}
-              className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-white text-sm rounded-lg focus:ring-brand-accent focus:border-brand-accent block w-full p-2.5"
-            >
-              <option value={7}>Last 7 days</option>
-              <option value={30}>Last 30 days</option>
-              <option value={90}>Last 90 days</option>
-            </select>
-          </div>
+                      <div className="mt-4 sm:mt-0">
+              <CustomSelect
+                options={timeRangeOptions}
+                value={timeRangeOptions.find(option => option.value === timeRange)}
+                onChange={(option) => setTimeRange(option.value)}
+                darkMode={isDarkMode}
+              />
+            </div>
         </div>
 
         {/* Main Statistics */}
