@@ -33,11 +33,6 @@ define('MAGIC_ASSISTANT_PLUGIN_BASENAME', plugin_basename(__FILE__));
 // Load Composer autoloader
 require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'vendor/autoload.php';
 
-// Load pagebuilder integration classes
-require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'includes/Utils/TailwindParser.php';
-require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'includes/pagebuilders/BricksElementMapper.php';
-require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'includes/pagebuilders/Bricks_Integration.php';
-
 class MagicAssistant {
   
   private $react_dev;
@@ -46,7 +41,6 @@ class MagicAssistant {
   private $ai_provider;
   private $db;
   private $public_share;
-  private $pagebuilder_integrations = array();
   
   public function __construct() {
     add_action('plugins_loaded', array($this, 'init'));
@@ -71,9 +65,6 @@ class MagicAssistant {
     $this->public_share = new MagicAssistant\Public_Share();
     $this->public_share->set_db($this->db);
     
-    // Initialize pagebuilder integrations
-    $this->init_pagebuilder_integrations();
-    
     // Initialize admin functionality
     if (is_admin()) {
       $this->admin = new MagicAssistant\Admin();
@@ -88,19 +79,6 @@ class MagicAssistant {
   }
   
   /**
-   * Initialize pagebuilder integrations
-   */
-  private function init_pagebuilder_integrations() {
-    // Initialize Bricks integration
-    if (class_exists('MagicAssistant\Pagebuilders\Bricks_Integration')) {
-      $this->pagebuilder_integrations['bricks'] = new MagicAssistant\Pagebuilders\Bricks_Integration();
-    }
-    
-    // Future integrations can be added here:
-    // Elementor, Gutenberg, Divi, etc.
-  }
-  
-  /**
    * Get the MCP server instance
    */
   public function get_mcp_server() {
@@ -112,13 +90,6 @@ class MagicAssistant {
    */
   public function get_db() {
     return $this->db;
-  }
-  
-  /**
-   * Get pagebuilder integrations
-   */
-  public function get_pagebuilder_integrations() {
-    return $this->pagebuilder_integrations;
   }
   
   /**
@@ -148,11 +119,4 @@ function MATMCP() {
  */
 function MATDB() {
   return $GLOBALS['magic_assistant']->get_db();
-}
-
-/**
- * Global function to access MagicAssistant pagebuilder integrations
- */
-function MAT_PageBuilders() {
-  return $GLOBALS['magic_assistant']->get_pagebuilder_integrations();
 }
