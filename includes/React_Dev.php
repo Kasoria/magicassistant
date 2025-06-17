@@ -450,6 +450,9 @@ class React_Dev {
     private function localize_public_data( $public_handle_suffix = '' ) {
         $handle = $this->is_dev_mode ? 'mat-react-public-dev' . $public_handle_suffix : 'mat-react-public' . $public_handle_suffix;
         
+        // Get current page/post information
+        $current_post_info = $this->get_current_post_info();
+        
         wp_localize_script( $handle, 'matPublicData', array(
             'ajaxurl' => admin_url( 'admin-ajax.php' ),
             'restUrl' => rest_url( 'magicassistant/v1/' ),
@@ -463,6 +466,7 @@ class React_Dev {
             'isAdmin' => current_user_can( 'manage_options' ),
             'isDev' => $this->is_dev_mode,
             'pluginUrl' => MAGIC_ASSISTANT_PLUGIN_URL,
+            'currentPost' => $current_post_info,
             'i18n' => array(
                 'loading' => __( 'Loading...', 'magic-assistant' ),
                 'error' => __( 'An error occurred', 'magic-assistant' ),
@@ -472,6 +476,155 @@ class React_Dev {
                 'edit' => __( 'Edit', 'magic-assistant' ),
             )
         ));
+    }
+    
+    /**
+     * Get current page/post information for the AI context
+     */
+    private function get_current_post_info() {
+        global $wp_query;
+        
+        $info = array(
+            'id' => null,
+            'type' => null,
+            'title' => '',
+            'url' => '',
+            'is_front_page' => false,
+            'is_home' => false,
+            'is_archive' => false,
+            'is_search' => false,
+            'is_404' => false,
+            'context' => 'unknown'
+        );
+        
+        // Get current URL
+        $info['url'] = home_url(add_query_arg(null, null));
+        
+        if (is_front_page()) {
+            $info['is_front_page'] = true;
+            $info['context'] = 'front_page';
+            $info['title'] = get_bloginfo('name');
+            
+            // Check if front page is a static page
+            $page_on_front = get_option('page_on_front');
+            if ($page_on_front) {
+                $info['id'] = intval($page_on_front);
+                $info['type'] = 'page';
+            }
+        } elseif (is_home()) {
+            $info['is_home'] = true;
+            $info['context'] = 'blog_home';
+            $info['title'] = 'Blog';
+            
+            // Check if blog page is set to a static page
+            $page_for_posts = get_option('page_for_posts');
+            if ($page_for_posts) {
+                $info['id'] = intval($page_for_posts);
+                $info['type'] = 'page';
+                $info['title'] = get_the_title($page_for_posts);
+            }
+        } elseif (is_singular()) {
+            global $post;
+            if ($post) {
+                $info['id'] = $post->ID;
+                $info['type'] = $post->post_type;
+                $info['title'] = get_the_title($post);
+                $info['context'] = 'singular_' . $post->post_type;
+            }
+        } elseif (is_category()) {
+            $category = get_queried_object();
+            if ($category) {
+                $info['id'] = $category->term_id;
+                $info['type'] = 'category';
+                $info['title'] = $category->name;
+                $info['context'] = 'category_archive';
+            }
+        } elseif (is_tag()) {
+            $tag = get_queried_object();
+            if ($tag) {
+                $info['id'] = $tag->term_id;
+                $info['type'] = 'tag';
+                $info['title'] = $tag->name;
+                $info['context'] = 'tag_archive';
+            }
+        } elseif (is_tax()) {
+            $term = get_queried_object();
+            if ($term) {
+                $info['id'] = $term->term_id;
+                $info['type'] = 'taxonomy';
+                $info['title'] = $term->name;
+                $info['context'] = 'taxonomy_archive';
+            }
+        } elseif (is_author()) {
+            $author = get_queried_object();
+            if ($author) {
+                $info['id'] = $author->ID;
+                $info['type'] = 'author';
+                $info['title'] = $author->display_name;
+                $info['context'] = 'author_archive';
+            }
+        } elseif (is_date()) {
+            $info['context'] = 'date_archive';
+            $info['title'] = 'Date Archive';
+        } elseif (is_search()) {
+            $info['is_search'] = true;
+            $info['context'] = 'search';
+            $info['title'] = 'Search Results';
+        } elseif (is_404()) {
+            $info['is_404'] = true;
+            $info['context'] = '404';
+            $info['title'] = '404 Not Found';
+        } elseif (is_archive()) {
+            $info['is_archive'] = true;
+            $info['context'] = 'archive';
+            $info['title'] = 'Archive';
+        }
+        
+        // In admin area, try to detect the current post being edited
+        if (is_admin()) {
+            global $pagenow, $post;
+            
+            if (in_array($pagenow, array('post.php', 'post-new.php'))) {
+                if (isset($_GET['post']) && is_numeric($_GET['post'])) {
+                    $post_id = intval($_GET['post']);
+                    $post_obj = get_post($post_id);
+                    if ($post_obj) {
+                        $info['id'] = $post_id;
+                        $info['type'] = $post_obj->post_type;
+                        $info['title'] = $post_obj->post_title;
+                        $info['context'] = 'admin_edit_' . $post_obj->post_type;
+                    }
+                } elseif ($post && is_object($post)) {
+                    $info['id'] = $post->ID;
+                    $info['type'] = $post->post_type;
+                    $info['title'] = $post->post_title;
+                    $info['context'] = 'admin_edit_' . $post->post_type;
+                }
+            } elseif ($pagenow === 'term.php' && isset($_GET['tag_ID'])) {
+                $term_id = intval($_GET['tag_ID']);
+                $term = get_term($term_id);
+                if ($term && !is_wp_error($term)) {
+                    $info['id'] = $term_id;
+                    $info['type'] = 'term';
+                    $info['title'] = $term->name;
+                    $info['context'] = 'admin_edit_term';
+                }
+            } elseif ($pagenow === 'user-edit.php' && isset($_GET['user_id'])) {
+                $user_id = intval($_GET['user_id']);
+                $user = get_user_by('id', $user_id);
+                if ($user) {
+                    $info['id'] = $user_id;
+                    $info['type'] = 'user';
+                    $info['title'] = $user->display_name;
+                    $info['context'] = 'admin_edit_user';
+                }
+            } else {
+                $info['context'] = 'admin_' . $pagenow;
+                $info['title'] = 'WordPress Admin';
+            }
+        }
+        
+        return $info;
     }
     
     /**

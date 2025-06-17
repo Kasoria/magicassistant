@@ -142,6 +142,25 @@ class AI_Provider {
         $session_id = $data['session_id'] ?? $this->generate_session_id();
         $is_message_edit = $data['is_message_edit'] ?? false;
         $truncate_at_message = $data['truncate_at_message'] ?? null;
+        $page_url = $data['page_url'] ?? '';
+        $page_context = $data['page_context'] ?? null;
+        
+        // Optional debug logging of user request
+        if (!empty($this->settings['debug_log_raw_responses'])) {
+            $debug_request = array(
+                'user_id' => get_current_user_id(),
+                'message' => $message,
+                'session_id' => $session_id,
+                'agent_mode' => $agent_mode,
+                'is_message_edit' => $is_message_edit,
+                'truncate_at_message' => $truncate_at_message,
+                'page_url' => $page_url,
+                'page_context' => $page_context,
+                'history_length' => count($conversation_history),
+                'timestamp' => current_time('mysql')
+            );
+            error_log('[MagicAssistant] User request: ' . json_encode($debug_request, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        }
         
         if (empty($message)) {
             return new WP_Error('empty_message', 'Message is required', array('status' => 400));
@@ -168,6 +187,17 @@ class AI_Provider {
                 // Persist the mode for this session so the frontend can reopen in the same state
                 if (method_exists($this->db, 'set_chat_session_mode')) {
                     $this->db->set_chat_session_mode($user_id, $session_id, $agent_mode);
+                }
+            }
+            
+            // Build enhanced context message with page information
+            if (!empty($page_url) || !empty($page_context)) {
+                $context_message = $this->build_page_context_message($page_url, $page_context);
+                if (!empty($context_message)) {
+                    array_unshift($conversation_history, array(
+                        'role' => 'system',
+                        'content' => $context_message
+                    ));
                 }
             }
             
@@ -280,6 +310,55 @@ class AI_Provider {
         }
     }
     
+    /**
+     * Build enhanced context message with page information
+     */
+    private function build_page_context_message($page_url, $page_context) {
+        $context_parts = array();
+        
+        if (!empty($page_url)) {
+            $context_parts[] = "URL: " . esc_url_raw($page_url);
+        }
+        
+        if (!empty($page_context) && is_array($page_context)) {
+            // Add specific page/post information
+            if (!empty($page_context['post_id'])) {
+                $context_parts[] = "Post/Page ID: " . intval($page_context['post_id']);
+            }
+            
+            if (!empty($page_context['post_type'])) {
+                $context_parts[] = "Content Type: " . sanitize_text_field($page_context['post_type']);
+            }
+            
+            if (!empty($page_context['post_title'])) {
+                $context_parts[] = "Title: \"" . sanitize_text_field($page_context['post_title']) . "\"";
+            }
+            
+            if (!empty($page_context['context'])) {
+                $context_parts[] = "Context: " . sanitize_text_field($page_context['context']);
+            }
+        }
+        
+        if (empty($context_parts)) {
+            return '';
+        }
+        
+        $context_message = "The user is currently viewing:\n" . implode("\n", $context_parts);
+        
+        // Add helpful note about using the exact ID
+        if (!empty($page_context['post_id']) && !empty($page_context['post_type'])) {
+            if ($page_context['post_type'] === 'page') {
+                $context_message .= "\n\nYou can fetch this page's content directly using wp_get_page with ID " . intval($page_context['post_id']) . ".";
+            } elseif ($page_context['post_type'] === 'post') {
+                $context_message .= "\n\nYou can fetch this post's content directly using wp_get_post with ID " . intval($page_context['post_id']) . ".";
+            } else {
+                $context_message .= "\n\nYou can fetch this content directly using wp_get_cpt with ID " . intval($page_context['post_id']) . " and type '" . sanitize_text_field($page_context['post_type']) . "'.";
+            }
+        }
+        
+        return $context_message;
+    }
+    
     private function determine_agent_mode($message) {
         $setting = $this->settings['agent_mode'] ?? 'always';
         
@@ -299,6 +378,12 @@ class AI_Provider {
     }
     
     private function handle_chat_mode($message, $conversation_history, $provider, $api_key) {
+        // Limit the amount of history we send to the model to save tokens
+        $history_limit = $this->settings['conversation_history_limit'] ?? 20;
+        if ($history_limit > 0 && is_array($conversation_history) && count($conversation_history) > $history_limit) {
+            $conversation_history = array_slice($conversation_history, -$history_limit);
+        }
+        
         // Prepare system message with MCP tools information
         $system_message = $this->build_system_message();
         
@@ -410,6 +495,11 @@ class AI_Provider {
     }
     
     private function handle_agent_mode($message, $conversation_history, $provider, $api_key) {
+        // Limit history length to avoid oversized prompts while keeping recent context
+        $history_limit = $this->settings['conversation_history_limit'] ?? 20;
+        if ($history_limit > 0 && is_array($conversation_history) && count($conversation_history) > $history_limit) {
+            $conversation_history = array_slice($conversation_history, -$history_limit);
+        }
         $max_iterations = $this->settings['max_agent_iterations'] ?? 10; // Prevent infinite loops
         $iteration = 0;
         $reasoning_chain = [];
@@ -599,74 +689,7 @@ class AI_Provider {
     }
     
     private function build_agent_system_message() {
-        $tools_info = '';
-        
-        if ($this->mcp_server && $this->mcp_server->is_enabled()) {
-            // Get all registered tools dynamically
-            $registered_tools = $this->mcp_server->get_registered_tools();
-            $tool_descriptions = [];
-            
-            foreach ($registered_tools as $name => $tool) {
-                $description = $tool['description'] ?? 'No description available';
-                
-                // Add special notes for certain tools
-                $special_note = '';
-                if ($name === 'list_api_functions') {
-                    $special_note = ' (use filters to avoid overwhelming responses)';
-                }
-                
-                $tool_descriptions[] = "- {$name}: {$description}{$special_note}";
-            }
-            
-            $tools_list = implode("\n", $tool_descriptions);
-            
-            $tools_info = "
-You have access to WordPress MCP tools to help manage this WordPress site:
-
-Available Tools:
-{$tools_list}
-
-IMPORTANT AGENT MODE INSTRUCTIONS:
-- You are operating in AGENT MODE for complex multi-step tasks
-- You can perform multiple tool calls in sequence to complete complex requests
-- After each tool execution, assess if more actions are needed to fully satisfy the user's request
-- Break down complex requests into logical steps
-- IMPORTANT: Only continue if you need MORE data or need to perform MORE actions
-- STOP when you have gathered sufficient information to answer the user's question completely
-- When finished, provide a comprehensive summary of all actions taken INCLUDING the detailed results from ALL tool executions
-
-AUTOMATIC DATA FETCHING:
-- When you see \"🔄 **FETCH_MORE_SUGGESTED**\" or \"🔄 **FETCH_MORE_AVAILABLE**\" in tool results, you SHOULD automatically fetch the additional data if it's relevant to the user's request
-- Use the suggested parameters (offset, per_page, pagination, filters) to get complete data sets
-- For large datasets, prioritize the most relevant results first, then fetch additional data as needed
-- If user asks for \"all\" items or comprehensive lists, automatically fetch all available data using pagination
-
-RESPONSE FORMATTING - IMPORTANT:
-- Present information naturally and conversationally based on the user's request
-- For detailed analysis requests, provide comprehensive data and insights
-- For quick questions, provide concise but complete answers
-- Always include the actual data (names, numbers, lists) not just counts
-- Adapt your response style to match the user's intent (brief overview vs detailed analysis)
-- Present data in a logical, easy-to-read format that makes sense for the context
-
-TOOL SELECTION GUIDANCE:
-- For common WordPress tasks, use dedicated tools (wp_get_posts, wp_get_users, wp_create_post, etc.)
-- Use run_api_function only when no dedicated tool exists for your specific need
-- Use list_api_functions to discover available endpoints when you need to explore capabilities
-- Use get_function_details to understand endpoint parameters before using run_api_function
-
-When the user asks you to perform WordPress-related tasks like:
-- Creating multiple blog posts
-- Setting up complex content structures  
-- Performing batch operations
-- Multi-step workflows
-- Any WordPress management tasks requiring multiple actions
-
-You should use the appropriate MCP tools to complete ALL parts of these tasks systematically.
-
-Always explain what you're doing and why, especially when breaking down complex requests into steps.
-";
-        }
+        $tools_info = "\nYou have access to a comprehensive set of WordPress MCP tools. Use them thoughtfully when they can enhance your answer.\n";
         
         return "You are MagicAssistant, a helpful AI assistant for WordPress websites operating in AGENT MODE. You can help users manage their WordPress site, create content, and perform complex multi-step operations.
 
@@ -690,67 +713,7 @@ Be proactive and thorough, but focus on creating natural, helpful responses rath
     }
 
     private function build_system_message() {
-        $tools_info = '';
-        
-        if ($this->mcp_server && $this->mcp_server->is_enabled()) {
-            // Get all registered tools dynamically
-            $registered_tools = $this->mcp_server->get_registered_tools();
-            $tool_descriptions = [];
-            
-            foreach ($registered_tools as $name => $tool) {
-                $description = $tool['description'] ?? 'No description available';
-                
-                // Add special notes for certain tools
-                $special_note = '';
-                if ($name === 'list_api_functions') {
-                    $special_note = ' (use filters to avoid overwhelming responses)';
-                }
-                
-                $tool_descriptions[] = "- {$name}: {$description}{$special_note}";
-            }
-            
-            $tools_list = implode("\n", $tool_descriptions);
-            
-            $tools_info = "
-You have access to WordPress MCP tools to help manage this WordPress site:
-
-Available Tools:
-{$tools_list}
-
-IMPORTANT: When using list_api_functions, always use filters to limit results:
-- Use 'namespace' parameter (e.g. 'wp/v2' for core endpoints)
-- Use 'limit' parameter (default 20, max recommended 50)
-- Use 'search' parameter to find specific endpoints
-Example: list_api_functions with namespace='wp/v2' and limit=10
-
-TOOL SELECTION GUIDANCE:
-- For common WordPress tasks, use dedicated tools (wp_get_posts, wp_get_users, wp_create_post, etc.)
-- Use run_api_function only when no dedicated tool exists for your specific need
-- Use list_api_functions to discover available endpoints when you need to explore capabilities
-- Use get_function_details to understand endpoint parameters before using run_api_function
-
-RESPONSE STYLE - IMPORTANT:
-- Interpret the user's request and respond accordingly:
-  * For analysis requests: Provide detailed insights, comparisons, and comprehensive data
-  * For quick questions: Give direct, concise answers with key details
-  * For \"list\" or \"show\" requests: Present data in an organized, readable format
-- Use natural language and conversational tone
-- Present tool results as part of your natural response, not as separate technical outputs
-- Focus on what the user actually wants to know, not just what the tools returned
-- Provide context and insights, not just raw data dumps
-
-When the user asks you to perform WordPress-related tasks like:
-- Creating blog posts
-- Finding content
-- Getting site information
-- Listing users, categories, or tags
-- Any WordPress management tasks
-
-You should use the appropriate MCP tools to complete these tasks directly.
-
-Always be helpful and explain what you're doing when using these tools.
-";
-        }
+        $tools_info = "\nYou have access to a comprehensive set of WordPress MCP tools. Use them thoughtfully when they can enhance your answer.\n";
         
         return "You are MagicAssistant, a helpful AI assistant for WordPress websites. You can help users manage their WordPress site, create content, and provide guidance.
 
@@ -770,16 +733,31 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         $tools = $this->get_mcp_tools_for_openai();
         
+        $max_response_tokens = $this->settings['max_response_tokens'] ?? 1500;
         $payload = array(
             'model' => $this->settings['openai_model'] ?? 'gpt-4.1-mini',
             'messages' => $messages,
             'temperature' => 0.7,
-            'max_tokens' => 2000
+            'max_tokens' => intval($max_response_tokens)
         );
         
         if (!empty($tools)) {
             $payload['tools'] = $tools;
             $payload['tool_choice'] = 'auto';
+        }
+        
+        // Optional debug logging of API request payload
+        if (!empty($this->settings['debug_log_raw_responses'])) {
+            $debug_payload = $payload;
+            // Don't log sensitive tool schemas in full detail for readability
+            if (isset($debug_payload['tools'])) {
+                $debug_payload['tools_count'] = count($debug_payload['tools']);
+                $debug_payload['tool_names'] = array_map(function($tool) {
+                    return $tool['function']['name'] ?? 'unknown';
+                }, $debug_payload['tools']);
+                unset($debug_payload['tools']); // Remove full tool definitions for cleaner logs
+            }
+            error_log('[MagicAssistant] OpenAI request payload: ' . json_encode($debug_payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
         }
         
         $response = wp_remote_post($url, array(
@@ -788,7 +766,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 'Content-Type' => 'application/json',
             ),
             'body' => json_encode($payload),
-            'timeout' => 30
+            'timeout' => 120
         ));
         
         if (is_wp_error($response)) {
@@ -843,9 +821,10 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         $tools = $this->get_mcp_tools_for_anthropic();
         
+        $max_response_tokens = $this->settings['max_response_tokens'] ?? 1500;
         $payload = array(
             'model' => $this->settings['anthropic_model'] ?? 'claude-sonnet-4-20250514',
-            'max_tokens' => 2000,
+            'max_tokens' => intval($max_response_tokens),
             'messages' => $conversation
         );
         
@@ -857,6 +836,20 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $payload['tools'] = $tools;
         }
         
+        // Optional debug logging of API request payload
+        if (!empty($this->settings['debug_log_raw_responses'])) {
+            $debug_payload = $payload;
+            // Don't log sensitive tool schemas in full detail for readability
+            if (isset($debug_payload['tools'])) {
+                $debug_payload['tools_count'] = count($debug_payload['tools']);
+                $debug_payload['tool_names'] = array_map(function($tool) {
+                    return $tool['name'] ?? 'unknown';
+                }, $debug_payload['tools']);
+                unset($debug_payload['tools']); // Remove full tool definitions for cleaner logs
+            }
+            error_log('[MagicAssistant] Anthropic request payload: ' . json_encode($debug_payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        }
+        
         $response = wp_remote_post($url, array(
             'headers' => array(
                 'x-api-key' => $api_key,
@@ -864,7 +857,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 'anthropic-version' => '2023-06-01'
             ),
             'body' => json_encode($payload),
-            'timeout' => 30
+            'timeout' => 120
         ));
         
         if (is_wp_error($response)) {
@@ -909,12 +902,16 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $openai_tools     = [];
 
         foreach ($registered_tools as $name => $tool) {
+            $description = isset($tool['description']) ? mb_substr($tool['description'], 0, 160) : '';
+            $schema      = $tool['inputSchema'] ?? array('type' => 'object');
+            $schema      = $this->compress_tool_schema($schema);
+
             $openai_tools[] = array(
                 'type'     => 'function',
                 'function' => array(
                     'name'        => $name,
-                    'description' => $tool['description'] ?? '',
-                    'parameters'  => $tool['inputSchema'] ?? array('type' => 'object'),
+                    'description' => $description,
+                    'parameters'  => $schema,
                 ),
             );
         }
@@ -931,10 +928,14 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $anthropic_tools  = [];
 
         foreach ($registered_tools as $name => $tool) {
+            $description = isset($tool['description']) ? mb_substr($tool['description'], 0, 160) : '';
+            $schema      = $tool['inputSchema'] ?? array('type' => 'object');
+            $schema      = $this->compress_tool_schema($schema);
+
             $anthropic_tools[] = array(
                 'name'         => $name,
-                'description'  => $tool['description'] ?? '',
-                'input_schema' => $tool['inputSchema'] ?? array('type' => 'object'),
+                'description'  => $description,
+                'input_schema' => $schema,
             );
         }
 
@@ -1087,7 +1088,9 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'enable_delete_tools' => isset($this->settings['enable_delete_tools']) ? (bool) $this->settings['enable_delete_tools'] : false,
             'agent_mode' => $this->settings['agent_mode'] ?? 'always',
             'max_agent_iterations' => $this->settings['max_agent_iterations'] ?? 10,
-            'debug_log_raw_responses' => isset($this->settings['debug_log_raw_responses']) ? (bool) $this->settings['debug_log_raw_responses'] : false
+            'debug_log_raw_responses' => isset($this->settings['debug_log_raw_responses']) ? (bool) $this->settings['debug_log_raw_responses'] : false,
+            'max_response_tokens' => intval($this->settings['max_response_tokens'] ?? 1500),
+            'conversation_history_limit' => intval($this->settings['conversation_history_limit'] ?? 20)
         );
     }
     
@@ -1159,6 +1162,21 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         // Debug raw API response logging toggle
         if (isset($data['debug_log_raw_responses'])) {
             $this->db->save_setting('debug_log_raw_responses', (bool) $data['debug_log_raw_responses']);
+        }
+        
+        // Max tokens per response (to control costs)
+        if (isset($data['max_response_tokens'])) {
+            $max_toks = intval($data['max_response_tokens']);
+            // Clamp between 256 and 4096 to avoid extreme values
+            $max_toks = max(256, min(4096, $max_toks));
+            $this->db->save_setting('max_response_tokens', $max_toks);
+        }
+
+        // Conversation history limit sent to the model
+        if (isset($data['conversation_history_limit'])) {
+            $hist_limit = intval($data['conversation_history_limit']);
+            $hist_limit = max(5, min(100, $hist_limit));
+            $this->db->save_setting('conversation_history_limit', $hist_limit);
         }
         
         // Refresh settings from database
@@ -1742,6 +1760,29 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'success' => true,
             'session_id' => $session_id,
         );
+    }
+
+    private function compress_tool_schema($schema) {
+        // Recursively remove non-essential fields from JSON schema to save tokens
+        if (!is_array($schema)) {
+            return $schema;
+        }
+        // Keys that do not influence validation for the LLM when generating arguments
+        $remove_keys = ['description', 'examples', 'title', 'default'];
+        foreach ($remove_keys as $rk) {
+            if (isset($schema[$rk])) {
+                unset($schema[$rk]);
+            }
+        }
+        if (isset($schema['properties']) && is_array($schema['properties'])) {
+            foreach ($schema['properties'] as $prop => $subSchema) {
+                $schema['properties'][$prop] = $this->compress_tool_schema($subSchema);
+            }
+        }
+        if (isset($schema['items'])) {
+            $schema['items'] = $this->compress_tool_schema($schema['items']);
+        }
+        return $schema;
     }
 
 }

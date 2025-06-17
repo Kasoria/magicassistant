@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
-import { Button, Card, TextInput, Spinner, Drawer } from 'flowbite-react'
+import { Button, Card, Textarea, Spinner, Drawer } from 'flowbite-react'
 import CustomSelect from './CustomSelect'
 import { useToast } from './Toast'
 import ConfirmationModal from './ConfirmationModal'
 import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 
-const ChatInterface = ({ adminData }) => {
+const ChatInterface = ({ adminData, isDrawerMode = false }) => {
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
@@ -94,7 +94,7 @@ const ChatInterface = ({ adminData }) => {
 
   useEffect(() => {
     loadSettings()
-    loadChatSessions()
+    loadChatSessions(true) // Auto-load last session only on initial mount
   }, [])
 
   const loadSettings = async () => {
@@ -114,7 +114,7 @@ const ChatInterface = ({ adminData }) => {
     }
   }
 
-  const loadChatSessions = async () => {
+  const loadChatSessions = async (shouldAutoLoadLastSession = false) => {
     try {
       const response = await fetch(`${adminData.restUrl}chat-sessions`, {
         headers: {
@@ -126,8 +126,10 @@ const ChatInterface = ({ adminData }) => {
         const data = await response.json()
         const sessions = data.sessions || []
         setChatSessions(sessions)
-        // Attempt to reopen last session automatically
-        loadLastSession(sessions)
+        // Only auto-load last session if explicitly requested
+        if (shouldAutoLoadLastSession) {
+          loadLastSession(sessions)
+        }
       }
     } catch (error) {
       console.error('Failed to load chat sessions:', error)
@@ -156,6 +158,18 @@ const ChatInterface = ({ adminData }) => {
     setIsLoading(true)
 
     try {
+      // Get current post information from adminData
+      const currentPost = adminData?.currentPost || {}
+      
+      // Build context information for the AI
+      let pageContext = {
+        url: typeof window !== 'undefined' ? window.location.href : '',
+        post_id: currentPost.id || null,
+        post_type: currentPost.type || null,
+        post_title: currentPost.title || '',
+        context: currentPost.context || 'unknown'
+      }
+
       const response = await fetch(`${adminData.restUrl}chat`, {
         method: 'POST',
         headers: {
@@ -169,7 +183,9 @@ const ChatInterface = ({ adminData }) => {
             content: msg.content
           })),
           agent_mode: forceAgentMode,
-          session_id: currentSessionId
+          session_id: currentSessionId,
+          page_url: pageContext.url,
+          page_context: pageContext
         })
       })
 
@@ -180,7 +196,7 @@ const ChatInterface = ({ adminData }) => {
         if (!currentSessionId && data.session_id) {
           setCurrentSessionId(data.session_id)
           // Refresh chat sessions list to include the new session
-          loadChatSessions()
+          loadChatSessions() // Don't auto-load, we're already in the new session
           // Persist as last opened session
           saveLastSession(data.session_id)
         }
@@ -274,7 +290,9 @@ const ChatInterface = ({ adminData }) => {
 
   const startNewChat = () => {
     clearChat()
-    loadChatSessions() // Refresh the sessions list
+    // Clear the last session preference since user explicitly wants a new chat
+    saveLastSession('')
+    loadChatSessions() // Refresh the sessions list without auto-loading
     setForceAgentMode(true)
   }
 
@@ -348,7 +366,7 @@ const ChatInterface = ({ adminData }) => {
           setChatSessions(prevSessions => 
             prevSessions.filter(session => session.id !== sessionId)
           )
-          loadChatSessions()
+          loadChatSessions() // Don't auto-load after deletion
           showSuccess('Chat conversation deleted successfully')
         }
       } else {
@@ -497,6 +515,18 @@ const ChatInterface = ({ adminData }) => {
 
     // Send the edited message to get a new AI response
     try {
+      // Get current post information from adminData
+      const currentPost = adminData?.currentPost || {}
+      
+      // Build context information for the AI
+      let pageContext = {
+        url: typeof window !== 'undefined' ? window.location.href : '',
+        post_id: currentPost.id || null,
+        post_type: currentPost.type || null,
+        post_title: currentPost.title || '',
+        context: currentPost.context || 'unknown'
+      }
+
       const response = await fetch(`${adminData.restUrl}chat`, {
         method: 'POST',
         headers: {
@@ -512,7 +542,9 @@ const ChatInterface = ({ adminData }) => {
           agent_mode: forceAgentMode,
           session_id: currentSessionId,
           is_message_edit: true,
-          truncate_at_message: editingMessageIndex
+          truncate_at_message: editingMessageIndex,
+          page_url: pageContext.url,
+          page_context: pageContext
         })
       })
 
@@ -733,65 +765,126 @@ const ChatInterface = ({ adminData }) => {
 
   return (
     
-    <div className="flex flex-col h-[calc(100vh-15rem)]">
+    <div className={`flex flex-col ${isDrawerMode ? 'h-[calc(100vh-80px)]' : 'h-[calc(100vh-15rem)]'}`}>
       {/* Header - new layout */}
-      <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
-        <div className="flex items-center space-x-2">
-          <Button size="sm" color="gray" onClick={() => setIsSettingsOpen(true)}>Settings</Button>
-          <Button size="sm" color="gray" onClick={() => setIsHistoryOpen(true)}>History</Button>
-          <Button size="sm" color="gray" onClick={openShareModal} disabled={messages.filter(msg => msg.role !== 'system' && !msg.isWelcomeMessage).length === 0}>
-            <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
-            </svg>
-            Share
-          </Button>
-        </div>
-        
-        {/* Chat Title */}
-        <div className="flex-1 px-4">
-          {isEditingTitle && currentSessionId ? (
-            <div className="flex items-center justify-center space-x-2">
-              <input
-                type="text"
-                value={customTitle}
-                onChange={(e) => setCustomTitle(e.target.value)}
-                onKeyDown={handleTitleKeyPress}
-                onBlur={saveTitle}
-                autoFocus
-                className="text-lg font-semibold text-gray-900 dark:text-white text-center bg-transparent border-b-2 border-blue-500 dark:border-blue-400 focus:outline-none focus:border-blue-600 dark:focus:border-blue-300 min-w-0 flex-1 max-w-md"
-                placeholder="Enter chat title..."
+      {!isDrawerMode && (
+        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
+          <div className="flex items-center space-x-2">
+            <Button size="sm" color="gray" onClick={() => setIsSettingsOpen(true)}>Settings</Button>
+            <Button size="sm" color="gray" onClick={() => setIsHistoryOpen(true)}>History</Button>
+            <Button size="sm" color="gray" onClick={openShareModal} disabled={messages.filter(msg => msg.role !== 'system' && !msg.isWelcomeMessage).length === 0}>
+              <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
+              </svg>
+              Share
+            </Button>
+          </div>
+          
+          {/* Chat Title */}
+          <div className="flex-1 px-4">
+            {isEditingTitle && currentSessionId ? (
+              <div className="flex items-center justify-center space-x-2">
+                <input
+                  type="text"
+                  value={customTitle}
+                  onChange={(e) => setCustomTitle(e.target.value)}
+                  onKeyDown={handleTitleKeyPress}
+                  onBlur={saveTitle}
+                  autoFocus
+                  className="text-lg font-semibold text-gray-900 dark:text-white text-center bg-transparent border-b-2 border-blue-500 dark:border-blue-400 focus:outline-none focus:border-blue-600 dark:focus:border-blue-300 min-w-0 flex-1 max-w-md"
+                  placeholder="Enter chat title..."
+                />
+                <button
+                  onClick={saveTitle}
+                  className="text-green-600 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
+                >
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                </button>
+                <button
+                  onClick={cancelEditTitle}
+                  className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                >
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </div>
+            ) : (
+              <h1 
+                className={`text-lg font-semibold text-gray-900 dark:text-white text-center truncate transition-colors ${
+                  currentSessionId ? 'cursor-pointer hover:text-blue-600 dark:hover:text-blue-400' : ''
+                }`}
+                onClick={currentSessionId ? startEditingTitle : undefined}
+                title={currentSessionId ? "Click to edit title" : "Start a conversation to edit title"}
+              >
+                {getChatTitle()}
+              </h1>
+            )}
+          </div>
+          
+                    <div className="flex items-center space-x-2">
+              <CustomSelect
+                value={agentModeOptions.find(option => option.value === forceAgentMode.toString())}
+                onChange={(option) => setForceAgentMode(option.value === 'true')}
+                options={agentModeOptions}
+                isDisabled={!settings?.has_api_key}
+                darkMode={isDarkMode}
+                size="compact"
               />
-              <button
-                onClick={saveTitle}
-                className="text-green-600 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
-              >
-                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                </svg>
-              </button>
-              <button
-                onClick={cancelEditTitle}
-                className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
-              >
-                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-              </button>
+              <Button size="sm" onClick={startNewChat}>New chat</Button>
             </div>
-          ) : (
-            <h1 
-              className={`text-lg font-semibold text-gray-900 dark:text-white text-center truncate transition-colors ${
-                currentSessionId ? 'cursor-pointer hover:text-blue-600 dark:hover:text-blue-400' : ''
-              }`}
-              onClick={currentSessionId ? startEditingTitle : undefined}
-              title={currentSessionId ? "Click to edit title" : "Start a conversation to edit title"}
-            >
-              {getChatTitle()}
-            </h1>
-          )}
         </div>
-        
-                  <div className="flex items-center space-x-2">
+      )}
+
+      {/* Drawer mode compact header */}
+      {isDrawerMode && (
+        <div className="flex items-center justify-between p-3 border-b border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
+          <div className="flex-1 min-w-0">
+            {isEditingTitle && currentSessionId ? (
+              <div className="flex items-center space-x-2">
+                <input
+                  type="text"
+                  value={customTitle}
+                  onChange={(e) => setCustomTitle(e.target.value)}
+                  onKeyDown={handleTitleKeyPress}
+                  onBlur={saveTitle}
+                  autoFocus
+                  className="text-sm font-medium text-gray-900 dark:text-white bg-transparent border-b border-blue-500 dark:border-blue-400 focus:outline-none focus:border-blue-600 dark:focus:border-blue-300 min-w-0 flex-1"
+                  placeholder="Enter chat title..."
+                />
+                <button
+                  onClick={saveTitle}
+                  className="text-green-600 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
+                >
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                </button>
+                <button
+                  onClick={cancelEditTitle}
+                  className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                >
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </div>
+            ) : (
+              <h3 
+                className={`text-sm font-medium text-gray-900 dark:text-white truncate transition-colors ${
+                  currentSessionId ? 'cursor-pointer hover:text-blue-600 dark:hover:text-blue-400' : ''
+                }`}
+                onClick={currentSessionId ? startEditingTitle : undefined}
+                title={currentSessionId ? "Click to edit title" : "Start a conversation to edit title"}
+              >
+                {getChatTitle()}
+              </h3>
+            )}
+          </div>
+          
+          <div className="flex items-center space-x-1 ml-2">
             <CustomSelect
               value={agentModeOptions.find(option => option.value === forceAgentMode.toString())}
               onChange={(option) => setForceAgentMode(option.value === 'true')}
@@ -800,12 +893,17 @@ const ChatInterface = ({ adminData }) => {
               darkMode={isDarkMode}
               size="compact"
             />
-            <Button size="sm" onClick={startNewChat}>New chat</Button>
+            <Button size="xs" onClick={startNewChat}>New</Button>
           </div>
-      </div>
+        </div>
+      )}
 
       {/* Messages */}
-      <div className="overflow-y-auto h-[calc(100vh-18.7rem)] sm:h-[calc(100vh-15.4rem)]">
+      <div className={`overflow-y-auto ${
+        isDrawerMode 
+          ? 'h-[calc(100vh-270px)]' 
+          : 'h-[calc(100vh-18.7rem)] sm:h-[calc(100vh-15.4rem)]'
+      }`}>
         <div className="space-y-6 pt-6">
           {messages.map((message, index) => (
             <div
@@ -1013,7 +1111,9 @@ const ChatInterface = ({ adminData }) => {
       </div>
 
       {/* Input */}
-      <div className="p-4 border-t border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
+      <div className={`border-t border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 ${
+        isDrawerMode ? 'p-3' : 'p-4'
+      }`}>
         {!settings.has_api_key ? (
           <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
             <p className="text-yellow-800 dark:text-yellow-200 text-sm">
@@ -1027,19 +1127,20 @@ const ChatInterface = ({ adminData }) => {
             </p>
           </div>
         ) : (
-          <div className="flex space-x-2">
-            <TextInput
-              type="text"
+          <div className={`flex ${isDrawerMode ? 'space-x-1' : 'space-x-2'}`}>
+            <Textarea
               placeholder="Ask me anything about your WordPress site..."
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
               onKeyPress={handleKeyPress}
               disabled={isLoading}
-              className="flex-1"
+              rows={isDrawerMode ? 2 : 3}
+              className={`flex-1 resize-none ${isDrawerMode ? 'text-sm' : ''}`}
             />
             <Button
               onClick={sendMessage}
               disabled={isLoading || !inputMessage.trim()}
+              size={isDrawerMode ? "sm" : "default"}
             >
               {isLoading ? <Spinner size="sm" /> : 'Send'}
             </Button>
@@ -1048,75 +1149,79 @@ const ChatInterface = ({ adminData }) => {
       </div>
 
       {/* History Drawer */}
-      <Drawer 
-        open={isHistoryOpen} 
-        onClose={() => setIsHistoryOpen(false)} 
-        position="right" 
-        className="bg-white dark:bg-gray-900 border-l border-gray-300 dark:border-gray-700"
-        theme={{
-          root: {
-            backdrop: "fixed inset-0 z-30 bg-black/10"
-          }
-        }}
-      >
-        <div className="mb-4 flex items-center justify-between pt-[32px]">
-          <h5 className="text-base font-semibold text-gray-500 dark:text-gray-400">Chat History</h5>
-          <Button size="xs" color="light" onClick={() => setIsHistoryOpen(false)}>Close</Button>
-        </div>
-        <ul className="space-y-2">
-          {chatSessions.length === 0 && <li className="text-sm text-gray-500">No saved conversations yet.</li>}
-          {chatSessions.map(s => (
-            <li key={s.id} className="group relative">
-              <button 
-                onClick={() => loadSession(s)} 
-                className={`w-full text-left p-3 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-sm dark:text-white border-l-2 ${
-                  currentSessionId === s.id ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-transparent'
-                }`}
-              >
-                <div className="flex items-start gap-2">
-                  <img
-                    src={adminData?.currentUser?.avatar || `https://www.gravatar.com/avatar/default?s=20&d=mp`}
-                    alt={adminData?.currentUser?.name || 'User'}
-                    className="h-5 w-5 rounded-full border border-gray-200 dark:border-gray-600 flex-shrink-0 mt-0.5"
-                    onError={(e) => {
-                      e.target.src = `https://www.gravatar.com/avatar/default?s=20&d=mp`
-                    }}
-                  />
-                  <div className="flex-1 min-w-0 pr-6">
-                    <div className="font-medium truncate">{s.title}</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      {s.message_count} messages • {new Date(s.last_message_time).toLocaleDateString()}
+      {!isDrawerMode && (
+        <Drawer 
+          open={isHistoryOpen} 
+          onClose={() => setIsHistoryOpen(false)} 
+          position="right" 
+          className="bg-white dark:bg-gray-900 border-l border-gray-300 dark:border-gray-700"
+          theme={{
+            root: {
+              backdrop: "fixed inset-0 z-30 bg-black/10"
+            }
+          }}
+        >
+          <div className="mb-4 flex items-center justify-between pt-[32px]">
+            <h5 className="text-base font-semibold text-gray-500 dark:text-gray-400">Chat History</h5>
+            <Button size="xs" color="light" onClick={() => setIsHistoryOpen(false)}>Close</Button>
+          </div>
+          <ul className="space-y-2">
+            {chatSessions.length === 0 && <li className="text-sm text-gray-500">No saved conversations yet.</li>}
+            {chatSessions.map(s => (
+              <li key={s.id} className="group relative">
+                <button 
+                  onClick={() => loadSession(s)} 
+                  className={`w-full text-left p-3 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-sm dark:text-white border-l-2 ${
+                    currentSessionId === s.id ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-transparent'
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    <img
+                      src={adminData?.currentUser?.avatar || `https://www.gravatar.com/avatar/default?s=20&d=mp`}
+                      alt={adminData?.currentUser?.name || 'User'}
+                      className="h-5 w-5 rounded-full border border-gray-200 dark:border-gray-600 flex-shrink-0 mt-0.5"
+                      onError={(e) => {
+                        e.target.src = `https://www.gravatar.com/avatar/default?s=20&d=mp`
+                      }}
+                    />
+                    <div className="flex-1 min-w-0 pr-6">
+                      <div className="font-medium truncate">{s.title}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        {s.message_count} messages • {new Date(s.last_message_time).toLocaleDateString()}
+                      </div>
                     </div>
                   </div>
-                </div>
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  confirmDeleteSession(s)
-                }}
-                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/20 text-red-500 hover:text-red-700"
-                title="Delete conversation"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </Drawer>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    confirmDeleteSession(s)
+                  }}
+                  className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/20 text-red-500 hover:text-red-700"
+                  title="Delete conversation"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Drawer>
+      )}
 
       {/* Settings Modal (placeholder) */}
-      <ConfirmationModal 
-        isOpen={isSettingsOpen} 
-        onClose={() => setIsSettingsOpen(false)}
-        title="Chat Settings"
-        showActions={false}
-        maxWidth="max-w-2xl"
-      >
-        <p className="text-sm text-gray-500 dark:text-gray-400">Settings content goes here.</p>
-      </ConfirmationModal>
+      {!isDrawerMode && (
+        <ConfirmationModal 
+          isOpen={isSettingsOpen} 
+          onClose={() => setIsSettingsOpen(false)}
+          title="Chat Settings"
+          showActions={false}
+          maxWidth="max-w-2xl"
+        >
+          <p className="text-sm text-gray-500 dark:text-gray-400">Settings content goes here.</p>
+        </ConfirmationModal>
+      )}
 
       {/* Delete Session Confirmation Modal */}
       <ConfirmationModal
@@ -1132,192 +1237,194 @@ const ChatInterface = ({ adminData }) => {
       />
 
       {/* Share Conversation Modal */}
-      <ConfirmationModal
-        isOpen={isShareModalOpen}
-        onClose={() => setIsShareModalOpen(false)}
-        title="Share Conversation"
-        showActions={false}
-        maxWidth="max-w-4xl"
-      >
-        <div className="space-y-6">
-          {/* Permanent Share Options */}
-          <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border border-blue-200 dark:border-blue-800">
-            <div className="flex items-center mb-3">
-              <input
-                type="checkbox"
-                id="shareAsPermanent"
-                checked={shareAsPermanent}
-                onChange={(e) => setShareAsPermanent(e.target.checked)}
-                className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-              />
-              <label htmlFor="shareAsPermanent" className="ml-2 text-sm font-medium text-blue-900 dark:text-blue-100 cursor-pointer">
-                🔗 Create permanent shareable link
-              </label>
+      {!isDrawerMode && (
+        <ConfirmationModal
+          isOpen={isShareModalOpen}
+          onClose={() => setIsShareModalOpen(false)}
+          title="Share Conversation"
+          showActions={false}
+          maxWidth="max-w-4xl"
+        >
+          <div className="space-y-6">
+            {/* Permanent Share Options */}
+            <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border border-blue-200 dark:border-blue-800">
+              <div className="flex items-center mb-3">
+                <input
+                  type="checkbox"
+                  id="shareAsPermanent"
+                  checked={shareAsPermanent}
+                  onChange={(e) => setShareAsPermanent(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                />
+                <label htmlFor="shareAsPermanent" className="ml-2 text-sm font-medium text-blue-900 dark:text-blue-100 cursor-pointer">
+                  🔗 Create permanent shareable link
+                </label>
+              </div>
+              
+              {shareAsPermanent && (
+                <div className="mt-3 space-y-3">
+                  <p className="text-sm text-blue-800 dark:text-blue-200">
+                    This will create a public URL that anyone can access to view this conversation.
+                  </p>
+                  
+                  <div className="flex items-center space-x-3">
+                    <label className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                      Expire after:
+                    </label>
+                    <select
+                      value={shareExpiry}
+                      onChange={(e) => setShareExpiry(parseInt(e.target.value))}
+                      className="px-3 py-1 border border-blue-300 dark:border-blue-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    >
+                      <option value={0}>Never</option>
+                      <option value={1}>1 day</option>
+                      <option value={7}>1 week</option>
+                      <option value={30}>30 days</option>
+                      <option value={90}>90 days</option>
+                      <option value={365}>1 year</option>
+                    </select>
+                  </div>
+                  
+                  <Button
+                    onClick={createPermanentShare}
+                    disabled={isCreatingShare}
+                    className="bg-blue-600 hover:bg-blue-700 text-white"
+                  >
+                    {isCreatingShare ? (
+                      <>
+                        <Spinner size="sm" className="mr-2" />
+                        Creating Share Link...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
+                        </svg>
+                        Create Permanent Link
+                      </>
+                    )}
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
+              <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">Preview</h3>
+              <div className="max-h-96 overflow-y-auto">
+                <div className="prose prose-sm max-w-none dark:prose-invert">
+                  <ReactMarkdown remarkPlugins={[remarkBreaks]}>
+                    {formatConversationForSharing()}
+                  </ReactMarkdown>
+                </div>
+              </div>
             </div>
             
-            {shareAsPermanent && (
-              <div className="mt-3 space-y-3">
-                <p className="text-sm text-blue-800 dark:text-blue-200">
-                  This will create a public URL that anyone can access to view this conversation.
-                </p>
-                
-                <div className="flex items-center space-x-3">
-                  <label className="text-sm font-medium text-blue-900 dark:text-blue-100">
-                    Expire after:
-                  </label>
-                  <select
-                    value={shareExpiry}
-                    onChange={(e) => setShareExpiry(parseInt(e.target.value))}
-                    className="px-3 py-1 border border-blue-300 dark:border-blue-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                  >
-                    <option value={0}>Never</option>
-                    <option value={1}>1 day</option>
-                    <option value={7}>1 week</option>
-                    <option value={30}>30 days</option>
-                    <option value={90}>90 days</option>
-                    <option value={365}>1 year</option>
-                  </select>
-                </div>
+            {!shareAsPermanent && (
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Button
+                  onClick={copyConversationToClipboard}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                  Copy to Clipboard
+                </Button>
                 
                 <Button
-                  onClick={createPermanentShare}
-                  disabled={isCreatingShare}
-                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                  onClick={() => {
+                    const formattedText = formatConversationForSharing()
+                    const blob = new Blob([formattedText], { type: 'text/markdown' })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    a.href = url
+                    a.download = `${getChatTitle().replace(/[^a-z0-9]/gi, '_').toLowerCase()}_conversation.md`
+                    document.body.appendChild(a)
+                    a.click()
+                    document.body.removeChild(a)
+                    URL.revokeObjectURL(url)
+                    showSuccess('Conversation downloaded as Markdown file!')
+                  }}
+                  color="gray"
+                  className="flex-1"
                 >
-                  {isCreatingShare ? (
-                    <>
-                      <Spinner size="sm" className="mr-2" />
-                      Creating Share Link...
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
-                      </svg>
-                      Create Permanent Link
-                    </>
-                  )}
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Download as Markdown
+                </Button>
+                
+                <Button
+                  onClick={() => {
+                    const formattedText = formatConversationForSharing()
+                    const dataUri = 'data:text/plain;charset=utf-8,' + encodeURIComponent(formattedText)
+                    const newWindow = window.open()
+                    if (newWindow) {
+                      newWindow.document.write(`
+                        <html>
+                          <head>
+                            <title>${getChatTitle()} - Conversation</title>
+                            <meta charset="utf-8">
+                            <meta name="viewport" content="width=device-width, initial-scale=1">
+                            <style>
+                              body { 
+                                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+                                max-width: 800px; 
+                                margin: 2rem auto; 
+                                padding: 2rem; 
+                                line-height: 1.6; 
+                                color: #333;
+                                background: #fff;
+                              }
+                              h1 { color: #2563eb; border-bottom: 2px solid #e5e7eb; padding-bottom: 1rem; }
+                              h2 { color: #1f2937; }
+                              pre { background: #f3f4f6; padding: 1rem; border-radius: 8px; overflow-x: auto; }
+                              code { background: #f3f4f6; padding: 0.2rem 0.4rem; border-radius: 4px; }
+                              blockquote { border-left: 4px solid #e5e7eb; margin: 1rem 0; padding-left: 1rem; color: #6b7280; }
+                              hr { border: none; height: 1px; background: #e5e7eb; margin: 2rem 0; }
+                              @media (prefers-color-scheme: dark) {
+                                body { background: #1f2937; color: #f9fafb; }
+                                h1 { color: #60a5fa; border-bottom-color: #374151; }
+                                h2 { color: #f9fafb; }
+                                pre, code { background: #374151; }
+                                blockquote { border-left-color: #4b5563; color: #9ca3af; }
+                                hr { background: #4b5563; }
+                              }
+                            </style>
+                          </head>
+                          <body>
+                            <div id="content"></div>
+                            <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+                            <script>
+                              document.getElementById('content').innerHTML = marked.parse(\`${formattedText.replace(/`/g, '\\`')}\`);
+                            </script>
+                          </body>
+                        </html>
+                      `)
+                      newWindow.document.close()
+                    } else {
+                      showError('Unable to open preview window. Please allow popups.')
+                    }
+                  }}
+                  color="gray"
+                  className="flex-1"
+                >
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                  Open in New Tab
                 </Button>
               </div>
             )}
-          </div>
-
-          <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
-            <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">Preview</h3>
-            <div className="max-h-96 overflow-y-auto">
-              <div className="prose prose-sm max-w-none dark:prose-invert">
-                <ReactMarkdown remarkPlugins={[remarkBreaks]}>
-                  {formatConversationForSharing()}
-                </ReactMarkdown>
-              </div>
-            </div>
-          </div>
-          
-          {!shareAsPermanent && (
-            <div className="flex flex-col sm:flex-row gap-3">
-              <Button
-                onClick={copyConversationToClipboard}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-                Copy to Clipboard
-              </Button>
-              
-              <Button
-                onClick={() => {
-                  const formattedText = formatConversationForSharing()
-                  const blob = new Blob([formattedText], { type: 'text/markdown' })
-                  const url = URL.createObjectURL(blob)
-                  const a = document.createElement('a')
-                  a.href = url
-                  a.download = `${getChatTitle().replace(/[^a-z0-9]/gi, '_').toLowerCase()}_conversation.md`
-                  document.body.appendChild(a)
-                  a.click()
-                  document.body.removeChild(a)
-                  URL.revokeObjectURL(url)
-                  showSuccess('Conversation downloaded as Markdown file!')
-                }}
-                color="gray"
-                className="flex-1"
-              >
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                Download as Markdown
-              </Button>
-              
-              <Button
-                onClick={() => {
-                  const formattedText = formatConversationForSharing()
-                  const dataUri = 'data:text/plain;charset=utf-8,' + encodeURIComponent(formattedText)
-                  const newWindow = window.open()
-                  if (newWindow) {
-                    newWindow.document.write(`
-                      <html>
-                        <head>
-                          <title>${getChatTitle()} - Conversation</title>
-                          <meta charset="utf-8">
-                          <meta name="viewport" content="width=device-width, initial-scale=1">
-                          <style>
-                            body { 
-                              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-                              max-width: 800px; 
-                              margin: 2rem auto; 
-                              padding: 2rem; 
-                              line-height: 1.6; 
-                              color: #333;
-                              background: #fff;
-                            }
-                            h1 { color: #2563eb; border-bottom: 2px solid #e5e7eb; padding-bottom: 1rem; }
-                            h2 { color: #1f2937; }
-                            pre { background: #f3f4f6; padding: 1rem; border-radius: 8px; overflow-x: auto; }
-                            code { background: #f3f4f6; padding: 0.2rem 0.4rem; border-radius: 4px; }
-                            blockquote { border-left: 4px solid #e5e7eb; margin: 1rem 0; padding-left: 1rem; color: #6b7280; }
-                            hr { border: none; height: 1px; background: #e5e7eb; margin: 2rem 0; }
-                            @media (prefers-color-scheme: dark) {
-                              body { background: #1f2937; color: #f9fafb; }
-                              h1 { color: #60a5fa; border-bottom-color: #374151; }
-                              h2 { color: #f9fafb; }
-                              pre, code { background: #374151; }
-                              blockquote { border-left-color: #4b5563; color: #9ca3af; }
-                              hr { background: #4b5563; }
-                            }
-                          </style>
-                        </head>
-                        <body>
-                          <div id="content"></div>
-                          <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-                          <script>
-                            document.getElementById('content').innerHTML = marked.parse(\`${formattedText.replace(/`/g, '\\`')}\`);
-                          </script>
-                        </body>
-                      </html>
-                    `)
-                    newWindow.document.close()
-                  } else {
-                    showError('Unable to open preview window. Please allow popups.')
-                  }
-                }}
-                color="gray"
-                className="flex-1"
-              >
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                </svg>
-                Open in New Tab
+            
+            <div className="flex justify-end">
+              <Button color="gray" onClick={() => setIsShareModalOpen(false)}>
+                Close
               </Button>
             </div>
-          )}
-          
-          <div className="flex justify-end">
-            <Button color="gray" onClick={() => setIsShareModalOpen(false)}>
-              Close
-            </Button>
           </div>
-        </div>
-      </ConfirmationModal>
+        </ConfirmationModal>
+      )}
     </div>
   )
 }

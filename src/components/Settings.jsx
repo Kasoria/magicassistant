@@ -29,7 +29,9 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         enable_create_tools: settings.enable_create_tools === true,
         enable_update_tools: settings.enable_update_tools === true,
         enable_delete_tools: settings.enable_delete_tools === true,
-        debug_log_raw_responses: settings.debug_log_raw_responses === true
+        debug_log_raw_responses: settings.debug_log_raw_responses === true,
+        max_response_tokens: parseInt(settings.max_response_tokens) || 1500,
+        conversation_history_limit: parseInt(settings.conversation_history_limit) || 20
       })
       setHasUnsavedChanges(false)
     }
@@ -122,7 +124,9 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           enable_create_tools: localSettings.enable_create_tools,
           enable_update_tools: localSettings.enable_update_tools,
           enable_delete_tools: localSettings.enable_delete_tools,
-          debug_log_raw_responses: localSettings.debug_log_raw_responses
+          debug_log_raw_responses: localSettings.debug_log_raw_responses,
+          max_response_tokens: parseInt(localSettings.max_response_tokens),
+          conversation_history_limit: parseInt(localSettings.conversation_history_limit)
         }
       default:
         return {}
@@ -250,12 +254,6 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
             {/* AI Provider Section */}
             <div className="p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
               <h4 className="font-medium text-brand-dark dark:text-white mb-3">AI Provider</h4>
-              <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                <p className="text-sm text-blue-800 dark:text-blue-200">
-                  <strong>🔒 Enhanced Security:</strong> API keys are encrypted using AES-256-CBC before storage. 
-                  Once saved, any user can make AI calls with the configured keys.
-                </p>
-              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <div>
                   <Label htmlFor="ai-provider" value="Provider" className="mb-2" />
@@ -451,17 +449,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                     <span>Provides comprehensive summary of all actions taken</span>
                   </div>
                 </div>
-              </div>
-              
-              <div className="mt-4 bg-green-50 dark:bg-green-900/20 p-3 rounded-lg">
-                <p className="text-sm text-green-800 dark:text-green-200">
-                  <strong>Examples of tasks perfect for Agent Mode:</strong>
-                  <br/>• "Create 5 blog posts about WordPress and publish them"
-                  <br/>• "Find all posts without categories and assign them to 'General'"
-                  <br/>• "Create a new product category and add 3 products to it"
-                  <br/>• "Update all draft posts to published and notify users"
-                </p>
-              </div>
+              </div> 
             </div>
 
             {/* MCP Settings Section */}
@@ -532,6 +520,48 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                 <div className="mt-3 bg-yellow-50 dark:bg-yellow-900/20 p-3 rounded-lg">
                   <p className="text-sm text-yellow-800 dark:text-yellow-200">
                     <strong>Note:</strong> Delete operations are disabled by default for safety. Only enable if you trust the AI to make destructive changes.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Cost & Context Controls Section */}
+            <div className="p-4 border border-purple-200 dark:border-purple-600 rounded-lg">
+              <h4 className="font-medium text-brand-dark dark:text-white mb-3">Response & Context Limits</h4>
+              <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+                Fine-tune token usage and context length to balance cost and answer quality. Lower values reduce cost but may shorten responses or context.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="max-response-tokens" value="Max Response Tokens" className="mb-2" />
+                  <TextInput
+                    id="max-response-tokens"
+                    type="number"
+                    min="256"
+                    max="4096"
+                    step="64"
+                    value={localSettings.max_response_tokens}
+                    onChange={(e) => handleLocalChange('max_response_tokens', e.target.value)}
+                    disabled={isSavingSettings}
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Maximum tokens the AI can use when generating a single reply (default 1500).
+                  </p>
+                </div>
+                <div>
+                  <Label htmlFor="conversation-history-limit" value="History Messages Sent" className="mb-2" />
+                  <TextInput
+                    id="conversation-history-limit"
+                    type="number"
+                    min="5"
+                    max="100"
+                    step="1"
+                    value={localSettings.conversation_history_limit}
+                    onChange={(e) => handleLocalChange('conversation_history_limit', e.target.value)}
+                    disabled={isSavingSettings}
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    How many previous messages are sent with each request (default 20).
                   </p>
                 </div>
               </div>
