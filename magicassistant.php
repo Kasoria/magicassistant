@@ -33,6 +33,9 @@ define('MAGIC_ASSISTANT_PLUGIN_BASENAME', plugin_basename(__FILE__));
 // Load Composer autoloader
 require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'vendor/autoload.php';
 
+// Load core plugin classes
+require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'includes/Pagebuilder_Integration.php';
+
 class MagicAssistant {
   
   private $react_dev;
@@ -41,6 +44,7 @@ class MagicAssistant {
   private $ai_provider;
   private $db;
   private $public_share;
+  private $pagebuilder_integration;
   
   public function __construct() {
     add_action('plugins_loaded', array($this, 'init'));
@@ -64,6 +68,10 @@ class MagicAssistant {
     // Initialize public sharing
     $this->public_share = new MagicAssistant\Public_Share();
     $this->public_share->set_db($this->db);
+    
+    // Initialize pagebuilder integration
+    $this->pagebuilder_integration = new MagicAssistant\Pagebuilder_Integration();
+    $this->pagebuilder_integration->set_mcp_server($this->mcp_server);
     
     // Initialize admin functionality
     if (is_admin()) {

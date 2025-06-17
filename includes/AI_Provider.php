@@ -145,6 +145,11 @@ class AI_Provider {
         $page_url = $data['page_url'] ?? '';
         $page_context = $data['page_context'] ?? null;
         
+        // Set page context in MCP server for pagebuilder integrations
+        if ($this->mcp_server && $page_context) {
+            $this->mcp_server->set_current_context($page_context);
+        }
+        
         // Optional debug logging of user request
         if (!empty($this->settings['debug_log_raw_responses'])) {
             $debug_request = array(
