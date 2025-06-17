@@ -7,186 +7,173 @@ if (!defined('ABSPATH')) exit;
 /**
  * Pagebuilder Integration Manager
  * 
- * This class manages pagebuilder integrations and detects which pagebuilder
- * is currently active, then loads the appropriate integration class.
+ * Handles detection and coordination of different pagebuilder integrations
  */
 class Pagebuilder_Integration {
     
-    private $active_integration = null;
-    private $integrations = array();
-    private $mcp_server;
+    private $active_integrations = [];
+    private $db;
     
     public function __construct() {
-        add_action('init', array($this, 'init'), 15); // Load after other plugins
+        add_action('init', array($this, 'init'), 11);
+        add_action('wp_enqueue_scripts', array($this, 'enqueue_integration_scripts'));
+        add_action('admin_enqueue_scripts', array($this, 'enqueue_integration_scripts'));
+    }
+    
+    public function set_db($db) {
+        $this->db = $db;
     }
     
     public function init() {
-        // Register available pagebuilder integrations
-        $this->register_integrations();
+        // Initialize available pagebuilder integrations
+        $this->load_integrations();
         
-        // Detect and load active pagebuilder
-        $this->detect_and_load_active_pagebuilder();
+        // Register MCP tools for pagebuilder content generation
+        add_filter('magicassistant_register_mcp_tools', array($this, 'register_pagebuilder_tools'));
     }
     
-    public function set_mcp_server($mcp_server) {
-        $this->mcp_server = $mcp_server;
-        
-        // Pass MCP server to active integration
-        if ($this->active_integration) {
-            $this->active_integration->set_mcp_server($mcp_server);
+    private function load_integrations() {
+        // Bricks Integration
+        if ($this->is_bricks_active()) {
+            require_once MAGICASSISTANT_PATH . 'includes/pagebuilders/Bricks_Integration.php';
+            $bricks_integration = new Pagebuilders\Bricks_Integration();
+            $bricks_integration->set_db($this->db);
+            $this->active_integrations['bricks'] = $bricks_integration;
         }
-    }
-    
-    /**
-     * Register all available pagebuilder integrations
-     */
-    private function register_integrations() {
-        // Bricks integration
-        $this->integrations['bricks'] = array(
-            'name' => 'Bricks',
-            'class' => 'MagicAssistant\\Bricks_Integration',
-            'detect_callback' => array($this, 'detect_bricks'),
-            'file' => plugin_dir_path(__FILE__) . 'pagebuilders/Bricks_Integration.php'
-        );
         
         // Future integrations can be added here
-        // $this->integrations['elementor'] = array(...);
-        // $this->integrations['gutenberg'] = array(...);
+        // Elementor, Gutenberg, etc.
     }
     
-    /**
-     * Detect which pagebuilder is currently active and load its integration
-     */
-    private function detect_and_load_active_pagebuilder() {
-        foreach ($this->integrations as $key => $integration) {
-            if (call_user_func($integration['detect_callback'])) {
-                $this->load_integration($key, $integration);
-                break;
-            }
-        }
-    }
-    
-    /**
-     * Load a specific pagebuilder integration
-     */
-    private function load_integration($key, $integration) {
-        if (file_exists($integration['file'])) {
-            require_once $integration['file'];
+    public function enqueue_integration_scripts() {
+        // Only enqueue on pages where pagebuilders are active
+        if (!empty($this->active_integrations)) {
+            wp_enqueue_script(
+                'magicassistant-pagebuilder-integration',
+                MAGICASSISTANT_URL . 'assets/js/pagebuilder-integration.js',
+                array('jquery'),
+                MAGICASSISTANT_VERSION,
+                true
+            );
             
-            if (class_exists($integration['class'])) {
-                $this->active_integration = new $integration['class']();
-                
-                if ($this->mcp_server) {
-                    $this->active_integration->set_mcp_server($this->mcp_server);
-                }
-                
-                // Initialize the integration
-                $this->active_integration->init();
+            // Pass integration data to JavaScript
+            wp_localize_script(
+                'magicassistant-pagebuilder-integration',
+                'matPagebuilderData',
+                array(
+                    'active_integrations' => array_keys($this->active_integrations),
+                    'ajax_url' => admin_url('admin-ajax.php'),
+                    'nonce' => wp_create_nonce('mat_pagebuilder_nonce'),
+                    'rest_url' => rest_url('magicassistant/v1/'),
+                    'rest_nonce' => wp_create_nonce('wp_rest')
+                )
+            );
+        }
+    }
+    
+    /**
+     * Register pagebuilder-specific MCP tools
+     */
+    public function register_pagebuilder_tools($mcp_server) {
+        // Register pagebuilder content generation tool
+        $mcp_server->register_tool(array(
+            'name' => 'pagebuilder_generate_content',
+            'description' => 'Generate structured content for pagebuilders using HTML with Tailwind CSS classes',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'content_type' => array(
+                        'type' => 'string',
+                        'enum' => array('hero', 'section', 'card', 'list', 'form', 'custom'),
+                        'description' => 'Type of content to generate'
+                    ),
+                    'html_content' => array(
+                        'type' => 'string',
+                        'description' => 'Clean semantic HTML structure with Tailwind CSS classes'
+                    ),
+                    'pagebuilder' => array(
+                        'type' => 'string',
+                        'enum' => array('bricks', 'elementor', 'gutenberg'),
+                        'description' => 'Target pagebuilder for content generation'
+                    ),
+                    'insert_method' => array(
+                        'type' => 'string',
+                        'enum' => array('append', 'prepend', 'replace'),
+                        'default' => 'append',
+                        'description' => 'How to insert the content into the page'
+                    )
+                ),
+                'required' => array('html_content', 'pagebuilder')
+            ),
+            'callback' => array($this, 'generate_pagebuilder_content')
+        ));
+        
+        return $mcp_server;
+    }
+    
+    /**
+     * Generate and insert pagebuilder content
+     */
+    public function generate_pagebuilder_content($args) {
+        $html_content = $args['html_content'] ?? '';
+        $pagebuilder = $args['pagebuilder'] ?? '';
+        $content_type = $args['content_type'] ?? 'custom';
+        $insert_method = $args['insert_method'] ?? 'append';
+        
+        if (empty($html_content) || empty($pagebuilder)) {
+            throw new \Exception('HTML content and pagebuilder are required');
+        }
+        
+        // Check if requested pagebuilder integration is active
+        if (!isset($this->active_integrations[$pagebuilder])) {
+            throw new \Exception("Pagebuilder integration '{$pagebuilder}' is not active or available");
+        }
+        
+        $integration = $this->active_integrations[$pagebuilder];
+        
+        // Process the HTML content through the specific pagebuilder integration
+        $result = $integration->process_html_content($html_content, $content_type, $insert_method);
+        
+        return array(
+            'success' => true,
+            'pagebuilder' => $pagebuilder,
+            'content_type' => $content_type,
+            'elements_created' => $result['elements_created'] ?? 0,
+            'insert_script' => $result['insert_script'] ?? '',
+            'message' => $result['message'] ?? 'Content generated successfully'
+        );
+    }
+    
+    /**
+     * Detect if Bricks is active and available
+     */
+    private function is_bricks_active() {
+        return defined('BRICKS_VERSION') || class_exists('Bricks\Element');
+    }
+    
+    /**
+     * Detect if Elementor is active and available
+     */
+    private function is_elementor_active() {
+        return defined('ELEMENTOR_VERSION') || class_exists('\Elementor\Plugin');
+    }
+    
+    /**
+     * Get active integrations
+     */
+    public function get_active_integrations() {
+        return $this->active_integrations;
+    }
+    
+    /**
+     * Check if we're currently in a pagebuilder context
+     */
+    public function is_pagebuilder_context() {
+        foreach ($this->active_integrations as $integration) {
+            if (method_exists($integration, 'is_builder_context') && $integration->is_builder_context()) {
+                return true;
             }
         }
-    }
-    
-    /**
-     * Detection methods for each pagebuilder
-     */
-    
-    /**
-     * Detect if Bricks is active and user is in builder mode
-     */
-    public function detect_bricks() {
-        // Check if Bricks theme is active
-        if (!function_exists('bricks_is_builder')) {
-            return false;
-        }
-        
-        // Check if user is in Bricks builder or this is a builder call
-        if (function_exists('bricks_is_builder') && bricks_is_builder()) {
-            return true;
-        }
-        
-        if (function_exists('bricks_is_builder_call') && bricks_is_builder_call()) {
-            return true;
-        }
-        
-        // Check if this is a context where Bricks elements should be created
-        // (e.g., when AI is creating content for a Bricks-enabled page)
-        if ($this->is_bricks_context()) {
-            return true;
-        }
-        
         return false;
-    }
-    
-    /**
-     * Check if we're in a Bricks context (editing a Bricks page/template)
-     */
-    private function is_bricks_context() {
-        // Check if current post is set to use Bricks
-        $post_id = $this->get_current_post_id();
-        
-        if (!$post_id) {
-            return false;
-        }
-        
-        // Check if this post/page uses Bricks
-        if (function_exists('\\Bricks\\Helpers::get_editor_mode')) {
-            $editor_mode = \Bricks\Helpers::get_editor_mode($post_id);
-            return $editor_mode === 'bricks';
-        }
-        
-        return false;
-    }
-    
-    /**
-     * Get current post ID from various contexts
-     */
-    private function get_current_post_id() {
-        // Try to get from URL parameters (admin edit screen)
-        if (isset($_GET['post'])) {
-            return intval($_GET['post']);
-        }
-        
-        // Try to get from POST data (AJAX calls)
-        if (isset($_POST['post_id'])) {
-            return intval($_POST['post_id']);
-        }
-        
-        if (isset($_POST['postId'])) {
-            return intval($_POST['postId']);
-        }
-        
-        // Try global post ID
-        return get_the_ID();
-    }
-    
-    /**
-     * Get the active integration instance
-     */
-    public function get_active_integration() {
-        return $this->active_integration;
-    }
-    
-    /**
-     * Check if any pagebuilder integration is active
-     */
-    public function has_active_integration() {
-        return $this->active_integration !== null;
-    }
-    
-    /**
-     * Get the name of the active pagebuilder
-     */
-    public function get_active_pagebuilder_name() {
-        if (!$this->active_integration) {
-            return null;
-        }
-        
-        foreach ($this->integrations as $key => $integration) {
-            if ($this->active_integration instanceof $integration['class']) {
-                return $integration['name'];
-            }
-        }
-        
-        return null;
     }
 } 

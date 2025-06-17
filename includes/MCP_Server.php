@@ -20,7 +20,6 @@ class MCP_Server {
     private $registered_tools = [];
     private $registered_resources = [];
     private $registered_prompts = [];
-    private $current_context = null;
     
     public function __construct() {
         add_action('init', array($this, 'init'));
@@ -5459,20 +5458,6 @@ class MCP_Server {
         }
 
         return call_user_func($callback, $arguments);
-    }
-    
-    /**
-     * Set the current page context
-     */
-    public function set_current_context($context) {
-        $this->current_context = $context;
-    }
-    
-    /**
-     * Get the current page context
-     */
-    public function get_current_context() {
-        return $this->current_context;
     }
 
     private function register_rest_api_tools() {

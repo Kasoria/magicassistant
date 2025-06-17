@@ -1,611 +1,200 @@
 <?php
 
-namespace MagicAssistant;
+namespace MagicAssistant\Pagebuilders;
 
 if (!defined('ABSPATH')) exit;
 
 /**
- * Bricks Page Builder Integration
+ * Bricks Pagebuilder Integration
  * 
- * This class provides integration with Bricks pagebuilder, allowing the AI
- * to create native Bricks elements instead of raw HTML content.
+ * Handles conversion of HTML with Tailwind classes to native Bricks elements
  */
 class Bricks_Integration {
     
-    private $mcp_server;
+    private $db;
+    private $tailwind_to_css_map;
+    private $html_to_bricks_map;
     
     public function __construct() {
-        // Constructor - basic setup
+        add_action('wp_enqueue_scripts', array($this, 'enqueue_bricks_scripts'));
+        add_action('admin_enqueue_scripts', array($this, 'enqueue_bricks_scripts'));
+        
+        // Initialize mapping tables
+        $this->init_tailwind_css_map();
+        $this->init_html_bricks_map();
     }
     
-    public function init() {
-        // Register Bricks-specific MCP tools
-        $this->register_bricks_tools();
-        
-        // Add hooks for Bricks integration
-        add_action('wp_enqueue_scripts', array($this, 'enqueue_integration_scripts'));
-        add_action('wp_footer', array($this, 'add_integration_scripts'));
-    }
-    
-    public function set_mcp_server($mcp_server) {
-        $this->mcp_server = $mcp_server;
-        
-        // Register tools now that we have the MCP server
-        if ($mcp_server) {
-            $this->register_bricks_tools();
-        }
+    public function set_db($db) {
+        $this->db = $db;
     }
     
     /**
-     * Register Bricks-specific MCP tools
+     * Enqueue Bricks-specific integration scripts
      */
-    private function register_bricks_tools() {
-        if (!$this->mcp_server) {
-            return;
-        }
-        
-        // Heading Element Tool
-        $this->mcp_server->register_tool(array(
-            'name' => 'bricks_add_heading',
-            'description' => 'Add a native Bricks heading element to the page',
-            'inputSchema' => array(
-                'type' => 'object',
-                'properties' => array(
-                    'text' => array(
-                        'type' => 'string',
-                        'description' => 'The heading text content'
-                    ),
-                    'tag' => array(
-                        'type' => 'string',
-                        'enum' => array('h1', 'h2', 'h3', 'h4', 'h5', 'h6'),
-                        'description' => 'HTML heading tag (h1-h6)',
-                        'default' => 'h2'
-                    ),
-                    'parent_id' => array(
-                        'type' => 'string',
-                        'description' => 'Parent element ID to add this element to (optional)',
-                        'default' => ''
-                    ),
-                    'position' => array(
-                        'type' => 'integer',
-                        'description' => 'Position within parent (0 = first, -1 = last)',
-                        'default' => -1
-                    )
-                ),
-                'required' => array('text')
-            ),
-            'callback' => array($this, 'add_heading_element')
-        ));
-        
-        // Text Element Tool
-        $this->mcp_server->register_tool(array(
-            'name' => 'bricks_add_text',
-            'description' => 'Add a native Bricks text/paragraph element to the page',
-            'inputSchema' => array(
-                'type' => 'object',
-                'properties' => array(
-                    'content' => array(
-                        'type' => 'string',
-                        'description' => 'The text content (can include basic HTML)'
-                    ),
-                    'parent_id' => array(
-                        'type' => 'string',
-                        'description' => 'Parent element ID to add this element to (optional)',
-                        'default' => ''
-                    ),
-                    'position' => array(
-                        'type' => 'integer',
-                        'description' => 'Position within parent (0 = first, -1 = last)',
-                        'default' => -1
-                    )
-                ),
-                'required' => array('content')
-            ),
-            'callback' => array($this, 'add_text_element')
-        ));
-        
-        // Image Element Tool
-        $this->mcp_server->register_tool(array(
-            'name' => 'bricks_add_image',
-            'description' => 'Add a native Bricks image element to the page',
-            'inputSchema' => array(
-                'type' => 'object',
-                'properties' => array(
-                    'image_id' => array(
-                        'type' => 'integer',
-                        'description' => 'WordPress media library image ID'
-                    ),
-                    'image_url' => array(
-                        'type' => 'string',
-                        'description' => 'Image URL (alternative to image_id)'
-                    ),
-                    'alt_text' => array(
-                        'type' => 'string',
-                        'description' => 'Image alt text for accessibility',
-                        'default' => ''
-                    ),
-                    'size' => array(
-                        'type' => 'string',
-                        'description' => 'WordPress image size (thumbnail, medium, large, full)',
-                        'default' => 'large'
-                    ),
-                    'parent_id' => array(
-                        'type' => 'string',
-                        'description' => 'Parent element ID to add this element to (optional)',
-                        'default' => ''
-                    ),
-                    'position' => array(
-                        'type' => 'integer',
-                        'description' => 'Position within parent (0 = first, -1 = last)',
-                        'default' => -1
-                    )
-                ),
-                'required' => array()
-            ),
-            'callback' => array($this, 'add_image_element')
-        ));
-        
-        // Button Element Tool
-        $this->mcp_server->register_tool(array(
-            'name' => 'bricks_add_button',
-            'description' => 'Add a native Bricks button element to the page',
-            'inputSchema' => array(
-                'type' => 'object',
-                'properties' => array(
-                    'text' => array(
-                        'type' => 'string',
-                        'description' => 'Button text'
-                    ),
-                    'link' => array(
-                        'type' => 'string',
-                        'description' => 'Button link URL',
-                        'default' => '#'
-                    ),
-                    'style' => array(
-                        'type' => 'string',
-                        'enum' => array('primary', 'secondary', 'outline', 'text'),
-                        'description' => 'Button style',
-                        'default' => 'primary'
-                    ),
-                    'size' => array(
-                        'type' => 'string',
-                        'enum' => array('small', 'medium', 'large'),
-                        'description' => 'Button size',
-                        'default' => 'medium'
-                    ),
-                    'parent_id' => array(
-                        'type' => 'string',
-                        'description' => 'Parent element ID to add this element to (optional)',
-                        'default' => ''
-                    ),
-                    'position' => array(
-                        'type' => 'integer',
-                        'description' => 'Position within parent (0 = first, -1 = last)',
-                        'default' => -1
-                    )
-                ),
-                'required' => array('text')
-            ),
-            'callback' => array($this, 'add_button_element')
-        ));
-        
-        // Container/Section Element Tool
-        $this->mcp_server->register_tool(array(
-            'name' => 'bricks_add_container',
-            'description' => 'Add a native Bricks container/section element to the page',
-            'inputSchema' => array(
-                'type' => 'object',
-                'properties' => array(
-                    'tag' => array(
-                        'type' => 'string',
-                        'enum' => array('div', 'section', 'article', 'aside', 'header', 'footer', 'main'),
-                        'description' => 'HTML container tag',
-                        'default' => 'div'
-                    ),
-                    'background_color' => array(
-                        'type' => 'string',
-                        'description' => 'Background color (hex, rgb, or CSS color name)',
-                        'default' => ''
-                    ),
-                    'padding' => array(
-                        'type' => 'string',
-                        'description' => 'Padding (CSS format like "20px" or "20px 40px")',
-                        'default' => ''
-                    ),
-                    'margin' => array(
-                        'type' => 'string',
-                        'description' => 'Margin (CSS format like "20px" or "20px 40px")',
-                        'default' => ''
-                    ),
-                    'parent_id' => array(
-                        'type' => 'string',
-                        'description' => 'Parent element ID to add this element to (optional)',
-                        'default' => ''
-                    ),
-                    'position' => array(
-                        'type' => 'integer',
-                        'description' => 'Position within parent (0 = first, -1 = last)',
-                        'default' => -1
-                    )
-                ),
-                'required' => array()
-            ),
-            'callback' => array($this, 'add_container_element')
-        ));
-        
-        // List Element Tool
-        $this->mcp_server->register_tool(array(
-            'name' => 'bricks_add_list',
-            'description' => 'Add a native Bricks list element to the page',
-            'inputSchema' => array(
-                'type' => 'object',
-                'properties' => array(
-                    'items' => array(
-                        'type' => 'array',
-                        'description' => 'List items',
-                        'items' => array(
-                            'type' => 'string'
-                        )
-                    ),
-                    'list_type' => array(
-                        'type' => 'string',
-                        'enum' => array('ul', 'ol'),
-                        'description' => 'List type (ul for unordered, ol for ordered)',
-                        'default' => 'ul'
-                    ),
-                    'parent_id' => array(
-                        'type' => 'string',
-                        'description' => 'Parent element ID to add this element to (optional)',
-                        'default' => ''
-                    ),
-                    'position' => array(
-                        'type' => 'integer',
-                        'description' => 'Position within parent (0 = first, -1 = last)',
-                        'default' => -1
-                    )
-                ),
-                'required' => array('items')
-            ),
-            'callback' => array($this, 'add_list_element')
-        ));
-    }
-    
-    /**
-     * Tool implementation methods
-     */
-    
-    public function add_heading_element($args) {
-        $text = $args['text'] ?? '';
-        $tag = $args['tag'] ?? 'h2';
-        $parent_id = $args['parent_id'] ?? '';
-        $position = $args['position'] ?? -1;
-        
-        if (empty($text)) {
-            throw new \Exception('Heading text is required');
-        }
-        
-        $element_data = array(
-            'id' => $this->generate_element_id(),
-            'name' => 'heading',
-            'settings' => array(
-                'text' => $text,
-                'tag' => $tag
-            ),
-            'parent' => $parent_id ?: '0', // Root if no parent
-            'children' => array()
-        );
-        
-        return $this->add_element_to_page($element_data, $position);
-    }
-    
-    public function add_text_element($args) {
-        $content = $args['content'] ?? '';
-        $parent_id = $args['parent_id'] ?? '';
-        $position = $args['position'] ?? -1;
-        
-        if (empty($content)) {
-            throw new \Exception('Text content is required');
-        }
-        
-        $element_data = array(
-            'id' => $this->generate_element_id(),
-            'name' => 'text-basic',
-            'settings' => array(
-                'text' => $content
-            ),
-            'parent' => $parent_id ?: '0',
-            'children' => array()
-        );
-        
-        return $this->add_element_to_page($element_data, $position);
-    }
-    
-    public function add_image_element($args) {
-        $image_id = $args['image_id'] ?? 0;
-        $image_url = $args['image_url'] ?? '';
-        $alt_text = $args['alt_text'] ?? '';
-        $size = $args['size'] ?? 'large';
-        $parent_id = $args['parent_id'] ?? '';
-        $position = $args['position'] ?? -1;
-        
-        if (empty($image_id) && empty($image_url)) {
-            throw new \Exception('Either image_id or image_url is required');
-        }
-        
-        $image_settings = array();
-        
-        if ($image_id) {
-            $image_settings['image'] = array(
-                'id' => $image_id,
-                'size' => $size
-            );
-            
-            if ($alt_text) {
-                $image_settings['altText'] = $alt_text;
-            }
-        } elseif ($image_url) {
-            $image_settings['image'] = array(
-                'url' => $image_url,
-                'size' => $size
-            );
-            
-            if ($alt_text) {
-                $image_settings['altText'] = $alt_text;
-            }
-        }
-        
-        $element_data = array(
-            'id' => $this->generate_element_id(),
-            'name' => 'image',
-            'settings' => $image_settings,
-            'parent' => $parent_id ?: '0',
-            'children' => array()
-        );
-        
-        return $this->add_element_to_page($element_data, $position);
-    }
-    
-    public function add_button_element($args) {
-        $text = $args['text'] ?? '';
-        $link = $args['link'] ?? '#';
-        $style = $args['style'] ?? 'primary';
-        $size = $args['size'] ?? 'medium';
-        $parent_id = $args['parent_id'] ?? '';
-        $position = $args['position'] ?? -1;
-        
-        if (empty($text)) {
-            throw new \Exception('Button text is required');
-        }
-        
-        $element_data = array(
-            'id' => $this->generate_element_id(),
-            'name' => 'button',
-            'settings' => array(
-                'text' => $text,
-                'link' => array(
-                    'type' => 'external',
-                    'url' => $link
-                ),
-                'style' => $style,
-                'size' => $size
-            ),
-            'parent' => $parent_id ?: '0',
-            'children' => array()
-        );
-        
-        return $this->add_element_to_page($element_data, $position);
-    }
-    
-    public function add_container_element($args) {
-        $tag = $args['tag'] ?? 'div';
-        $background_color = $args['background_color'] ?? '';
-        $padding = $args['padding'] ?? '';
-        $margin = $args['margin'] ?? '';
-        $parent_id = $args['parent_id'] ?? '';
-        $position = $args['position'] ?? -1;
-        
-        $settings = array(
-            'tag' => $tag
-        );
-        
-        // Add styling if provided
-        if ($background_color || $padding || $margin) {
-            $css_settings = array();
-            
-            if ($background_color) {
-                $css_settings['background-color'] = $background_color;
-            }
-            
-            if ($padding) {
-                $css_settings['padding'] = $padding;
-            }
-            
-            if ($margin) {
-                $css_settings['margin'] = $margin;
-            }
-            
-            $settings['_cssGlobalClasses'] = array();
-            $settings['_cssClasses'] = array();
-            $settings['_css'] = $css_settings;
-        }
-        
-        $element_data = array(
-            'id' => $this->generate_element_id(),
-            'name' => 'container',
-            'settings' => $settings,
-            'parent' => $parent_id ?: '0',
-            'children' => array()
-        );
-        
-        return $this->add_element_to_page($element_data, $position);
-    }
-    
-    public function add_list_element($args) {
-        $items = $args['items'] ?? array();
-        $list_type = $args['list_type'] ?? 'ul';
-        $parent_id = $args['parent_id'] ?? '';
-        $position = $args['position'] ?? -1;
-        
-        if (empty($items)) {
-            throw new \Exception('List items are required');
-        }
-        
-        // Convert items array to Bricks list format
-        $list_items = array();
-        foreach ($items as $item) {
-            $list_items[] = array(
-                'text' => $item
+    public function enqueue_bricks_scripts() {
+        if ($this->is_builder_context()) {
+            wp_enqueue_script(
+                'magicassistant-bricks-integration',
+                MAGICASSISTANT_URL . 'assets/js/bricks-integration.js',
+                array('jquery'),
+                MAGICASSISTANT_VERSION,
+                true
             );
         }
-        
-        $element_data = array(
-            'id' => $this->generate_element_id(),
-            'name' => 'list',
-            'settings' => array(
-                'items' => $list_items,
-                'tag' => $list_type
-            ),
-            'parent' => $parent_id ?: '0',
-            'children' => array()
-        );
-        
-        return $this->add_element_to_page($element_data, $position);
     }
     
     /**
-     * Helper methods
+     * Check if we're in Bricks builder context
      */
-    
-    /**
-     * Generate a unique element ID
-     */
-    private function generate_element_id() {
-        return 'magicai_' . uniqid();
+    public function is_builder_context() {
+        // Check for Bricks builder URL parameters
+        $is_bricks_iframe = isset($_GET['bricks']) && $_GET['bricks'] === 'run';
+        $is_bricks_builder = isset($_GET['bricks']) && $_GET['bricks'] === 'edit';
+        
+        // Check for Bricks functions if available
+        if (function_exists('bricks_is_builder_iframe')) {
+            $is_bricks_iframe = $is_bricks_iframe || bricks_is_builder_iframe();
+        }
+        
+        if (function_exists('bricks_is_builder_main')) {
+            $is_bricks_builder = $is_bricks_builder || bricks_is_builder_main();
+        }
+        
+        return $is_bricks_iframe || $is_bricks_builder;
     }
     
     /**
-     * Add element to the current page/post
+     * Process HTML content and convert to Bricks elements
      */
-    private function add_element_to_page($element_data, $position = -1) {
-        $post_id = $this->get_current_post_id();
+    public function process_html_content($html_content, $content_type, $insert_method) {
+        // Parse HTML structure
+        $parsed_elements = $this->parse_html_structure($html_content);
         
-        if (!$post_id) {
-            throw new \Exception('No post ID found. Unable to add element to page.');
-        }
+        // Convert to Bricks elements
+        $bricks_elements = $this->convert_to_bricks_elements($parsed_elements);
         
-        // Get current Bricks data
-        $bricks_data = $this->get_bricks_data($post_id);
-        
-        // Add the new element
-        if ($position === -1) {
-            // Add to end
-            $bricks_data[] = $element_data;
-        } else {
-            // Insert at specific position
-            array_splice($bricks_data, $position, 0, array($element_data));
-        }
-        
-        // Save updated Bricks data
-        $this->save_bricks_data($post_id, $bricks_data);
+        // Generate insertion script
+        $insert_script = $this->generate_insert_script($bricks_elements, $insert_method);
         
         return array(
-            'success' => true,
-            'element_id' => $element_data['id'],
-            'element_name' => $element_data['name'],
-            'message' => 'Bricks ' . $element_data['name'] . ' element added successfully',
-            'post_id' => $post_id,
-            'total_elements' => count($bricks_data)
+            'elements_created' => count($bricks_elements),
+            'insert_script' => $insert_script,
+            'bricks_elements' => $bricks_elements,
+            'message' => sprintf('Generated %d Bricks elements ready for insertion', count($bricks_elements))
         );
     }
     
     /**
-     * Get current post ID from various contexts
+     * Parse HTML structure into a tree of elements
      */
-    private function get_current_post_id() {
-        // Try to get from MagicAssistant context first
-        global $magic_assistant;
-        if ($magic_assistant && method_exists($magic_assistant, 'get_mcp_server')) {
-            $mcp_server = $magic_assistant->get_mcp_server();
-            if ($mcp_server && method_exists($mcp_server, 'get_current_context')) {
-                $context = $mcp_server->get_current_context();
-                if (isset($context['post_id']) && $context['post_id']) {
-                    return intval($context['post_id']);
-                }
-            }
-        }
+    private function parse_html_structure($html_content) {
+        // Clean and prepare HTML
+        $html_content = $this->clean_html($html_content);
         
-        // Try to get from URL parameters (admin edit screen)
-        if (isset($_GET['post'])) {
-            return intval($_GET['post']);
-        }
+        // Use DOMDocument to parse HTML
+        $dom = new \DOMDocument();
+        $dom->loadHTML('<!DOCTYPE html><html><body>' . $html_content . '</body></html>', 
+                      LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD | LIBXML_NOERROR);
         
-        // Try to get from Bricks builder context
-        if (isset($_GET['bricks']) && isset($_GET['preview_id'])) {
-            return intval($_GET['preview_id']);
-        }
+        $body = $dom->getElementsByTagName('body')->item(0);
         
-        if (isset($_GET['bricks']) && isset($_GET['post_id'])) {
-            return intval($_GET['post_id']);
-        }
+        return $this->parse_dom_node($body);
+    }
+    
+    /**
+     * Recursively parse DOM nodes
+     */
+    private function parse_dom_node($node) {
+        $elements = array();
         
-        // Try to get from POST data (AJAX calls)
-        if (isset($_POST['post_id'])) {
-            return intval($_POST['post_id']);
-        }
-        
-        if (isset($_POST['postId'])) {
-            return intval($_POST['postId']);
-        }
-        
-        // Try Bricks-specific methods
-        if (function_exists('bricks_is_builder') && bricks_is_builder()) {
-            // Try to get from Bricks query vars
-            global $wp_query;
-            if (isset($wp_query->query_vars['post_id'])) {
-                return intval($wp_query->query_vars['post_id']);
-            }
-            
-            // Try to get from Bricks globals
-            if (defined('BRICKS_DB_PAGE_CONTENT')) {
-                global $post;
-                if ($post && $post->ID) {
-                    return intval($post->ID);
-                }
-            }
-        }
-        
-        // Try global post ID
-        $post_id = get_the_ID();
-        if ($post_id) {
-            return intval($post_id);
-        }
-        
-        // Last resort: try to get from HTTP_REFERER if it's a Bricks context
-        if (isset($_SERVER['HTTP_REFERER'])) {
-            $referer = $_SERVER['HTTP_REFERER'];
-            if (strpos($referer, 'bricks=run') !== false) {
-                // Parse the referer URL to get post ID
-                $url_parts = parse_url($referer);
-                if (isset($url_parts['query'])) {
-                    parse_str($url_parts['query'], $query_params);
-                    if (isset($query_params['post_id'])) {
-                        return intval($query_params['post_id']);
-                    }
-                    if (isset($query_params['preview_id'])) {
-                        return intval($query_params['preview_id']);
-                    }
-                }
+        foreach ($node->childNodes as $child) {
+            if ($child->nodeType === XML_ELEMENT_NODE) {
+                $element = array(
+                    'tag' => strtolower($child->tagName),
+                    'attributes' => $this->extract_attributes($child),
+                    'content' => $this->get_text_content($child),
+                    'tailwind_classes' => $this->extract_tailwind_classes($child),
+                    'children' => $this->parse_dom_node($child)
+                );
                 
-                // Try to get from URL path
-                if (isset($url_parts['path'])) {
-                    $path_parts = explode('/', trim($url_parts['path'], '/'));
-                    // Look for numeric values that could be post IDs
-                    foreach ($path_parts as $part) {
-                        if (is_numeric($part) && intval($part) > 0) {
-                            return intval($part);
-                        }
-                    }
-                }
+                $elements[] = $element;
+            }
+        }
+        
+        return $elements;
+    }
+    
+    /**
+     * Extract attributes from DOM node
+     */
+    private function extract_attributes($node) {
+        $attributes = array();
+        
+        if ($node->hasAttributes()) {
+            foreach ($node->attributes as $attr) {
+                $attributes[$attr->name] = $attr->value;
+            }
+        }
+        
+        return $attributes;
+    }
+    
+    /**
+     * Get text content from node (direct text only, not children)
+     */
+    private function get_text_content($node) {
+        $text = '';
+        
+        foreach ($node->childNodes as $child) {
+            if ($child->nodeType === XML_TEXT_NODE) {
+                $text .= trim($child->textContent);
+            }
+        }
+        
+        return $text;
+    }
+    
+    /**
+     * Extract Tailwind classes from the class attribute
+     */
+    private function extract_tailwind_classes($node) {
+        $class_attr = $node->getAttribute('class');
+        if (empty($class_attr)) {
+            return array();
+        }
+        
+        $classes = explode(' ', $class_attr);
+        $tailwind_classes = array();
+        
+        foreach ($classes as $class) {
+            $class = trim($class);
+            if (!empty($class) && $this->is_tailwind_class($class)) {
+                $tailwind_classes[] = $class;
+            }
+        }
+        
+        return $tailwind_classes;
+    }
+    
+    /**
+     * Check if a class is a Tailwind class
+     */
+    private function is_tailwind_class($class) {
+        // Basic Tailwind class patterns
+        $tailwind_patterns = array(
+            '/^(p|m|pt|pr|pb|pl|mt|mr|mb|ml)-/', // spacing
+            '/^(w|h|max-w|max-h|min-w|min-h)-/', // sizing
+            '/^(text|bg|border|shadow|rounded)-/', // styling
+            '/^(flex|grid|block|inline|hidden)$/', // display
+            '/^(justify|items|content)-/', // flexbox/grid
+            '/^(hover|focus|active):/', // states
+            '/^(sm|md|lg|xl|2xl):/', // responsive
+            '/^(text-)?(xs|sm|base|lg|xl|2xl|3xl|4xl|5xl|6xl|7xl|8xl|9xl)$/', // text sizes
+        );
+        
+        foreach ($tailwind_patterns as $pattern) {
+            if (preg_match($pattern, $class)) {
+                return true;
             }
         }
         
@@ -613,87 +202,475 @@ class Bricks_Integration {
     }
     
     /**
-     * Get Bricks data for a post
+     * Convert parsed elements to Bricks elements
      */
-    private function get_bricks_data($post_id) {
-        // Check if Bricks constants are defined
-        if (!defined('BRICKS_DB_PAGE_CONTENT')) {
-            return array();
+    private function convert_to_bricks_elements($parsed_elements) {
+        $bricks_elements = array();
+        
+        foreach ($parsed_elements as $element) {
+            $bricks_element = $this->convert_single_element($element);
+            if ($bricks_element) {
+                $bricks_elements[] = $bricks_element;
+            }
         }
         
-        $bricks_data = get_post_meta($post_id, BRICKS_DB_PAGE_CONTENT, true);
-        
-        if (!is_array($bricks_data)) {
-            return array();
-        }
-        
-        return $bricks_data;
+        return $bricks_elements;
     }
     
     /**
-     * Save Bricks data for a post
+     * Convert a single parsed element to Bricks element
      */
-    private function save_bricks_data($post_id, $bricks_data) {
-        // Check if Bricks constants are defined
-        if (!defined('BRICKS_DB_PAGE_CONTENT')) {
-            throw new \Exception('Bricks constants not found. Make sure Bricks theme is active.');
+    private function convert_single_element($element) {
+        $tag = $element['tag'];
+        $content = $element['content'];
+        $tailwind_classes = $element['tailwind_classes'];
+        $children = $element['children'];
+        
+        // Map HTML tag to Bricks element
+        $bricks_type = $this->map_html_tag_to_bricks($tag);
+        
+        if (!$bricks_type) {
+            // Fallback to div/container for unknown elements
+            $bricks_type = 'div';
         }
         
-        // Set editor mode to Bricks if not already set
-        $editor_mode = get_post_meta($post_id, BRICKS_DB_EDITOR_MODE, true);
-        if ($editor_mode !== 'bricks') {
-            update_post_meta($post_id, BRICKS_DB_EDITOR_MODE, 'bricks');
-        }
+        // Generate unique element ID
+        $element_id = $this->generate_element_id();
         
-        // Save the Bricks data
-        return update_post_meta($post_id, BRICKS_DB_PAGE_CONTENT, $bricks_data);
-    }
-    
-    /**
-     * Enqueue integration scripts
-     */
-    public function enqueue_integration_scripts() {
-        // Only load in Bricks builder
-        if (!function_exists('bricks_is_builder') || !bricks_is_builder()) {
-            return;
-        }
+        // Convert Tailwind classes to CSS styles
+        $css_styles = $this->convert_tailwind_to_css($tailwind_classes);
         
-        // Enqueue scripts that help with Bricks integration
-        wp_enqueue_script(
-            'magicassistant-bricks-integration',
-            plugins_url('assets/js/bricks-integration.js', dirname(dirname(__FILE__))),
-            array('jquery'),
-            '1.0.0',
-            true
+        // Build Bricks element structure
+        $bricks_element = array(
+            'id' => $element_id,
+            'name' => $bricks_type,
+            'settings' => $this->build_element_settings($bricks_type, $content, $css_styles, $element),
+            'children' => array()
         );
         
-        // Pass data to JavaScript
-        wp_localize_script('magicassistant-bricks-integration', 'magicAssistantBricks', array(
-            'ajaxUrl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('magicassistant_bricks'),
-            'isBuilder' => function_exists('bricks_is_builder') && bricks_is_builder(),
-            'postId' => get_the_ID()
-        ));
+        // Process children recursively
+        if (!empty($children)) {
+            foreach ($children as $child) {
+                $child_element = $this->convert_single_element($child);
+                if ($child_element) {
+                    $child_element['parent'] = $element_id;
+                    $bricks_element['children'][] = $child_element;
+                }
+            }
+        }
+        
+        return $bricks_element;
     }
     
     /**
-     * Add integration scripts to footer
+     * Map HTML tag to Bricks element type
      */
-    public function add_integration_scripts() {
-        // Only load in Bricks builder
-        if (!function_exists('bricks_is_builder') || !bricks_is_builder()) {
-            return;
+    private function map_html_tag_to_bricks($tag) {
+        return $this->html_to_bricks_map[$tag] ?? null;
+    }
+    
+    /**
+     * Convert Tailwind classes to CSS properties
+     */
+    private function convert_tailwind_to_css($tailwind_classes) {
+        $css_styles = array();
+        
+        foreach ($tailwind_classes as $class) {
+            $css_property = $this->tailwind_to_css($class);
+            if ($css_property) {
+                $css_styles = array_merge($css_styles, $css_property);
+            }
         }
         
-        ?>
-        <script>
-        // Additional integration scripts can be added here
-        // This ensures the AI chat knows it's in Bricks mode
-        if (typeof window.matAdminData !== 'undefined') {
-            window.matAdminData.pagebuilder = 'bricks';
-            window.matAdminData.pagebuilderName = 'Bricks';
+        return $css_styles;
+    }
+    
+    /**
+     * Convert single Tailwind class to CSS property
+     */
+    private function tailwind_to_css($class) {
+        // Handle responsive and state variants
+        $variants = array();
+        if (strpos($class, ':') !== false) {
+            $parts = explode(':', $class);
+            $class = array_pop($parts);
+            $variants = $parts;
         }
-        </script>
-        <?php
+        
+        // Check direct mappings first
+        if (isset($this->tailwind_to_css_map[$class])) {
+            $css = $this->tailwind_to_css_map[$class];
+            
+            // Apply variants if needed
+            if (!empty($variants)) {
+                return $this->apply_css_variants($css, $variants);
+            }
+            
+            return $css;
+        }
+        
+        // Handle dynamic classes (e.g., w-32, p-4)
+        return $this->parse_dynamic_tailwind_class($class, $variants);
+    }
+    
+    /**
+     * Parse dynamic Tailwind classes
+     */
+    private function parse_dynamic_tailwind_class($class, $variants = array()) {
+        // Width classes (w-1, w-2, w-1/2, etc.)
+        if (preg_match('/^w-(.+)$/', $class, $matches)) {
+            return array('width' => $this->convert_tailwind_size($matches[1]));
+        }
+        
+        // Height classes
+        if (preg_match('/^h-(.+)$/', $class, $matches)) {
+            return array('height' => $this->convert_tailwind_size($matches[1]));
+        }
+        
+        // Padding classes
+        if (preg_match('/^p-(.+)$/', $class, $matches)) {
+            $size = $this->convert_tailwind_spacing($matches[1]);
+            return array('padding' => $size);
+        }
+        
+        if (preg_match('/^(pt|pr|pb|pl)-(.+)$/', $class, $matches)) {
+            $side = array('pt' => 'top', 'pr' => 'right', 'pb' => 'bottom', 'pl' => 'left')[$matches[1]];
+            $size = $this->convert_tailwind_spacing($matches[2]);
+            return array("padding-{$side}" => $size);
+        }
+        
+        // Margin classes
+        if (preg_match('/^m-(.+)$/', $class, $matches)) {
+            $size = $this->convert_tailwind_spacing($matches[1]);
+            return array('margin' => $size);
+        }
+        
+        if (preg_match('/^(mt|mr|mb|ml)-(.+)$/', $class, $matches)) {
+            $side = array('mt' => 'top', 'mr' => 'right', 'mb' => 'bottom', 'ml' => 'left')[$matches[1]];
+            $size = $this->convert_tailwind_spacing($matches[2]);
+            return array("margin-{$side}" => $size);
+        }
+        
+        // Text size classes
+        if (preg_match('/^text-(.+)$/', $class, $matches)) {
+            $size = $this->convert_tailwind_text_size($matches[1]);
+            if ($size) {
+                return array('font-size' => $size);
+            }
+        }
+        
+        // Background color classes
+        if (preg_match('/^bg-(.+)$/', $class, $matches)) {
+            $color = $this->convert_tailwind_color($matches[1]);
+            if ($color) {
+                return array('background-color' => $color);
+            }
+        }
+        
+        // Text color classes
+        if (preg_match('/^text-(.+)$/', $class, $matches)) {
+            $color = $this->convert_tailwind_color($matches[1]);
+            if ($color) {
+                return array('color' => $color);
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Convert Tailwind size to CSS value
+     */
+    private function convert_tailwind_size($size) {
+        // Handle fractions
+        if (strpos($size, '/') !== false) {
+            list($numerator, $denominator) = explode('/', $size);
+            return (floatval($numerator) / floatval($denominator) * 100) . '%';
+        }
+        
+        // Handle named sizes
+        $size_map = array(
+            'auto' => 'auto',
+            'full' => '100%',
+            'screen' => '100vh',
+            'min' => 'min-content',
+            'max' => 'max-content',
+            'fit' => 'fit-content'
+        );
+        
+        if (isset($size_map[$size])) {
+            return $size_map[$size];
+        }
+        
+        // Handle numeric sizes (multiply by 0.25rem)
+        if (is_numeric($size)) {
+            return ($size * 0.25) . 'rem';
+        }
+        
+        return $size;
+    }
+    
+    /**
+     * Convert Tailwind spacing to CSS value
+     */
+    private function convert_tailwind_spacing($spacing) {
+        if ($spacing === 'auto') {
+            return 'auto';
+        }
+        
+        if (is_numeric($spacing)) {
+            return ($spacing * 0.25) . 'rem';
+        }
+        
+        return $spacing;
+    }
+    
+    /**
+     * Convert Tailwind text size to CSS value
+     */
+    private function convert_tailwind_text_size($size) {
+        $text_sizes = array(
+            'xs' => '0.75rem',
+            'sm' => '0.875rem',
+            'base' => '1rem',
+            'lg' => '1.125rem',
+            'xl' => '1.25rem',
+            '2xl' => '1.5rem',
+            '3xl' => '1.875rem',
+            '4xl' => '2.25rem',
+            '5xl' => '3rem',
+            '6xl' => '3.75rem',
+            '7xl' => '4.5rem',
+            '8xl' => '6rem',
+            '9xl' => '8rem'
+        );
+        
+        return $text_sizes[$size] ?? null;
+    }
+    
+    /**
+     * Convert Tailwind color to CSS value
+     */
+    private function convert_tailwind_color($color) {
+        // Basic color mappings (could be expanded)
+        $color_map = array(
+            'transparent' => 'transparent',
+            'current' => 'currentColor',
+            'black' => '#000000',
+            'white' => '#ffffff',
+            'gray-50' => '#f9fafb',
+            'gray-100' => '#f3f4f6',
+            'gray-200' => '#e5e7eb',
+            'gray-300' => '#d1d5db',
+            'gray-400' => '#9ca3af',
+            'gray-500' => '#6b7280',
+            'gray-600' => '#4b5563',
+            'gray-700' => '#374151',
+            'gray-800' => '#1f2937',
+            'gray-900' => '#111827',
+            'red-500' => '#ef4444',
+            'blue-500' => '#3b82f6',
+            'green-500' => '#10b981',
+            'yellow-500' => '#f59e0b',
+            'purple-500' => '#8b5cf6',
+            'pink-500' => '#ec4899'
+        );
+        
+        return $color_map[$color] ?? null;
+    }
+    
+    /**
+     * Build element settings for Bricks
+     */
+    private function build_element_settings($bricks_type, $content, $css_styles, $original_element) {
+        $settings = array();
+        
+        // Add content based on element type
+        switch ($bricks_type) {
+            case 'text':
+                $settings['text'] = $content;
+                break;
+            case 'heading':
+                $settings['text'] = $content;
+                $settings['tag'] = $this->determine_heading_tag($original_element['tag']);
+                break;
+            case 'button':
+                $settings['text'] = $content;
+                $settings['link'] = $original_element['attributes']['href'] ?? '';
+                break;
+            case 'image':
+                $settings['image'] = array(
+                    'url' => $original_element['attributes']['src'] ?? '',
+                    'alt' => $original_element['attributes']['alt'] ?? ''
+                );
+                break;
+        }
+        
+        // Add CSS styles
+        if (!empty($css_styles)) {
+            $settings['_css'] = $this->convert_css_to_bricks_format($css_styles);
+        }
+        
+        return $settings;
+    }
+    
+    /**
+     * Convert CSS styles to Bricks format
+     */
+    private function convert_css_to_bricks_format($css_styles) {
+        $bricks_css = array();
+        
+        foreach ($css_styles as $property => $value) {
+            // Map CSS properties to Bricks CSS structure
+            $bricks_css[] = array(
+                'selector' => '',
+                'property' => $property,
+                'value' => $value
+            );
+        }
+        
+        return $bricks_css;
+    }
+    
+    /**
+     * Determine heading tag from original element
+     */
+    private function determine_heading_tag($original_tag) {
+        if (in_array($original_tag, array('h1', 'h2', 'h3', 'h4', 'h5', 'h6'))) {
+            return $original_tag;
+        }
+        return 'h2'; // Default
+    }
+    
+    /**
+     * Generate unique element ID
+     */
+    private function generate_element_id() {
+        return 'mat_' . uniqid();
+    }
+    
+    /**
+     * Generate JavaScript to insert elements into Bricks
+     */
+    private function generate_insert_script($bricks_elements, $insert_method) {
+        $elements_json = json_encode($bricks_elements);
+        
+        return "
+        if (typeof window.matBricksIntegration !== 'undefined') {
+            window.matBricksIntegration.insertElements({$elements_json}, '{$insert_method}');
+        } else {
+            console.warn('Bricks integration not loaded');
+        }
+        ";
+    }
+    
+    /**
+     * Clean HTML content
+     */
+    private function clean_html($html) {
+        // Remove comments and scripts
+        $html = preg_replace('/<!--.*?-->/s', '', $html);
+        $html = preg_replace('/<script[^>]*>.*?<\/script>/s', '', $html);
+        
+        // Normalize whitespace
+        $html = preg_replace('/\s+/', ' ', $html);
+        
+        return trim($html);
+    }
+    
+    /**
+     * Initialize Tailwind to CSS mapping
+     */
+    private function init_tailwind_css_map() {
+        $this->tailwind_to_css_map = array(
+            // Display
+            'block' => array('display' => 'block'),
+            'inline' => array('display' => 'inline'),
+            'inline-block' => array('display' => 'inline-block'),
+            'flex' => array('display' => 'flex'),
+            'inline-flex' => array('display' => 'inline-flex'),
+            'grid' => array('display' => 'grid'),
+            'hidden' => array('display' => 'none'),
+            
+            // Flexbox
+            'flex-row' => array('flex-direction' => 'row'),
+            'flex-col' => array('flex-direction' => 'column'),
+            'justify-start' => array('justify-content' => 'flex-start'),
+            'justify-center' => array('justify-content' => 'center'),
+            'justify-end' => array('justify-content' => 'flex-end'),
+            'justify-between' => array('justify-content' => 'space-between'),
+            'items-start' => array('align-items' => 'flex-start'),
+            'items-center' => array('align-items' => 'center'),
+            'items-end' => array('align-items' => 'flex-end'),
+            
+            // Text alignment
+            'text-left' => array('text-align' => 'left'),
+            'text-center' => array('text-align' => 'center'),
+            'text-right' => array('text-align' => 'right'),
+            'text-justify' => array('text-align' => 'justify'),
+            
+            // Font weight
+            'font-thin' => array('font-weight' => '100'),
+            'font-light' => array('font-weight' => '300'),
+            'font-normal' => array('font-weight' => '400'),
+            'font-medium' => array('font-weight' => '500'),
+            'font-semibold' => array('font-weight' => '600'),
+            'font-bold' => array('font-weight' => '700'),
+            'font-extrabold' => array('font-weight' => '800'),
+            'font-black' => array('font-weight' => '900'),
+            
+            // Border radius
+            'rounded-none' => array('border-radius' => '0'),
+            'rounded-sm' => array('border-radius' => '0.125rem'),
+            'rounded' => array('border-radius' => '0.25rem'),
+            'rounded-md' => array('border-radius' => '0.375rem'),
+            'rounded-lg' => array('border-radius' => '0.5rem'),
+            'rounded-xl' => array('border-radius' => '0.75rem'),
+            'rounded-2xl' => array('border-radius' => '1rem'),
+            'rounded-3xl' => array('border-radius' => '1.5rem'),
+            'rounded-full' => array('border-radius' => '9999px'),
+            
+            // Shadow
+            'shadow-sm' => array('box-shadow' => '0 1px 2px 0 rgb(0 0 0 / 0.05)'),
+            'shadow' => array('box-shadow' => '0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1)'),
+            'shadow-md' => array('box-shadow' => '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)'),
+            'shadow-lg' => array('box-shadow' => '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)'),
+            'shadow-xl' => array('box-shadow' => '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)'),
+        );
+    }
+    
+    /**
+     * Initialize HTML to Bricks element mapping
+     */
+    private function init_html_bricks_map() {
+        $this->html_to_bricks_map = array(
+            'h1' => 'heading',
+            'h2' => 'heading',
+            'h3' => 'heading',
+            'h4' => 'heading',
+            'h5' => 'heading',
+            'h6' => 'heading',
+            'p' => 'text-basic',
+            'span' => 'text-basic',
+            'div' => 'div',
+            'section' => 'section',
+            'article' => 'div',
+            'aside' => 'div',
+            'header' => 'div',
+            'footer' => 'div',
+            'nav' => 'div',
+            'a' => 'button',
+            'button' => 'button',
+            'img' => 'image',
+            'ul' => 'list',
+            'ol' => 'list',
+            'li' => 'text',
+            'form' => 'form',
+            'input' => 'form-field',
+            'textarea' => 'form-field',
+            'select' => 'form-field',
+            'video' => 'video',
+            'iframe' => 'code', // Embed as code block
+        );
     }
 } 
