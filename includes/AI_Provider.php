@@ -132,6 +132,19 @@ class AI_Provider {
             'callback' => array($this, 'set_last_session'),
             'permission_callback' => array($this, 'check_permissions'),
         ));
+        
+        // SEO DATA ENDPOINTS
+        register_rest_route('magicassistant/v1', '/seo-data', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_seo_data'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        register_rest_route('magicassistant/v1', '/seo-data', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'save_seo_data'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
     }
     
     public function handle_chat($request) {
@@ -689,11 +702,25 @@ class AI_Provider {
     }
     
     private function build_agent_system_message() {
-        $tools_info = "\nYou have access to a comprehensive set of WordPress MCP tools. Use them thoughtfully when they can enhance your answer.\n";
+        $tools_info = "\nYou have access to a comprehensive set of WordPress MCP tools including SEO analysis capabilities through DataForSEO. Use them thoughtfully when they can enhance your answer.\n";
         
-        return "You are MagicAssistant, a helpful AI assistant for WordPress websites operating in AGENT MODE. You can help users manage their WordPress site, create content, and perform complex multi-step operations.
+        return "You are MagicAssistant, a helpful AI assistant for WordPress websites operating in AGENT MODE. You can help users manage their WordPress site, create content, perform SEO analysis, and execute complex multi-step operations.
 
 {$tools_info}
+
+AVAILABLE CAPABILITIES:
+- WordPress content management (posts, pages, media, users, etc.)
+- SEO analysis and optimization (SERP analysis, keyword research, competitor analysis, technical audits)
+- Site administration and settings management
+- WooCommerce support (if available)
+
+IMPORTANT - SEO Tool Usage:
+When using DataForSEO tools, ALWAYS consider the language and geographic context:
+- FIRST use the 'dataforseo_suggest_location' tool to get intelligent location/language suggestions
+- Use the suggestions from that tool for subsequent SEO API calls
+- Common location codes: USA (2840), Germany (2276), UK (2826), France (2250), Spain (2724)
+- Common language codes: en (English), de (German), fr (French), es (Spanish), it (Italian)
+- If suggestion tool returns low confidence, ask the user for clarification before making the API call
 
 In Agent Mode, you should:
 1. Analyze complex requests and break them into logical steps
@@ -706,6 +733,7 @@ In Agent Mode, you should:
 RESPONSE APPROACH:
 - For analysis requests: Craft detailed, insightful responses that interpret the data
 - For management tasks: Explain what you did and the results clearly
+- For SEO requests: Use DataForSEO tools to provide comprehensive SEO insights
 - For information requests: Present data in an organized, conversational way
 - Always adapt your response style to match the user's needs and intent
 
@@ -713,19 +741,34 @@ Be proactive and thorough, but focus on creating natural, helpful responses rath
     }
 
     private function build_system_message() {
-        $tools_info = "\nYou have access to a comprehensive set of WordPress MCP tools. Use them thoughtfully when they can enhance your answer.\n";
+        $tools_info = "\nYou have access to a comprehensive set of WordPress MCP tools including SEO analysis capabilities through DataForSEO. Use them thoughtfully when they can enhance your answer.\n";
         
-        return "You are MagicAssistant, a helpful AI assistant for WordPress websites. You can help users manage their WordPress site, create content, and provide guidance.
+        return "You are MagicAssistant, a helpful AI assistant for WordPress websites. You can help users manage their WordPress site, create content, perform SEO analysis, and provide guidance.
 
 {$tools_info}
+
+AVAILABLE CAPABILITIES:
+- WordPress content management (posts, pages, media, users, etc.)
+- SEO analysis and optimization (SERP analysis, keyword research, competitor analysis, technical audits)
+- Site administration and settings management
+- WooCommerce support (if available)
+
+IMPORTANT - SEO Tool Usage:
+When using DataForSEO tools, ALWAYS consider the language and geographic context:
+- FIRST use the 'dataforseo_suggest_location' tool to get intelligent location/language suggestions
+- Use the suggestions from that tool for subsequent SEO API calls
+- Common location codes: USA (2840), Germany (2276), UK (2826), France (2250), Spain (2724)
+- Common language codes: en (English), de (German), fr (French), es (Spanish), it (Italian)
+- If suggestion tool returns low confidence, ask the user for clarification before making the API call
 
 IMPORTANT: Respond naturally and conversationally. When you use tools to gather information:
 - Present the results as part of your natural response, not as separate technical outputs
 - Adapt your response style to the user's request (detailed analysis vs. quick answers)
 - Focus on providing insights and useful information, not just raw data
 - Use a helpful, friendly tone that matches the user's intent
+- For SEO requests, leverage DataForSEO tools to provide comprehensive insights
 
-Be conversational, helpful, and proactive in suggesting how you can help with WordPress tasks.";
+Be conversational, helpful, and proactive in suggesting how you can help with WordPress and SEO tasks.";
     }
     
     private function call_openai($messages, $api_key) {
@@ -734,11 +777,16 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $tools = $this->get_mcp_tools_for_openai();
         
         $max_response_tokens = $this->settings['max_response_tokens'] ?? 1500;
+        $model = $this->settings['openai_model'] ?? 'gpt-4.1-mini';
+        
+        // Set temperature to 1 for "o" models (o3, o4-mini, etc.), 0.7 for others
+        $temperature = (strpos($model, 'o') === 0 && preg_match('/^o\d/', $model)) ? 1 : 0.7;
+        
         $payload = array(
-            'model' => $this->settings['openai_model'] ?? 'gpt-4.1-mini',
+            'model' => $model,
             'messages' => $messages,
-            'temperature' => 0.7,
-            'max_tokens' => intval($max_response_tokens)
+            'temperature' => $temperature,
+            'max_completion_tokens' => intval($max_response_tokens)
         );
         
         if (!empty($tools)) {
@@ -1783,6 +1831,142 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $schema['items'] = $this->compress_tool_schema($schema['items']);
         }
         return $schema;
+    }
+
+    /**
+     * Get SEO analytics data
+     */
+    public function get_seo_data($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+        
+        $user_id = get_current_user_id();
+        $seo_data = $this->db->get_user_setting('seo_analytics_data', $user_id, array());
+        
+        return array(
+            'success' => true,
+            'data' => $seo_data
+        );
+    }
+
+    /**
+     * Save SEO analytics data
+     */
+    public function save_seo_data($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+        
+        $data = $request->get_json_params();
+        $user_id = get_current_user_id();
+        
+        if (empty($data)) {
+            return new WP_Error('no_data', 'No data provided', array('status' => 400));
+        }
+        
+        // Sanitize and validate the SEO data
+        $seo_data = array(
+            'keywordRankings' => $this->sanitize_keyword_rankings($data['keywordRankings'] ?? array()),
+            'organicTraffic' => $this->sanitize_organic_traffic($data['organicTraffic'] ?? array()),
+            'competitors' => $this->sanitize_competitors($data['competitors'] ?? array()),
+            'technicalScores' => $this->sanitize_technical_scores($data['technicalScores'] ?? array()),
+            'averagePosition' => floatval($data['averagePosition'] ?? 0),
+            'totalTraffic' => intval($data['totalTraffic'] ?? 0),
+            'totalKeywords' => intval($data['totalKeywords'] ?? 0),
+            'seoScore' => intval($data['seoScore'] ?? 0),
+            'lastUpdated' => current_time('mysql')
+        );
+        
+        $this->db->save_user_setting('seo_analytics_data', $seo_data, $user_id);
+        
+        return array(
+            'success' => true,
+            'message' => 'SEO data saved successfully'
+        );
+    }
+
+    /**
+     * Sanitize keyword rankings data
+     */
+    private function sanitize_keyword_rankings($rankings) {
+        if (!is_array($rankings)) {
+            return array();
+        }
+        
+        $sanitized = array();
+        foreach ($rankings as $ranking) {
+            if (is_array($ranking) && isset($ranking['keyword'])) {
+                $sanitized[] = array(
+                    'keyword' => sanitize_text_field($ranking['keyword']),
+                    'position' => intval($ranking['position'] ?? 0),
+                    'volume' => intval($ranking['volume'] ?? 0),
+                    'difficulty' => intval($ranking['difficulty'] ?? 0)
+                );
+            }
+        }
+        
+        return $sanitized;
+    }
+
+    /**
+     * Sanitize organic traffic data
+     */
+    private function sanitize_organic_traffic($traffic) {
+        if (!is_array($traffic)) {
+            return array();
+        }
+        
+        $sanitized = array();
+        foreach ($traffic as $data_point) {
+            if (is_array($data_point) && isset($data_point['date'])) {
+                $sanitized[] = array(
+                    'date' => sanitize_text_field($data_point['date']),
+                    'traffic' => intval($data_point['traffic'] ?? 0)
+                );
+            }
+        }
+        
+        return $sanitized;
+    }
+
+    /**
+     * Sanitize competitors data
+     */
+    private function sanitize_competitors($competitors) {
+        if (!is_array($competitors)) {
+            return array();
+        }
+        
+        $sanitized = array();
+        foreach ($competitors as $competitor) {
+            if (is_array($competitor) && isset($competitor['domain'])) {
+                $sanitized[] = array(
+                    'domain' => sanitize_text_field($competitor['domain']),
+                    'authority' => intval($competitor['authority'] ?? 0),
+                    'keywords' => intval($competitor['keywords'] ?? 0),
+                    'traffic' => intval($competitor['traffic'] ?? 0)
+                );
+            }
+        }
+        
+        return $sanitized;
+    }
+
+    /**
+     * Sanitize technical scores data
+     */
+    private function sanitize_technical_scores($scores) {
+        if (!is_array($scores)) {
+            return array();
+        }
+        
+        return array(
+            'performance' => intval($scores['performance'] ?? 0),
+            'accessibility' => intval($scores['accessibility'] ?? 0),
+            'bestPractices' => intval($scores['bestPractices'] ?? 0),
+            'seo' => intval($scores['seo'] ?? 0)
+        );
     }
 
 }

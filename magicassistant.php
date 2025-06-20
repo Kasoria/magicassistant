@@ -41,6 +41,7 @@ class MagicAssistant {
   private $ai_provider;
   private $db;
   private $public_share;
+  private $dataforseo;
   
   public function __construct() {
     add_action('plugins_loaded', array($this, 'init'));
@@ -64,6 +65,10 @@ class MagicAssistant {
     // Initialize public sharing
     $this->public_share = new MagicAssistant\Public_Share();
     $this->public_share->set_db($this->db);
+    
+    // Initialize DataForSEO integration
+    $this->dataforseo = new MagicAssistant\DataForSEO();
+    $this->dataforseo->set_mcp_server($this->mcp_server);
     
     // Initialize admin functionality
     if (is_admin()) {
@@ -93,6 +98,13 @@ class MagicAssistant {
   }
   
   /**
+   * Get the DataForSEO instance
+   */
+  public function get_dataforseo() {
+    return $this->dataforseo;
+  }
+  
+  /**
    * Static instance getter
    */
   public static function instance() {
@@ -119,4 +131,11 @@ function MATMCP() {
  */
 function MATDB() {
   return $GLOBALS['magic_assistant']->get_db();
+}
+
+/**
+ * Global function to access MagicAssistant DataForSEO
+ */
+function MATDFS() {
+  return $GLOBALS['magic_assistant']->get_dataforseo();
 }

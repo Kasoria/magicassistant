@@ -229,6 +229,9 @@ class MCP_Server {
         // Register WordPress.org repository tools
         $this->register_repository_tools();
         
+        // Register DataForSEO tools
+        $this->register_dataforseo_tools();
+        
         // Register generic REST API tools
         $this->register_rest_api_tools();
         
@@ -6785,5 +6788,167 @@ class MCP_Server {
             'total_updated' => count($updated_themes),
             'failed_updates' => $failed_updates
         );
+    }
+    
+    /**
+     * Register DataForSEO tools
+     */
+    private function register_dataforseo_tools() {
+        // Get the DataForSEO instance from the main plugin
+        if (function_exists('MATDFS') && MATDFS()) {
+            $dataforseo = MATDFS();
+            
+            // Check if DataForSEO is available
+            if (!$dataforseo->is_available()) {
+                return;
+            }
+            
+            // Register helper tool for location suggestions
+            $this->register_tool(array(
+                'name' => 'dataforseo_suggest_location',
+                'description' => 'Get suggested location and language codes based on keyword context. Use this BEFORE making SEO requests to get intelligent suggestions.',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'keyword' => array(
+                            'type' => 'string',
+                            'description' => 'The keyword to analyze for location/language context'
+                        )
+                    ),
+                    'required' => array('keyword')
+                ),
+                'callback' => array($dataforseo, 'handle_location_suggestion')
+            ));
+            
+            // Register SERP analysis tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_serp_analysis',
+                'description' => 'Analyze SERP (Search Engine Results Page) for a specific keyword. IMPORTANT: Always consider the language and geographic context of the keyword to select appropriate location_code and language_code.',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'keyword' => array(
+                            'type' => 'string',
+                            'description' => 'The keyword to analyze SERP for'
+                        ),
+                        'location_code' => array(
+                            'type' => 'integer',
+                            'description' => 'Location code for search. Common codes: USA (2840), Germany (2276), UK (2826), France (2250), Spain (2724), Canada (2124), Australia (2036). Choose based on keyword language/target market. Ask user if unclear.'
+                        ),
+                        'language_code' => array(
+                            'type' => 'string',
+                            'description' => 'Language code. Common codes: en (English), de (German), fr (French), es (Spanish), it (Italian). Must match the keyword language. Ask user if unclear.'
+                        ),
+                        'device' => array(
+                            'type' => 'string',
+                            'description' => 'Device type: desktop, mobile, or tablet',
+                            'enum' => array('desktop', 'mobile', 'tablet'),
+                            'default' => 'desktop'
+                        )
+                    ),
+                    'required' => array('keyword', 'location_code', 'language_code')
+                ),
+                'callback' => array($dataforseo, 'handle_serp_analysis')
+            ));
+            
+            // Register keyword difficulty tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_keyword_difficulty',
+                'description' => 'Get keyword difficulty and search volume data. IMPORTANT: Consider the language and geographic context of keywords to select appropriate location_code and language_code.',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'keywords' => array(
+                            'type' => 'array',
+                            'items' => array('type' => 'string'),
+                            'description' => 'Array of keywords to analyze (max 1000)'
+                        ),
+                        'location_code' => array(
+                            'type' => 'integer',
+                            'description' => 'Location code for search. Common codes: USA (2840), Germany (2276), UK (2826), France (2250), Spain (2724), Canada (2124), Australia (2036). Choose based on keyword language/target market. Ask user if unclear.'
+                        ),
+                        'language_code' => array(
+                            'type' => 'string',
+                            'description' => 'Language code. Common codes: en (English), de (German), fr (French), es (Spanish), it (Italian). Must match the keyword language. Ask user if unclear.'
+                        )
+                    ),
+                    'required' => array('keywords', 'location_code', 'language_code')
+                ),
+                'callback' => array($dataforseo, 'handle_keyword_difficulty')
+            ));
+            
+            // Register domain analysis tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_domain_analysis',
+                'description' => 'Analyze domain metrics and SEO performance including backlinks, organic keywords, and authority',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'domain' => array(
+                            'type' => 'string',
+                            'description' => 'Domain to analyze (without http/https)'
+                        ),
+                        'analysis_type' => array(
+                            'type' => 'string',
+                            'description' => 'Type of analysis: overview, backlinks, or organic_keywords',
+                            'enum' => array('overview', 'backlinks', 'organic_keywords'),
+                            'default' => 'overview'
+                        )
+                    ),
+                    'required' => array('domain')
+                ),
+                'callback' => array($dataforseo, 'handle_domain_analysis')
+            ));
+            
+            // Register competitor analysis tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_competitor_analysis',
+                'description' => 'Find competitors and analyze their SEO performance. IMPORTANT: Consider the geographic market of the domain to select appropriate location_code.',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'domain' => array(
+                            'type' => 'string',
+                            'description' => 'Your domain to find competitors for'
+                        ),
+                        'limit' => array(
+                            'type' => 'integer',
+                            'description' => 'Number of competitors to return (max 100)',
+                            'default' => 10,
+                            'maximum' => 100
+                        ),
+                        'location_code' => array(
+                            'type' => 'integer',
+                            'description' => 'Location code for search. Common codes: USA (2840), Germany (2276), UK (2826), France (2250), Spain (2724), Canada (2124), Australia (2036). Choose based on target market. Ask user if unclear.'
+                        )
+                    ),
+                    'required' => array('domain', 'location_code')
+                ),
+                'callback' => array($dataforseo, 'handle_competitor_analysis')
+            ));
+            
+            // Register technical SEO audit tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_technical_audit',
+                'description' => 'Perform technical SEO audit of a website including performance, accessibility, and best practices',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'url' => array(
+                            'type' => 'string',
+                            'description' => 'URL to audit (full URL including protocol)'
+                        ),
+                        'audit_type' => array(
+                            'type' => 'string',
+                            'description' => 'Type of audit: lighthouse, page_speed, or crawl',
+                            'enum' => array('lighthouse', 'page_speed', 'crawl'),
+                            'default' => 'lighthouse'
+                        )
+                    ),
+                    'required' => array('url')
+                ),
+                'callback' => array($dataforseo, 'handle_technical_audit')
+            ));
+        }
     }
 }
