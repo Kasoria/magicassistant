@@ -40,8 +40,6 @@ const excludePatterns = [
   '.github',
   '.vscode',
   '.cursor',
-  // Note: The main React 'src' directory is excluded specifically in copyDirectoryRecursively
-  // to avoid excluding 'src' directories within other folders
   'vite.config.js',
   'tailwind.config.js',
   'postcss.config.js',
