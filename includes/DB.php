@@ -254,10 +254,43 @@ class DB {
         ));
         
         if ($value !== null) {
-            return maybe_unserialize($value);
+            $unserialized = maybe_unserialize($value);
+            
+            // Decrypt API keys if needed
+            if ($this->is_api_key_setting($key) && !empty($unserialized)) {
+                return $this->decrypt_api_key($unserialized);
+            }
+            
+            return $unserialized;
         }
         
         return $default;
+    }
+    
+    /**
+     * Check if a setting exists (returns true/false, not the value)
+     */
+    public function setting_exists($key, $user_id = null) {
+        global $wpdb;
+        
+        if (!$this->tables_exist()) {
+            return false;
+        }
+        
+        if ($user_id === null) {
+            $count = $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$this->settings_table} WHERE setting_key = %s AND user_id IS NULL",
+                $key
+            ));
+        } else {
+            $count = $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$this->settings_table} WHERE setting_key = %s AND user_id = %d",
+                $key,
+                $user_id
+            ));
+        }
+        
+        return intval($count) > 0;
     }
     
     /**

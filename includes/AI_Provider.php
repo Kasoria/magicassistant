@@ -28,6 +28,10 @@ class AI_Provider {
         $this->settings = $this->db ? $this->db->get_all_settings() : array();
     }
     
+    public function get_db() {
+        return $this->db;
+    }
+    
     public function register_rest_routes() {
         // Chat endpoint
         register_rest_route('magicassistant/v1', '/chat', array(
@@ -145,6 +149,51 @@ class AI_Provider {
             'callback' => array($this, 'save_seo_data'),
             'permission_callback' => array($this, 'check_permissions'),
         ));
+        
+        // PAGESPEED DATA ENDPOINTS
+        register_rest_route('magicassistant/v1', '/pagespeed-data', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_pagespeed_data'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        register_rest_route('magicassistant/v1', '/pagespeed-data', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'save_pagespeed_data'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        // SITE ANALYSIS DATA ENDPOINTS
+        register_rest_route('magicassistant/v1', '/site-analysis-data', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_site_analysis_data'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        register_rest_route('magicassistant/v1', '/site-analysis-data', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'save_site_analysis_data'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        // DEBUG LOG ENDPOINTS
+        register_rest_route('magicassistant/v1', '/debug-logs', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_debug_logs'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        register_rest_route('magicassistant/v1', '/debug-logs', array(
+            'methods' => 'DELETE',
+            'callback' => array($this, 'clear_debug_logs'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        register_rest_route('magicassistant/v1', '/debug-logs/download', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'download_debug_logs'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
     }
     
     public function handle_chat($request) {
@@ -159,21 +208,19 @@ class AI_Provider {
         $page_context = $data['page_context'] ?? null;
         
         // Optional debug logging of user request
-        if (!empty($this->settings['debug_log_raw_responses'])) {
-            $debug_request = array(
-                'user_id' => get_current_user_id(),
-                'message' => $message,
-                'session_id' => $session_id,
-                'agent_mode' => $agent_mode,
-                'is_message_edit' => $is_message_edit,
-                'truncate_at_message' => $truncate_at_message,
-                'page_url' => $page_url,
-                'page_context' => $page_context,
-                'history_length' => count($conversation_history),
-                'timestamp' => current_time('mysql')
-            );
-            error_log('[MagicAssistant] User request: ' . json_encode($debug_request, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-        }
+        $debug_request = array(
+            'user_id' => get_current_user_id(),
+            'message' => $message,
+            'session_id' => $session_id,
+            'agent_mode' => $agent_mode,
+            'is_message_edit' => $is_message_edit,
+            'truncate_at_message' => $truncate_at_message,
+            'page_url' => $page_url,
+            'page_context' => $page_context,
+            'history_length' => count($conversation_history),
+            'timestamp' => current_time('mysql')
+        );
+        Logger::getInstance()->log_user_request($debug_request);
         
         if (empty($message)) {
             return new WP_Error('empty_message', 'Message is required', array('status' => 400));
@@ -795,18 +842,16 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
         
         // Optional debug logging of API request payload
-        if (!empty($this->settings['debug_log_raw_responses'])) {
-            $debug_payload = $payload;
-            // Don't log sensitive tool schemas in full detail for readability
-            if (isset($debug_payload['tools'])) {
-                $debug_payload['tools_count'] = count($debug_payload['tools']);
-                $debug_payload['tool_names'] = array_map(function($tool) {
-                    return $tool['function']['name'] ?? 'unknown';
-                }, $debug_payload['tools']);
-                unset($debug_payload['tools']); // Remove full tool definitions for cleaner logs
-            }
-            error_log('[MagicAssistant] OpenAI request payload: ' . json_encode($debug_payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        $debug_payload = $payload;
+        // Don't log sensitive tool schemas in full detail for readability
+        if (isset($debug_payload['tools'])) {
+            $debug_payload['tools_count'] = count($debug_payload['tools']);
+            $debug_payload['tool_names'] = array_map(function($tool) {
+                return $tool['function']['name'] ?? 'unknown';
+            }, $debug_payload['tools']);
+            unset($debug_payload['tools']); // Remove full tool definitions for cleaner logs
         }
+        Logger::getInstance()->log_api_request('openai', $debug_payload);
         
         $response = wp_remote_post($url, array(
             'headers' => array(
@@ -823,9 +868,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         $body = wp_remote_retrieve_body($response);
         // Optional debug logging of raw API response
-        if (!empty($this->settings['debug_log_raw_responses'])) {
-            error_log('[MagicAssistant] OpenAI raw response: ' . $body);
-        }
+        Logger::getInstance()->log_api_request('openai', null, $body);
         
         $data = json_decode($body, true);
         
@@ -885,18 +928,16 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
         
         // Optional debug logging of API request payload
-        if (!empty($this->settings['debug_log_raw_responses'])) {
-            $debug_payload = $payload;
-            // Don't log sensitive tool schemas in full detail for readability
-            if (isset($debug_payload['tools'])) {
-                $debug_payload['tools_count'] = count($debug_payload['tools']);
-                $debug_payload['tool_names'] = array_map(function($tool) {
-                    return $tool['name'] ?? 'unknown';
-                }, $debug_payload['tools']);
-                unset($debug_payload['tools']); // Remove full tool definitions for cleaner logs
-            }
-            error_log('[MagicAssistant] Anthropic request payload: ' . json_encode($debug_payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        $debug_payload = $payload;
+        // Don't log sensitive tool schemas in full detail for readability
+        if (isset($debug_payload['tools'])) {
+            $debug_payload['tools_count'] = count($debug_payload['tools']);
+            $debug_payload['tool_names'] = array_map(function($tool) {
+                return $tool['name'] ?? 'unknown';
+            }, $debug_payload['tools']);
+            unset($debug_payload['tools']); // Remove full tool definitions for cleaner logs
         }
+        Logger::getInstance()->log_api_request('anthropic', $debug_payload);
         
         $response = wp_remote_post($url, array(
             'headers' => array(
@@ -914,9 +955,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         $body = wp_remote_retrieve_body($response);
         // Optional debug logging of raw API response
-        if (!empty($this->settings['debug_log_raw_responses'])) {
-            error_log('[MagicAssistant] Anthropic raw response: ' . $body);
-        }
+        Logger::getInstance()->log_api_request('anthropic', null, $body);
         
         $data = json_decode($body, true);
         
@@ -1125,7 +1164,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         return array(
             'complete_data_removal' => isset($this->settings['complete_data_removal']) ? (bool) $this->settings['complete_data_removal'] : false,
             'ai_provider' => $this->settings['ai_provider'] ?? 'openai',
-            'mcp_enabled' => isset($this->settings['mcp_enabled']) ? (bool) $this->settings['mcp_enabled'] : false,
+            'mcp_enabled' => isset($this->settings['mcp_enabled']) ? (bool) $this->settings['mcp_enabled'] : true,
             'openai_model' => $this->settings['openai_model'] ?? 'gpt-4.1-mini',
             'anthropic_model' => $this->settings['anthropic_model'] ?? 'claude-sonnet-4-20250514',
             'has_api_key' => $this->db ? ($this->db->has_api_key('openai_api_key') || $this->db->has_api_key('anthropic_api_key')) : false,
@@ -1815,6 +1854,15 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         if (!is_array($schema)) {
             return $schema;
         }
+        
+        // Ensure we have a valid schema object
+        if (empty($schema) || !isset($schema['type'])) {
+            return array(
+                'type' => 'object',
+                'properties' => array()
+            );
+        }
+        
         // Keys that do not influence validation for the LLM when generating arguments
         $remove_keys = ['description', 'examples', 'title', 'default'];
         foreach ($remove_keys as $rk) {
@@ -1822,14 +1870,22 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 unset($schema[$rk]);
             }
         }
+        
         if (isset($schema['properties']) && is_array($schema['properties'])) {
             foreach ($schema['properties'] as $prop => $subSchema) {
                 $schema['properties'][$prop] = $this->compress_tool_schema($subSchema);
             }
         }
+        
         if (isset($schema['items'])) {
             $schema['items'] = $this->compress_tool_schema($schema['items']);
         }
+        
+        // Ensure the schema has the minimum required structure for OpenAI
+        if ($schema['type'] === 'object' && !isset($schema['properties'])) {
+            $schema['properties'] = array();
+        }
+        
         return $schema;
     }
 
@@ -1967,6 +2023,449 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'bestPractices' => intval($scores['bestPractices'] ?? 0),
             'seo' => intval($scores['seo'] ?? 0)
         );
+    }
+
+    /**
+     * Get PageSpeed analytics data
+     */
+    public function get_pagespeed_data($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+        
+        $user_id = get_current_user_id();
+        $pagespeed_data = $this->db->get_user_setting('pagespeed_analytics_data', $user_id, array());
+        
+        return array(
+            'success' => true,
+            'data' => $pagespeed_data
+        );
+    }
+
+    /**
+     * Save PageSpeed analytics data
+     */
+    public function save_pagespeed_data($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+        
+        $data = $request->get_json_params();
+        $user_id = get_current_user_id();
+        
+        if (empty($data)) {
+            return new WP_Error('no_data', 'No data provided', array('status' => 400));
+        }
+        
+        // Sanitize and validate the PageSpeed data
+        $pagespeed_data = array(
+            'url' => esc_url_raw($data['url'] ?? ''),
+            'strategy' => sanitize_text_field($data['strategy'] ?? 'mobile'),
+            'scores' => $this->sanitize_pagespeed_scores($data['scores'] ?? array()),
+            'coreWebVitals' => $this->sanitize_core_web_vitals($data['coreWebVitals'] ?? array()),
+            'opportunities' => $this->sanitize_pagespeed_opportunities($data['opportunities'] ?? array()),
+            'lastUpdated' => current_time('mysql')
+        );
+        
+        $this->db->save_user_setting('pagespeed_analytics_data', $pagespeed_data, $user_id);
+        
+        return array(
+            'success' => true,
+            'message' => 'PageSpeed data saved successfully'
+        );
+    }
+
+    /**
+     * Get Site Analysis data
+     */
+    public function get_site_analysis_data($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+    
+        $user_id = get_current_user_id();
+        $site_analysis_data = $this->db->get_user_setting('site_analysis_data', $user_id, array());
+        
+        return array(
+            'success' => true,
+            'data' => $site_analysis_data
+        );
+    }
+
+    /**
+     * Save Site Analysis data
+     */
+    public function save_site_analysis_data($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+        
+        $data = $request->get_json_params();
+        $user_id = get_current_user_id();
+        
+        if (empty($data)) {
+            return new WP_Error('no_data', 'No data provided', array('status' => 400));
+        }
+        
+        // Sanitize and validate the Site Analysis data
+        $site_analysis_data = array(
+            'meta_analysis' => $this->sanitize_meta_analysis($data['meta_analysis'] ?? array()),
+            'structured_data' => $this->sanitize_structured_data_analysis($data['structured_data'] ?? array()),
+            'opengraph' => $this->sanitize_opengraph_analysis($data['opengraph'] ?? array()),
+            'sitemap' => $this->sanitize_sitemap_analysis($data['sitemap'] ?? array()),
+            'canonical_urls' => $this->sanitize_canonical_analysis($data['canonical_urls'] ?? array()),
+            'summary' => $this->sanitize_seo_summary($data['summary'] ?? array()),
+            'lastUpdated' => current_time('mysql')
+        );
+        
+        $this->db->save_user_setting('site_analysis_data', $site_analysis_data, $user_id);
+        
+        return array(
+            'success' => true,
+            'message' => 'Site Analysis data saved successfully'
+        );
+    }
+
+    /**
+     * Sanitize PageSpeed scores data
+     */
+    private function sanitize_pagespeed_scores($scores) {
+        if (!is_array($scores)) {
+            return array();
+        }
+        
+        $sanitized = array();
+        foreach ($scores as $category => $score_data) {
+            if (is_array($score_data)) {
+                $sanitized[$category] = array(
+                    'score' => intval($score_data['score'] ?? 0),
+                    'title' => sanitize_text_field($score_data['title'] ?? $category)
+                );
+            }
+        }
+        
+        return $sanitized;
+    }
+
+    /**
+     * Sanitize Core Web Vitals data
+     */
+    private function sanitize_core_web_vitals($vitals) {
+        if (!is_array($vitals)) {
+            return array();
+        }
+        
+        $sanitized = array();
+        foreach ($vitals as $metric => $vital_data) {
+            if (is_array($vital_data)) {
+                $sanitized[$metric] = array(
+                    'value' => floatval($vital_data['value'] ?? 0),
+                    'displayValue' => sanitize_text_field($vital_data['displayValue'] ?? 'N/A'),
+                    'score' => isset($vital_data['score']) ? floatval($vital_data['score']) : null
+                );
+            }
+        }
+        
+        return $sanitized;
+    }
+
+    /**
+     * Sanitize PageSpeed opportunities data
+     */
+    private function sanitize_pagespeed_opportunities($opportunities) {
+        if (!is_array($opportunities)) {
+            return array();
+        }
+        
+        $sanitized = array();
+        foreach ($opportunities as $opportunity) {
+            if (is_array($opportunity)) {
+                $sanitized[] = array(
+                    'id' => sanitize_text_field($opportunity['id'] ?? ''),
+                    'title' => sanitize_text_field($opportunity['title'] ?? ''),
+                    'description' => sanitize_textarea_field($opportunity['description'] ?? ''),
+                    'score' => isset($opportunity['score']) ? floatval($opportunity['score']) : null,
+                    'displayValue' => sanitize_text_field($opportunity['displayValue'] ?? '')
+                );
+            }
+        }
+        
+        return $sanitized;
+    }
+
+    /**
+     * Sanitize meta analysis data
+     */
+    private function sanitize_meta_analysis($meta_analysis) {
+        if (!is_array($meta_analysis)) {
+            return array();
+        }
+        
+        $sanitized = array(
+            'total_pages' => intval($meta_analysis['total_pages'] ?? 0),
+            'pages_analyzed' => intval($meta_analysis['pages_analyzed'] ?? 0),
+            'meta_summary' => array(
+                'missing_titles' => intval($meta_analysis['meta_summary']['missing_titles'] ?? 0),
+                'missing_descriptions' => intval($meta_analysis['meta_summary']['missing_descriptions'] ?? 0),
+                'title_issues' => intval($meta_analysis['meta_summary']['title_issues'] ?? 0),
+                'description_issues' => intval($meta_analysis['meta_summary']['description_issues'] ?? 0),
+                'title_completion_rate' => intval($meta_analysis['meta_summary']['title_completion_rate'] ?? 0),
+                'description_completion_rate' => intval($meta_analysis['meta_summary']['description_completion_rate'] ?? 0)
+            ),
+            'pages' => array()
+        );
+        
+        if (isset($meta_analysis['pages']) && is_array($meta_analysis['pages'])) {
+            foreach ($meta_analysis['pages'] as $page) {
+                if (is_array($page)) {
+                    $sanitized['pages'][] = array(
+                        'url' => esc_url_raw($page['url'] ?? ''),
+                        'post_title' => sanitize_text_field($page['post_title'] ?? ''),
+                        'title' => array(
+                            'content' => sanitize_text_field($page['title']['content'] ?? ''),
+                            'length' => intval($page['title']['length'] ?? 0),
+                            'issues' => array_map('sanitize_text_field', $page['title']['issues'] ?? array())
+                        ),
+                        'meta_description' => array(
+                            'content' => sanitize_text_field($page['meta_description']['content'] ?? ''),
+                            'length' => intval($page['meta_description']['length'] ?? 0),
+                            'issues' => array_map('sanitize_text_field', $page['meta_description']['issues'] ?? array())
+                        )
+                    );
+                }
+            }
+        }
+        
+        return $sanitized;
+    }
+
+    /**
+     * Sanitize structured data analysis
+     */
+    private function sanitize_structured_data_analysis($structured_data) {
+        if (!is_array($structured_data)) {
+            return array();
+        }
+        
+        $sanitized = array(
+            'total_pages' => intval($structured_data['total_pages'] ?? 0),
+            'pages_with_schema' => intval($structured_data['pages_with_schema'] ?? 0),
+            'schema_adoption_rate' => intval($structured_data['schema_adoption_rate'] ?? 0),
+            'most_common_schemas' => array(),
+            'pages' => array()
+        );
+        
+        if (isset($structured_data['most_common_schemas']) && is_array($structured_data['most_common_schemas'])) {
+            foreach ($structured_data['most_common_schemas'] as $schema => $count) {
+                $sanitized['most_common_schemas'][sanitize_text_field($schema)] = intval($count);
+            }
+        }
+        
+        if (isset($structured_data['pages']) && is_array($structured_data['pages'])) {
+            foreach ($structured_data['pages'] as $page) {
+                if (is_array($page)) {
+                    $sanitized['pages'][] = array(
+                        'url' => esc_url_raw($page['url'] ?? ''),
+                        'structured_data_count' => intval($page['structured_data_count'] ?? 0),
+                        'has_organization' => (bool)($page['has_organization'] ?? false),
+                        'has_website' => (bool)($page['has_website'] ?? false),
+                        'has_breadcrumbs' => (bool)($page['has_breadcrumbs'] ?? false),
+                        'has_article' => (bool)($page['has_article'] ?? false)
+                    );
+                }
+            }
+        }
+        
+        return $sanitized;
+    }
+
+    /**
+     * Sanitize OpenGraph analysis
+     */
+    private function sanitize_opengraph_analysis($opengraph) {
+        if (!is_array($opengraph)) {
+            return array();
+        }
+        
+        $sanitized = array(
+            'total_pages' => intval($opengraph['total_pages'] ?? 0),
+            'complete_opengraph' => intval($opengraph['complete_opengraph'] ?? 0),
+            'has_twitter_cards' => intval($opengraph['has_twitter_cards'] ?? 0),
+            'opengraph_completion_rate' => intval($opengraph['opengraph_completion_rate'] ?? 0),
+            'twitter_adoption_rate' => intval($opengraph['twitter_adoption_rate'] ?? 0),
+            'most_common_issues' => array(),
+            'pages' => array()
+        );
+        
+        if (isset($opengraph['most_common_issues']) && is_array($opengraph['most_common_issues'])) {
+            foreach ($opengraph['most_common_issues'] as $issue => $count) {
+                $sanitized['most_common_issues'][sanitize_text_field($issue)] = intval($count);
+            }
+        }
+        
+        if (isset($opengraph['pages']) && is_array($opengraph['pages'])) {
+            foreach ($opengraph['pages'] as $page) {
+                if (is_array($page)) {
+                    $sanitized['pages'][] = array(
+                        'url' => esc_url_raw($page['url'] ?? ''),
+                        'opengraph_complete' => (bool)($page['opengraph_complete'] ?? false),
+                        'issues' => array_map('sanitize_text_field', $page['issues'] ?? array())
+                    );
+                }
+            }
+        }
+        
+        return $sanitized;
+    }
+
+    /**
+     * Sanitize sitemap analysis
+     */
+    private function sanitize_sitemap_analysis($sitemap) {
+        if (!is_array($sitemap)) {
+            return array();
+        }
+        
+        return array(
+            'success' => (bool)($sitemap['success'] ?? false),
+            'sitemap_url' => esc_url_raw($sitemap['sitemap_url'] ?? ''),
+            'is_index' => (bool)($sitemap['is_index'] ?? false),
+            'url_count' => intval($sitemap['url_count'] ?? 0),
+            'sitemap_count' => intval($sitemap['sitemap_count'] ?? 0),
+            'analysis' => array(
+                'total_urls' => intval($sitemap['analysis']['total_urls'] ?? 0),
+                'urls_with_lastmod' => intval($sitemap['analysis']['urls_with_lastmod'] ?? 0),
+                'urls_with_priority' => intval($sitemap['analysis']['urls_with_priority'] ?? 0),
+                'changefreq_usage' => array_map('intval', $sitemap['analysis']['changefreq_usage'] ?? array())
+            )
+        );
+    }
+
+    /**
+     * Sanitize canonical analysis
+     */
+    private function sanitize_canonical_analysis($canonical) {
+        if (!is_array($canonical)) {
+            return array();
+        }
+        
+        $sanitized = array(
+            'total_pages' => intval($canonical['total_pages'] ?? 0),
+            'pages_with_canonical' => intval($canonical['pages_with_canonical'] ?? 0),
+            'canonical_coverage' => intval($canonical['canonical_coverage'] ?? 0),
+            'canonical_issues' => array(),
+            'pages' => array()
+        );
+        
+        if (isset($canonical['canonical_issues']) && is_array($canonical['canonical_issues'])) {
+            foreach ($canonical['canonical_issues'] as $issue => $count) {
+                $sanitized['canonical_issues'][sanitize_text_field($issue)] = intval($count);
+            }
+        }
+        
+        if (isset($canonical['pages']) && is_array($canonical['pages'])) {
+            foreach ($canonical['pages'] as $page) {
+                if (is_array($page)) {
+                    $sanitized['pages'][] = array(
+                        'url' => esc_url_raw($page['url'] ?? ''),
+                        'canonical' => isset($page['canonical']) ? esc_url_raw($page['canonical']) : null,
+                        'issues' => array_map('sanitize_text_field', $page['issues'] ?? array())
+                    );
+                }
+            }
+        }
+        
+        return $sanitized;
+    }
+
+    /**
+     * Sanitize SEO summary
+     */
+    private function sanitize_seo_summary($summary) {
+        if (!is_array($summary)) {
+            return array();
+        }
+        
+        return array(
+            'overall_score' => intval($summary['overall_score'] ?? 0),
+            'meta_score' => intval($summary['meta_score'] ?? 0),
+            'structured_data_score' => intval($summary['structured_data_score'] ?? 0),
+            'opengraph_score' => intval($summary['opengraph_score'] ?? 0),
+            'sitemap_score' => intval($summary['sitemap_score'] ?? 0),
+            'canonical_score' => intval($summary['canonical_score'] ?? 0),
+            'recommendations' => array_map('sanitize_text_field', $summary['recommendations'] ?? array())
+        );
+    }
+
+    /**
+     * Get debug logs information and recent entries
+     */
+    public function get_debug_logs($request) {
+        $logger = Logger::getInstance();
+        $limit = intval($request->get_param('limit')) ?: 100;
+        
+        $log_files = $logger->get_log_files_info();
+        $recent_entries = $logger->get_recent_entries($limit);
+        $is_enabled = $logger->is_logging_enabled();
+        
+        return array(
+            'success' => true,
+            'data' => array(
+                'is_enabled' => $is_enabled,
+                'log_files' => $log_files,
+                'recent_entries' => $recent_entries,
+                'log_file_path' => $logger->get_log_file_path()
+            )
+        );
+    }
+    
+    /**
+     * Clear all debug logs
+     */
+    public function clear_debug_logs($request) {
+        $logger = Logger::getInstance();
+        
+        try {
+            $logger->clear_logs();
+            
+            return array(
+                'success' => true,
+                'message' => 'Debug logs cleared successfully'
+            );
+        } catch (Exception $e) {
+            return new WP_Error('clear_failed', 'Failed to clear debug logs: ' . $e->getMessage(), array('status' => 500));
+        }
+    }
+    
+    /**
+     * Download debug logs as a file
+     */
+    public function download_debug_logs($request) {
+        $logger = Logger::getInstance();
+        $log_file_path = $logger->get_log_file_path();
+        
+        if (!file_exists($log_file_path)) {
+            return new WP_Error('file_not_found', 'Debug log file not found', array('status' => 404));
+        }
+        
+        // Get file content
+        $log_content = file_get_contents($log_file_path);
+        
+        if ($log_content === false) {
+            return new WP_Error('read_failed', 'Failed to read debug log file', array('status' => 500));
+        }
+        
+        // Return the file content with appropriate headers
+        $filename = 'magicassistant-debug-' . date('Y-m-d-H-i-s') . '.log';
+        
+        // Set headers for file download
+        header('Content-Type: text/plain');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-Length: ' . strlen($log_content));
+        
+        // Output the file content
+        echo $log_content;
+        exit;
     }
 
 }

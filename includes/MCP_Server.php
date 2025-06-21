@@ -17,19 +17,46 @@ class MCP_Server {
     
     private $enabled = false;
     private $jwt_secret = null;
+    private $ai_provider = null;
+    private $db = null;
     private $registered_tools = [];
     private $registered_resources = [];
     private $registered_prompts = [];
     
-    public function __construct() {
-        add_action('init', array($this, 'init'));
+    public function __construct($db = null) {
+        $this->db = $db;
+        add_action('init', array($this, 'init'), 20); // Later priority to ensure DB is ready
         add_action('rest_api_init', array($this, 'register_rest_routes'));
     }
     
     public function init() {
+        // Ensure we have a database instance
+        if (!$this->db) {
+            // Try to get it from the global plugin instance
+            if (function_exists('magic_assistant') && magic_assistant() && magic_assistant()->get_db()) {
+                $this->db = magic_assistant()->get_db();
+            } else {
+                // Fallback: create a new DB instance
+                $this->db = new DB();
+            }
+        }
+        
+        // Ensure database tables exist before proceeding
+        if (!$this->db->tables_exist()) {
+            $this->db->create_tables();
+        }
+        
+        // If no MCP settings exist at all, initialize with sensible defaults
+        if (!$this->db->setting_exists('mcp_enabled')) {
+            // First time setup - set reasonable defaults
+            $this->db->save_setting('mcp_enabled', true);
+            $this->db->save_setting('enable_create_tools', true);
+            $this->db->save_setting('enable_update_tools', true);
+            $this->db->save_setting('enable_delete_tools', false); // Keep delete disabled by default for safety
+        }
+        
         // Check if MCP should be enabled
-        $options = get_option('magic_assistant_settings', []);
-        $this->enabled = isset($options['mcp_enabled']) && $options['mcp_enabled'];
+        $this->enabled = $this->db->get_setting('mcp_enabled', true); // Default to enabled if setting doesn't exist
         
         if (!$this->enabled) {
             return;
@@ -45,12 +72,24 @@ class MCP_Server {
         do_action('magic_assistant_mcp_init', $this);
     }
     
+    public function set_ai_provider($ai_provider) {
+        $this->ai_provider = $ai_provider;
+    }
+    
+    public function set_db($db) {
+        $this->db = $db;
+    }
+    
     private function init_jwt_secret() {
-        $this->jwt_secret = get_option('magic_assistant_mcp_jwt_secret');
+        if (!$this->db) {
+            return;
+        }
+        
+        $this->jwt_secret = $this->db->get_setting('mcp_jwt_secret');
         
         if (empty($this->jwt_secret)) {
             $this->jwt_secret = wp_generate_password(64, true, true);
-            update_option('magic_assistant_mcp_jwt_secret', $this->jwt_secret);
+            $this->db->save_setting('mcp_jwt_secret', $this->jwt_secret);
         }
     }
     
@@ -231,6 +270,12 @@ class MCP_Server {
         
         // Register DataForSEO tools
         $this->register_dataforseo_tools();
+        
+        // Register PageSpeed Insights tools
+        $this->register_pagespeed_tools();
+        
+        // Register SEO analysis tools
+        $this->register_seo_analysis_tools();
         
         // Register generic REST API tools
         $this->register_rest_api_tools();
@@ -608,7 +653,11 @@ class MCP_Server {
             $tools[] = array(
                 'name' => $name,
                 'description' => $tool['description'],
-                'inputSchema' => isset($tool['inputSchema']) ? $tool['inputSchema'] : array('type' => 'object')
+                'inputSchema' => isset($tool['inputSchema']) ? $tool['inputSchema'] : array(
+                    'type' => 'object',
+                    'properties' => array(),
+                    'additionalProperties' => false
+                )
             );
         }
         
@@ -1549,6 +1598,7 @@ class MCP_Server {
             'template' => get_page_template_slug($updated_page->ID)
         );
     }
+    
     
     public function wp_delete_page($args) {
         if (!current_user_can('delete_pages')) {
@@ -3770,10 +3820,50 @@ class MCP_Server {
                     'stock_quantity' => array('type' => 'integer', 'description' => 'Stock quantity'),
                     'stock_status' => array('type' => 'string', 'description' => 'Controls the stock status of the product (instock, outofstock, onbackorder)'),
                     'weight' => array('type' => 'string', 'description' => 'Product weight'),
-                    'dimensions' => array('type' => 'object', 'description' => 'Product dimensions'),
-                    'categories' => array('type' => 'array', 'description' => 'List of categories', 'items' => array('type' => 'object')),
-                    'tags' => array('type' => 'array', 'description' => 'List of tags', 'items' => array('type' => 'object')),
-                    'images' => array('type' => 'array', 'description' => 'List of images', 'items' => array('type' => 'object')),
+                    'dimensions' => array(
+                        'type' => 'object',
+                        'description' => 'Product dimensions',
+                        'properties' => array(
+                            'length' => array('type' => 'string', 'description' => 'Product length'),
+                            'width' => array('type' => 'string', 'description' => 'Product width'),
+                            'height' => array('type' => 'string', 'description' => 'Product height')
+                        )
+                    ),
+                    'categories' => array(
+                        'type' => 'array',
+                        'description' => 'List of categories',
+                        'items' => array(
+                            'type' => 'object',
+                            'properties' => array(
+                                'id' => array('type' => 'integer', 'description' => 'Category ID')
+                            ),
+                            'required' => array('id')
+                        )
+                    ),
+                    'tags' => array(
+                        'type' => 'array',
+                        'description' => 'List of tags',
+                        'items' => array(
+                            'type' => 'object',
+                            'properties' => array(
+                                'id' => array('type' => 'integer', 'description' => 'Tag ID')
+                            ),
+                            'required' => array('id')
+                        )
+                    ),
+                    'images' => array(
+                        'type' => 'array',
+                        'description' => 'List of images',
+                        'items' => array(
+                            'type' => 'object',
+                            'properties' => array(
+                                'id' => array('type' => 'integer', 'description' => 'Image attachment ID'),
+                                'src' => array('type' => 'string', 'description' => 'Image URL'),
+                                'name' => array('type' => 'string', 'description' => 'Image name'),
+                                'alt' => array('type' => 'string', 'description' => 'Image alternative text')
+                            )
+                        )
+                    ),
                     'status' => array('type' => 'string', 'description' => 'Product status (draft, pending, private, publish)')
                 ),
                 'required' => array('name')
@@ -3848,7 +3938,16 @@ class MCP_Server {
                     'parent' => array('type' => 'integer', 'description' => 'The ID for the parent of the category'),
                     'description' => array('type' => 'string', 'description' => 'HTML description of the category'),
                     'display' => array('type' => 'string', 'description' => 'Category archive display type (default, products, subcategories, both)'),
-                    'image' => array('type' => 'object', 'description' => 'Image data')
+                    'image' => array(
+                        'type' => 'object',
+                        'description' => 'Image data',
+                        'properties' => array(
+                            'id' => array('type' => 'integer', 'description' => 'Image attachment ID'),
+                            'src' => array('type' => 'string', 'description' => 'Image URL'),
+                            'name' => array('type' => 'string', 'description' => 'Image name'),
+                            'alt' => array('type' => 'string', 'description' => 'Image alternative text')
+                        )
+                    )
                 ),
                 'required' => array('name')
             ),
@@ -4509,9 +4608,9 @@ class MCP_Server {
             throw new Exception('Insufficient permissions to create WooCommerce products');
         }
         
-        // Check if create operations are enabled
-        $settings = get_option('magic_assistant_settings', array());
-        if (!($settings['enable_create_tools'] ?? true)) {
+        // Check if create operations are enabled using custom DB
+        $enable_create_tools = $this->db ? $this->db->get_setting('enable_create_tools', true) : true;
+        if (!$enable_create_tools) {
             throw new Exception('Create operations are disabled in settings');
         }
         
@@ -4628,9 +4727,9 @@ class MCP_Server {
             throw new Exception('Insufficient permissions to update WooCommerce products');
         }
         
-        // Check if update operations are enabled
-        $settings = get_option('magic_assistant_settings', array());
-        if (!($settings['enable_update_tools'] ?? true)) {
+        // Check if update operations are enabled using custom DB
+        $enable_update_tools = $this->db ? $this->db->get_setting('enable_update_tools', true) : true;
+        if (!$enable_update_tools) {
             throw new Exception('Update operations are disabled in settings');
         }
         
@@ -4703,9 +4802,9 @@ class MCP_Server {
             throw new Exception('Insufficient permissions to delete WooCommerce products');
         }
         
-        // Check if delete operations are enabled
-        $settings = get_option('magic_assistant_settings', array());
-        if (!($settings['enable_delete_tools'] ?? false)) {
+        // Check if delete operations are enabled using custom DB
+        $enable_delete_tools = $this->db ? $this->db->get_setting('enable_delete_tools', false) : false;
+        if (!$enable_delete_tools) {
             throw new Exception('Delete operations are disabled in settings');
         }
         
@@ -4798,9 +4897,9 @@ class MCP_Server {
             throw new Exception('Insufficient permissions to create WooCommerce product categories');
         }
         
-        // Check if create operations are enabled
-        $settings = get_option('magic_assistant_settings', array());
-        if (!($settings['enable_create_tools'] ?? true)) {
+        // Check if create operations are enabled using custom DB
+        $enable_create_tools = $this->db ? $this->db->get_setting('enable_create_tools', true) : true;
+        if (!$enable_create_tools) {
             throw new Exception('Create operations are disabled in settings');
         }
         
@@ -4839,9 +4938,9 @@ class MCP_Server {
             throw new Exception('Insufficient permissions to update WooCommerce product categories');
         }
         
-        // Check if update operations are enabled
-        $settings = get_option('magic_assistant_settings', array());
-        if (!($settings['enable_update_tools'] ?? true)) {
+        // Check if update operations are enabled using custom DB
+        $enable_update_tools = $this->db ? $this->db->get_setting('enable_update_tools', true) : true;
+        if (!$enable_update_tools) {
             throw new Exception('Update operations are disabled in settings');
         }
         
@@ -4895,9 +4994,9 @@ class MCP_Server {
             throw new Exception('Insufficient permissions to delete WooCommerce product categories');
         }
         
-        // Check if delete operations are enabled
-        $settings = get_option('magic_assistant_settings', array());
-        if (!($settings['enable_delete_tools'] ?? false)) {
+        // Check if delete operations are enabled using custom DB
+        $enable_delete_tools = $this->db ? $this->db->get_setting('enable_delete_tools', false) : false;
+        if (!$enable_delete_tools) {
             throw new Exception('Delete operations are disabled in settings');
         }
         
@@ -4983,9 +5082,9 @@ class MCP_Server {
             throw new Exception('Insufficient permissions to create WooCommerce product tags');
         }
         
-        // Check if create operations are enabled
-        $settings = get_option('magic_assistant_settings', array());
-        if (!($settings['enable_create_tools'] ?? true)) {
+        // Check if create operations are enabled using custom DB
+        $enable_create_tools = $this->db ? $this->db->get_setting('enable_create_tools', true) : true;
+        if (!$enable_create_tools) {
             throw new Exception('Create operations are disabled in settings');
         }
         
@@ -5022,9 +5121,9 @@ class MCP_Server {
             throw new Exception('Insufficient permissions to update WooCommerce product tags');
         }
         
-        // Check if update operations are enabled
-        $settings = get_option('magic_assistant_settings', array());
-        if (!($settings['enable_update_tools'] ?? true)) {
+        // Check if update operations are enabled using custom DB
+        $enable_update_tools = $this->db ? $this->db->get_setting('enable_update_tools', true) : true;
+        if (!$enable_update_tools) {
             throw new Exception('Update operations are disabled in settings');
         }
         
@@ -5074,9 +5173,9 @@ class MCP_Server {
             throw new Exception('Insufficient permissions to delete WooCommerce product tags');
         }
         
-        // Check if delete operations are enabled
-        $settings = get_option('magic_assistant_settings', array());
-        if (!($settings['enable_delete_tools'] ?? false)) {
+        // Check if delete operations are enabled using custom DB
+        $enable_delete_tools = $this->db ? $this->db->get_setting('enable_delete_tools', false) : false;
+        if (!$enable_delete_tools) {
             throw new Exception('Delete operations are disabled in settings');
         }
         
@@ -5290,23 +5389,25 @@ class MCP_Server {
         $data = isset($args['data']) ? $args['data'] : array();
         $params = isset($args['params']) ? $args['params'] : array();
         
-        // Check if the method is allowed based on settings
-        $settings = get_option('magic_assistant_settings', array());
+        // Check if the method is allowed based on settings from custom DB
+        $enable_delete_tools = $this->db ? $this->db->get_setting('enable_delete_tools', false) : false;
+        $enable_create_tools = $this->db ? $this->db->get_setting('enable_create_tools', true) : true;
+        $enable_update_tools = $this->db ? $this->db->get_setting('enable_update_tools', true) : true;
         
         switch ($method) {
             case 'DELETE':
-                if (empty($settings['enable_delete_tools'])) {
+                if (!$enable_delete_tools) {
                     throw new Exception('Delete operations are disabled in MCP settings.');
                 }
                 break;
             case 'POST':
-                if (empty($settings['enable_create_tools'])) {
+                if (!$enable_create_tools) {
                     throw new Exception('Create operations are disabled in MCP settings.');
                 }
                 break;
             case 'PATCH':
             case 'PUT':
-                if (empty($settings['enable_update_tools'])) {
+                if (!$enable_update_tools) {
                     throw new Exception('Update operations are disabled in MCP settings.');
                 }
                 break;
@@ -5503,10 +5604,10 @@ class MCP_Server {
                 'properties' => array(
                     'route' => array('type' => 'string', 'description' => 'The REST API route (e.g., "/wp/v2/posts", "/wp/v2/users/123")'),
                     'method' => array('type' => 'string', 'description' => 'The HTTP method to use: GET, POST, PATCH, or DELETE'),
-                    'data' => array('type' => 'object', 'description' => 'Payload for POST or PATCH requests. Not required for GET or DELETE.'),
-                    'params' => array('type' => 'object', 'description' => 'Query parameters for GET requests'),
+                    'data' => array('type' => 'string', 'description' => 'JSON string payload for POST or PATCH requests'),
+                    'params' => array('type' => 'string', 'description' => 'JSON string query parameters for GET requests')
                 ),
-                'required' => array('route', 'method'),
+                'required' => array('route', 'method')
             ),
             'callback' => array($this, 'run_api_function'),
         ));
@@ -6442,7 +6543,6 @@ class MCP_Server {
 
         return $result;
     }
-
     /**
      * Check for available plugin updates
      */
@@ -6951,4 +7051,1208 @@ class MCP_Server {
             ));
         }
     }
+    
+    /**
+     * Register PageSpeed Insights tools
+     */
+    private function register_pagespeed_tools() {
+        // Get the DataForSEO instance from the main plugin (which handles PageSpeed too)
+        if (function_exists('MATDFS') && MATDFS()) {
+            $dataforseo = MATDFS();
+            
+            // Check if service is available
+            if (!$dataforseo->is_available()) {
+                return;
+            }
+            
+            // Register PageSpeed Insights analysis tool
+            $this->register_tool(array(
+                'name' => 'pagespeed_analyze',
+                'description' => 'Analyze website performance using Google PageSpeed Insights. Provides detailed performance metrics including Core Web Vitals, accessibility, best practices, and SEO scores.',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'url' => array(
+                            'type' => 'string',
+                            'description' => 'The URL to analyze (must include https:// or http://)'
+                        ),
+                        'strategy' => array(
+                            'type' => 'string',
+                            'description' => 'Analysis strategy: mobile or desktop',
+                            'enum' => array('mobile', 'desktop'),
+                            'default' => 'mobile'
+                        ),
+                        'category' => array(
+                            'type' => 'array',
+                            'items' => array(
+                                'type' => 'string',
+                                'enum' => array('performance', 'accessibility', 'best-practices', 'seo')
+                            ),
+                            'description' => 'Categories to analyze. If not specified, all categories will be analyzed.',
+                            'default' => array('performance', 'accessibility', 'best-practices', 'seo')
+                        ),
+                        'locale' => array(
+                            'type' => 'string',
+                            'description' => 'Locale for the analysis (e.g., en, de, fr, es)',
+                            'default' => 'en'
+                        )
+                    ),
+                    'required' => array('url')
+                ),
+                'callback' => array($dataforseo, 'handle_pagespeed_analysis')
+            ));
+        }
+    }
+
+    /**
+     * Register SEO analysis tools for direct site inspection
+     */
+    private function register_seo_analysis_tools() {
+        // Initialize SEO Data Extractor
+        require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'includes/SEO_Data_Extractor.php';
+        
+        // SEO Plugin Status
+        $this->register_tool(array(
+            'name' => 'seo_plugin_status',
+            'description' => 'Get information about active SEO plugins and their configurations',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'detailed' => array(
+                        'type' => 'boolean',
+                        'description' => 'Whether to include detailed configuration information (default: false)'
+                    )
+                )
+            ),
+            'callback' => array($this, 'seo_plugin_status')
+        ));
+        
+        // Meta tags analysis
+        $this->register_tool(array(
+            'name' => 'seo_analyze_meta_tags',
+            'description' => 'Analyze meta title, description, and other meta tags for a specific page or all pages',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'url' => array(
+                        'type' => 'string',
+                        'description' => 'Specific URL to analyze (optional, defaults to homepage)'
+                    ),
+                    'analyze_all_pages' => array(
+                        'type' => 'boolean',
+                        'description' => 'Whether to analyze all published pages (default: false)'
+                    ),
+                    'max_pages' => array(
+                        'type' => 'integer',
+                        'description' => 'Maximum number of pages to analyze when analyze_all_pages is true (default: 50)'
+                    )
+                )
+            ),
+            'callback' => array($this, 'seo_analyze_meta_tags')
+        ));
+
+        // Schema/structured data analysis
+        $this->register_tool(array(
+            'name' => 'seo_analyze_structured_data',
+            'description' => 'Detect and analyze schema markup and structured data on pages',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'url' => array(
+                        'type' => 'string',
+                        'description' => 'Specific URL to analyze (optional, defaults to homepage)'
+                    ),
+                    'analyze_all_pages' => array(
+                        'type' => 'boolean',
+                        'description' => 'Whether to analyze all published pages (default: false)'
+                    )
+                )
+            ),
+            'callback' => array($this, 'seo_analyze_structured_data')
+        ));
+
+        // OpenGraph tags analysis
+        $this->register_tool(array(
+            'name' => 'seo_analyze_opengraph',
+            'description' => 'Analyze OpenGraph meta tags for social media sharing',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'url' => array(
+                        'type' => 'string',
+                        'description' => 'Specific URL to analyze (optional, defaults to homepage)'
+                    ),
+                    'analyze_all_pages' => array(
+                        'type' => 'boolean',
+                        'description' => 'Whether to analyze all published pages (default: false)'
+                    )
+                )
+            ),
+            'callback' => array($this, 'seo_analyze_opengraph')
+        ));
+
+        // Sitemap analysis
+        $this->register_tool(array(
+            'name' => 'seo_analyze_sitemap',
+            'description' => 'Analyze XML sitemaps and their structure',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'sitemap_url' => array(
+                        'type' => 'string',
+                        'description' => 'Custom sitemap URL (optional, will auto-detect if not provided)'
+                    )
+                )
+            ),
+            'callback' => array($this, 'seo_analyze_sitemap')
+        ));
+
+        // Canonical URLs analysis
+        $this->register_tool(array(
+            'name' => 'seo_analyze_canonical_urls',
+            'description' => 'Analyze canonical URLs across the site to detect issues',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'max_pages' => array(
+                        'type' => 'integer',
+                        'description' => 'Maximum number of pages to analyze (default: 100)'
+                    )
+                )
+            ),
+            'callback' => array($this, 'seo_analyze_canonical_urls')
+        ));
+
+        // Internal linking analysis
+        $this->register_tool(array(
+            'name' => 'seo_analyze_internal_links',
+            'description' => 'Analyze internal linking structure and patterns',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'max_pages' => array(
+                        'type' => 'integer',
+                        'description' => 'Maximum number of pages to analyze (default: 50)'
+                    ),
+                    'include_orphaned' => array(
+                        'type' => 'boolean',
+                        'description' => 'Whether to find orphaned pages (default: true)'
+                    )
+                )
+            ),
+            'callback' => array($this, 'seo_analyze_internal_links')
+        ));
+
+        // Indexation analysis
+        $this->register_tool(array(
+            'name' => 'seo_analyze_indexation',
+            'description' => 'Analyze indexation status and robots meta tags',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'check_robots_txt' => array(
+                        'type' => 'boolean',
+                        'description' => 'Whether to analyze robots.txt file (default: true)'
+                    )
+                )
+            ),
+            'callback' => array($this, 'seo_analyze_indexation')
+        ));
+
+        // Page-specific SEO analysis
+        $this->register_tool(array(
+            'name' => 'seo_analyze_page_content',
+            'description' => 'Analyze page-specific SEO elements like headings, images alt text, and accessibility',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'url' => array(
+                        'type' => 'string',
+                        'description' => 'Specific URL to analyze (optional, defaults to homepage)'
+                    ),
+                    'post_id' => array(
+                        'type' => 'integer',
+                        'description' => 'WordPress post/page ID to analyze (alternative to URL)'
+                    ),
+                    'analyze_all_pages' => array(
+                        'type' => 'boolean',
+                        'description' => 'Whether to analyze all published pages (default: false)'
+                    ),
+                    'max_pages' => array(
+                        'type' => 'integer',
+                        'description' => 'Maximum number of pages to analyze when analyze_all_pages is true (default: 20)'
+                    )
+                )
+            ),
+            'callback' => array($this, 'seo_analyze_page_content')
+        ));
+
+        // Comprehensive SEO audit
+        $this->register_tool(array(
+            'name' => 'seo_comprehensive_audit',
+            'description' => 'Perform a comprehensive SEO audit covering all aspects of on-page SEO',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'max_pages' => array(
+                        'type' => 'integer',
+                        'description' => 'Maximum number of pages to analyze (default: 25)'
+                    ),
+                    'include_performance' => array(
+                        'type' => 'boolean',
+                        'description' => 'Whether to include basic performance metrics (default: true)'
+                    )
+                )
+            ),
+            'callback' => array($this, 'seo_comprehensive_audit')
+        ));
+    }
+
+    /**
+     * Analyze meta tags for a page or all pages with plugin integration
+     */
+    public function seo_analyze_meta_tags($args) {
+        $url = isset($args['url']) ? $args['url'] : home_url();
+        $analyze_all = isset($args['analyze_all_pages']) ? $args['analyze_all_pages'] : false;
+        $max_pages = isset($args['max_pages']) ? intval($args['max_pages']) : 50;
+
+        // Initialize SEO Data Extractor
+        $seo_extractor = new SEO_Data_Extractor();
+        $results = array();
+
+        if ($analyze_all) {
+            // Get all published pages and posts
+            $posts = get_posts(array(
+                'post_type' => array('post', 'page'),
+                'post_status' => 'publish',
+                'numberposts' => $max_pages,
+                'orderby' => 'date',
+                'order' => 'DESC'
+            ));
+
+            foreach ($posts as $post) {
+                $page_url = get_permalink($post->ID);
+                
+                // Try plugin integration first, fallback to HTML parsing
+                $plugin_data = $seo_extractor->extract_meta_tags($page_url, $post->ID);
+                if ($plugin_data && !isset($plugin_data['error'])) {
+                    $plugin_data['post_title'] = $post->post_title;
+                    $plugin_data['url'] = $page_url;
+                    $results[] = $plugin_data;
+                } else {
+                    // Fallback to HTML parsing
+                    $results[] = $this->analyze_single_page_meta($page_url, $post);
+                }
+            }
+        } else {
+            // Analyze single page
+            $post_id = url_to_postid($url);
+            $post = $post_id ? get_post($post_id) : null;
+            
+            // Try plugin integration first
+            $plugin_data = $seo_extractor->extract_meta_tags($url, $post_id);
+            if ($plugin_data && !isset($plugin_data['error'])) {
+                if ($post) {
+                    $plugin_data['post_title'] = $post->post_title;
+                }
+                $plugin_data['url'] = $url;
+                $results[] = $plugin_data;
+            } else {
+                // Fallback to HTML parsing
+                $results[] = $this->analyze_single_page_meta($url, $post);
+            }
+        }
+
+        $summary = $this->generate_meta_tags_summary($results);
+        
+        // Save data to database for SEO Analytics view
+        $this->save_meta_analysis_to_db($results, $summary, $seo_extractor);
+        
+        return array(
+            'success' => true,
+            'analyzed_pages' => count($results),
+            'active_seo_plugins' => $seo_extractor->get_active_plugins(),
+            'data_source' => count($seo_extractor->get_active_plugins()) > 0 ? 'plugin_integration_with_fallback' : 'html_parsing',
+            'pages' => $results,
+            'summary' => $summary
+        );
+    }
+
+    /**
+     * Analyze meta tags for a single page
+     */
+    private function analyze_single_page_meta($url, $post = null) {
+        $response = wp_remote_get($url, array('timeout' => 10));
+        
+        if (is_wp_error($response)) {
+            return array(
+                'url' => $url,
+                'error' => $response->get_error_message()
+            );
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $doc = new \DOMDocument();
+        @$doc->loadHTML($body);
+        $xpath = new \DOMXPath($doc);
+
+        // Extract meta tags
+        $title = $xpath->query('//title')->item(0);
+        $meta_description = $xpath->query('//meta[@name="description"]')->item(0);
+        $meta_keywords = $xpath->query('//meta[@name="keywords"]')->item(0);
+        $meta_robots = $xpath->query('//meta[@name="robots"]')->item(0);
+        $meta_viewport = $xpath->query('//meta[@name="viewport"]')->item(0);
+
+        $result = array(
+            'url' => $url,
+            'title' => array(
+                'content' => $title ? $title->textContent : null,
+                'length' => $title ? strlen($title->textContent) : 0,
+                'issues' => array()
+            ),
+            'meta_description' => array(
+                'content' => $meta_description ? $meta_description->getAttribute('content') : null,
+                'length' => $meta_description ? strlen($meta_description->getAttribute('content')) : 0,
+                'issues' => array()
+            ),
+            'meta_keywords' => $meta_keywords ? $meta_keywords->getAttribute('content') : null,
+            'meta_robots' => $meta_robots ? $meta_robots->getAttribute('content') : null,
+            'meta_viewport' => $meta_viewport ? $meta_viewport->getAttribute('content') : null,
+            'post_id' => $post ? $post->ID : null,
+            'post_title' => $post ? $post->post_title : null
+        );
+
+        // Check for issues
+        if (!$result['title']['content']) {
+            $result['title']['issues'][] = 'Missing title tag';
+        } elseif ($result['title']['length'] < 30) {
+            $result['title']['issues'][] = 'Title too short (recommended: 30-60 characters)';
+        } elseif ($result['title']['length'] > 60) {
+            $result['title']['issues'][] = 'Title too long (recommended: 30-60 characters)';
+        }
+
+        if (!$result['meta_description']['content']) {
+            $result['meta_description']['issues'][] = 'Missing meta description';
+        } elseif ($result['meta_description']['length'] < 120) {
+            $result['meta_description']['issues'][] = 'Meta description too short (recommended: 120-160 characters)';
+        } elseif ($result['meta_description']['length'] > 160) {
+            $result['meta_description']['issues'][] = 'Meta description too long (recommended: 120-160 characters)';
+        }
+
+        if (!$result['meta_viewport']) {
+            $result['meta_viewport'] = 'Missing viewport meta tag';
+        }
+
+        return $result;
+    }
+
+    /**
+     * Generate summary for meta tags analysis
+     */
+    private function generate_meta_tags_summary($results) {
+        $total = count($results);
+        $missing_titles = 0;
+        $missing_descriptions = 0;
+        $title_issues = 0;
+        $description_issues = 0;
+
+        foreach ($results as $result) {
+            if (isset($result['error'])) continue;
+            
+            if (!$result['title']['content']) $missing_titles++;
+            if (!$result['meta_description']['content']) $missing_descriptions++;
+            if (!empty($result['title']['issues'])) $title_issues++;
+            if (!empty($result['meta_description']['issues'])) $description_issues++;
+        }
+
+        return array(
+            'total_pages' => $total,
+            'missing_titles' => $missing_titles,
+            'missing_descriptions' => $missing_descriptions,
+            'pages_with_title_issues' => $title_issues,
+            'pages_with_description_issues' => $description_issues,
+            'title_completion_rate' => round((($total - $missing_titles) / $total) * 100, 2),
+            'description_completion_rate' => round((($total - $missing_descriptions) / $total) * 100, 2)
+        );
+    }
+
+    /**
+     * Get SEO plugin status and information
+     */
+    public function seo_plugin_status($args) {
+        $seo_extractor = new SEO_Data_Extractor();
+        
+        return array(
+            'success' => true,
+            'active_plugins' => $seo_extractor->get_active_plugins(),
+            'global_settings' => $seo_extractor->get_comprehensive_analysis()['global_settings'] ?? array(),
+            'has_seo_plugins' => count($seo_extractor->get_active_plugins()) > 0,
+            'message' => count($seo_extractor->get_active_plugins()) > 0 
+                ? 'SEO plugins detected - advanced integration available' 
+                : 'No SEO plugins detected - will use HTML parsing fallback'
+        );
+    }
+
+    /**
+     * Analyze structured data and schema markup with plugin integration
+     */
+    public function seo_analyze_structured_data($args) {
+        $url = isset($args['url']) ? $args['url'] : home_url();
+        $analyze_all = isset($args['analyze_all_pages']) ? $args['analyze_all_pages'] : false;
+
+        // Initialize SEO Data Extractor
+        $seo_extractor = new SEO_Data_Extractor();
+        $results = array();
+
+        if ($analyze_all) {
+            $posts = get_posts(array(
+                'post_type' => array('post', 'page'),
+                'post_status' => 'publish',
+                'numberposts' => 20, // Limit for performance
+                'orderby' => 'date',
+                'order' => 'DESC'
+            ));
+
+            foreach ($posts as $post) {
+                $page_url = get_permalink($post->ID);
+                
+                // Try plugin integration first
+                $plugin_data = $seo_extractor->extract_structured_data($page_url, $post->ID);
+                if ($plugin_data && !isset($plugin_data['error'])) {
+                    $plugin_data['post_title'] = $post->post_title;
+                    $plugin_data['url'] = $page_url;
+                    $results[] = $plugin_data;
+                } else {
+                    // Fallback to HTML parsing
+                    $results[] = $this->analyze_single_page_structured_data($page_url, $post);
+                }
+            }
+        } else {
+            $post_id = url_to_postid($url);
+            $post = $post_id ? get_post($post_id) : null;
+            
+            // Try plugin integration first
+            $plugin_data = $seo_extractor->extract_structured_data($url, $post_id);
+            if ($plugin_data && !isset($plugin_data['error'])) {
+                if ($post) {
+                    $plugin_data['post_title'] = $post->post_title;
+                }
+                $plugin_data['url'] = $url;
+                $results[] = $plugin_data;
+            } else {
+                // Fallback to HTML parsing
+                $results[] = $this->analyze_single_page_structured_data($url, $post);
+            }
+        }
+
+        return array(
+            'success' => true,
+            'analyzed_pages' => count($results),
+            'active_seo_plugins' => $seo_extractor->get_active_plugins(),
+            'data_source' => count($seo_extractor->get_active_plugins()) > 0 ? 'plugin_integration_with_fallback' : 'html_parsing',
+            'pages' => $results,
+            'summary' => $this->generate_structured_data_summary($results)
+        );
+    }
+
+    /**
+     * Analyze structured data for a single page
+     */
+    private function analyze_single_page_structured_data($url, $post = null) {
+        $response = wp_remote_get($url, array('timeout' => 10));
+        
+        if (is_wp_error($response)) {
+            return array(
+                'url' => $url,
+                'error' => $response->get_error_message()
+            );
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $doc = new \DOMDocument();
+        @$doc->loadHTML($body);
+        $xpath = new \DOMXPath($doc);
+
+        $structured_data = array();
+
+        // Look for JSON-LD scripts
+        $json_ld_scripts = $xpath->query('//script[@type="application/ld+json"]');
+        foreach ($json_ld_scripts as $script) {
+            $json_content = $script->textContent;
+            $data = json_decode($json_content, true);
+            if ($data) {
+                $structured_data[] = array(
+                    'type' => 'JSON-LD',
+                    'schema_type' => isset($data['@type']) ? $data['@type'] : 'Unknown',
+                    'data' => $data
+                );
+            }
+        }
+
+        // Look for microdata
+        $microdata_items = $xpath->query('//*[@itemscope]');
+        foreach ($microdata_items as $item) {
+            $itemtype = $item->getAttribute('itemtype');
+            $structured_data[] = array(
+                'type' => 'Microdata',
+                'schema_type' => basename($itemtype),
+                'itemtype' => $itemtype
+            );
+        }
+
+        // Look for RDFa
+        $rdfa_items = $xpath->query('//*[@typeof]');
+        foreach ($rdfa_items as $item) {
+            $typeof = $item->getAttribute('typeof');
+            $structured_data[] = array(
+                'type' => 'RDFa',
+                'schema_type' => $typeof
+            );
+        }
+
+        return array(
+            'url' => $url,
+            'post_id' => $post ? $post->ID : null,
+            'post_title' => $post ? $post->post_title : null,
+            'structured_data_count' => count($structured_data),
+            'structured_data' => $structured_data,
+            'has_organization' => $this->has_schema_type($structured_data, 'Organization'),
+            'has_website' => $this->has_schema_type($structured_data, 'WebSite'),
+            'has_breadcrumbs' => $this->has_schema_type($structured_data, 'BreadcrumbList'),
+            'has_article' => $this->has_schema_type($structured_data, 'Article')
+        );
+    }
+
+    /**
+     * Check if structured data contains a specific schema type
+     */
+    private function has_schema_type($structured_data, $type) {
+        foreach ($structured_data as $data) {
+            if (strpos($data['schema_type'], $type) !== false) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Generate summary for structured data analysis
+     */
+    private function generate_structured_data_summary($results) {
+        $total = count($results);
+        $pages_with_schema = 0;
+        $schema_types = array();
+
+        foreach ($results as $result) {
+            if (isset($result['error'])) continue;
+            
+            if ($result['structured_data_count'] > 0) {
+                $pages_with_schema++;
+            }
+
+            foreach ($result['structured_data'] as $data) {
+                $type = $data['schema_type'];
+                if (!isset($schema_types[$type])) {
+                    $schema_types[$type] = 0;
+                }
+                $schema_types[$type]++;
+            }
+        }
+
+        return array(
+            'total_pages' => $total,
+            'pages_with_schema' => $pages_with_schema,
+            'schema_adoption_rate' => round(($pages_with_schema / $total) * 100, 2),
+            'most_common_schemas' => array_slice($schema_types, 0, 10, true)
+        );
+    }
+
+    /**
+     * Analyze OpenGraph tags with plugin integration
+     */
+    public function seo_analyze_opengraph($args) {
+        $url = isset($args['url']) ? $args['url'] : home_url();
+        $analyze_all = isset($args['analyze_all_pages']) ? $args['analyze_all_pages'] : false;
+
+        // Initialize SEO Data Extractor
+        $seo_extractor = new SEO_Data_Extractor();
+        $results = array();
+
+        if ($analyze_all) {
+            $posts = get_posts(array(
+                'post_type' => array('post', 'page'),
+                'post_status' => 'publish',
+                'numberposts' => 30,
+                'orderby' => 'date',
+                'order' => 'DESC'
+            ));
+
+            foreach ($posts as $post) {
+                $page_url = get_permalink($post->ID);
+                
+                // Try plugin integration first, fallback to HTML parsing
+                $plugin_data = $seo_extractor->extract_opengraph_data($page_url, $post->ID);
+                if ($plugin_data && !isset($plugin_data['error'])) {
+                    $plugin_data['post_title'] = $post->post_title;
+                    $plugin_data['url'] = $page_url;
+                    $plugin_data['post_id'] = $post->ID;
+                    $results[] = $plugin_data;
+                } else {
+                    // Fallback to HTML parsing
+                    $result = $this->analyze_single_page_opengraph($page_url, $post);
+                    $result['data_source'] = 'html_fallback';
+                    $results[] = $result;
+                }
+            }
+        } else {
+            $post_id = url_to_postid($url);
+            $post = $post_id ? get_post($post_id) : null;
+            
+            // Try plugin integration first
+            $plugin_data = $seo_extractor->extract_opengraph_data($url, $post_id);
+            if ($plugin_data && !isset($plugin_data['error'])) {
+                if ($post) {
+                    $plugin_data['post_title'] = $post->post_title;
+                    $plugin_data['post_id'] = $post->ID;
+                }
+                $plugin_data['url'] = $url;
+                $results[] = $plugin_data;
+            } else {
+                // Fallback to HTML parsing
+                $result = $this->analyze_single_page_opengraph($url, $post);
+                $result['data_source'] = 'html_fallback';
+                $results[] = $result;
+            }
+        }
+
+        return array(
+            'success' => true,
+            'analyzed_pages' => count($results),
+            'active_seo_plugins' => $seo_extractor->get_active_plugins(),
+            'data_source' => count($seo_extractor->get_active_plugins()) > 0 ? 'html_parsing_with_plugin_context' : 'html_parsing',
+            'pages' => $results,
+            'summary' => $this->generate_opengraph_summary($results)
+        );
+    }
+
+    /**
+     * Analyze OpenGraph tags for a single page
+     */
+    private function analyze_single_page_opengraph($url, $post = null) {
+        $response = wp_remote_get($url, array('timeout' => 10));
+        
+        if (is_wp_error($response)) {
+            return array(
+                'url' => $url,
+                'error' => $response->get_error_message()
+            );
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $doc = new \DOMDocument();
+        @$doc->loadHTML($body);
+        $xpath = new \DOMXPath($doc);
+
+        $og_tags = array();
+        $twitter_tags = array();
+
+        // Get OpenGraph tags
+        $og_metas = $xpath->query('//meta[starts-with(@property, "og:")]');
+        foreach ($og_metas as $meta) {
+            $property = $meta->getAttribute('property');
+            $content = $meta->getAttribute('content');
+            $og_tags[$property] = $content;
+        }
+
+        // Get Twitter Card tags
+        $twitter_metas = $xpath->query('//meta[starts-with(@name, "twitter:")]');
+        foreach ($twitter_metas as $meta) {
+            $name = $meta->getAttribute('name');
+            $content = $meta->getAttribute('content');
+            $twitter_tags[$name] = $content;
+        }
+
+        $issues = array();
+
+        // Check for required OpenGraph tags
+        if (!isset($og_tags['og:title'])) {
+            $issues[] = 'Missing og:title';
+        }
+        if (!isset($og_tags['og:description'])) {
+            $issues[] = 'Missing og:description';
+        }
+        if (!isset($og_tags['og:image'])) {
+            $issues[] = 'Missing og:image';
+        }
+        if (!isset($og_tags['og:url'])) {
+            $issues[] = 'Missing og:url';
+        }
+        if (!isset($og_tags['og:type'])) {
+            $issues[] = 'Missing og:type';
+        }
+
+        return array(
+            'url' => $url,
+            'post_id' => $post ? $post->ID : null,
+            'post_title' => $post ? $post->post_title : null,
+            'opengraph_tags' => $og_tags,
+            'twitter_tags' => $twitter_tags,
+            'issues' => $issues,
+            'opengraph_complete' => count($issues) === 0
+        );
+    }
+
+    /**
+     * Generate summary for OpenGraph analysis
+     */
+    private function generate_opengraph_summary($results) {
+        $total = count($results);
+        $complete_og = 0;
+        $has_twitter = 0;
+        $common_issues = array();
+
+        foreach ($results as $result) {
+            if (isset($result['error'])) continue;
+            
+            if ($result['opengraph_complete']) {
+                $complete_og++;
+            }
+            if (!empty($result['twitter_tags'])) {
+                $has_twitter++;
+            }
+
+            foreach ($result['issues'] as $issue) {
+                if (!isset($common_issues[$issue])) {
+                    $common_issues[$issue] = 0;
+                }
+                $common_issues[$issue]++;
+            }
+        }
+
+        arsort($common_issues);
+
+        return array(
+            'total_pages' => $total,
+            'complete_opengraph' => $complete_og,
+            'has_twitter_cards' => $has_twitter,
+            'opengraph_completion_rate' => round(($complete_og / $total) * 100, 2),
+            'twitter_adoption_rate' => round(($has_twitter / $total) * 100, 2),
+            'most_common_issues' => array_slice($common_issues, 0, 5, true)
+        );
+    }
+
+    /**
+     * Analyze sitemaps
+     */
+    public function seo_analyze_sitemap($args) {
+        $sitemap_url = isset($args['sitemap_url']) ? $args['sitemap_url'] : null;
+        
+        // Auto-detect sitemap URLs if not provided
+        if (!$sitemap_url) {
+            $possible_sitemaps = array(
+                home_url('/sitemap.xml'),
+                home_url('/sitemap_index.xml'),
+                home_url('/wp-sitemap.xml'), // WordPress core sitemap
+                home_url('/sitemaps.xml')
+            );
+
+            foreach ($possible_sitemaps as $url) {
+                $response = wp_remote_head($url);
+                if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+                    $sitemap_url = $url;
+                    break;
+                }
+            }
+        }
+
+        if (!$sitemap_url) {
+            return array(
+                'success' => false,
+                'error' => 'No sitemap found. Common locations checked: /sitemap.xml, /sitemap_index.xml, /wp-sitemap.xml'
+            );
+        }
+
+        return $this->analyze_sitemap_content($sitemap_url);
+    }
+
+    /**
+     * Analyze sitemap content
+     */
+    private function analyze_sitemap_content($sitemap_url) {
+        $response = wp_remote_get($sitemap_url, array('timeout' => 15));
+        
+        if (is_wp_error($response)) {
+            return array(
+                'success' => false,
+                'error' => $response->get_error_message()
+            );
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $doc = new \DOMDocument();
+        @$doc->loadXML($body);
+
+        if (!$doc->documentElement) {
+            return array(
+                'success' => false,
+                'error' => 'Invalid XML sitemap'
+            );
+        }
+
+        $xpath = new \DOMXPath($doc);
+        $xpath->registerNamespace('sm', 'http://www.sitemaps.org/schemas/sitemap/0.9');
+
+        $urls = array();
+        $sitemaps = array();
+
+        // Check if this is a sitemap index or regular sitemap
+        $sitemap_elements = $xpath->query('//sm:sitemap');
+        if ($sitemap_elements->length > 0) {
+            // This is a sitemap index
+            foreach ($sitemap_elements as $sitemap) {
+                $loc = $xpath->query('.//sm:loc', $sitemap)->item(0);
+                $lastmod = $xpath->query('.//sm:lastmod', $sitemap)->item(0);
+                
+                if ($loc) {
+                    $sitemaps[] = array(
+                        'url' => $loc->textContent,
+                        'lastmod' => $lastmod ? $lastmod->textContent : null
+                    );
+                }
+            }
+        } else {
+            // This is a regular sitemap
+            $url_elements = $xpath->query('//sm:url');
+            foreach ($url_elements as $url_element) {
+                $loc = $xpath->query('.//sm:loc', $url_element)->item(0);
+                $lastmod = $xpath->query('.//sm:lastmod', $url_element)->item(0);
+                $changefreq = $xpath->query('.//sm:changefreq', $url_element)->item(0);
+                $priority = $xpath->query('.//sm:priority', $url_element)->item(0);
+                
+                if ($loc) {
+                    $urls[] = array(
+                        'url' => $loc->textContent,
+                        'lastmod' => $lastmod ? $lastmod->textContent : null,
+                        'changefreq' => $changefreq ? $changefreq->textContent : null,
+                        'priority' => $priority ? $priority->textContent : null
+                    );
+                }
+            }
+        }
+
+        return array(
+            'success' => true,
+            'sitemap_url' => $sitemap_url,
+            'is_index' => !empty($sitemaps),
+            'url_count' => count($urls),
+            'sitemap_count' => count($sitemaps),
+            'urls' => array_slice($urls, 0, 50), // Limit for performance
+            'sitemaps' => $sitemaps,
+            'analysis' => array(
+                'total_urls' => count($urls),
+                'urls_with_lastmod' => count(array_filter($urls, function($url) { return !empty($url['lastmod']); })),
+                'urls_with_priority' => count(array_filter($urls, function($url) { return !empty($url['priority']); })),
+                'changefreq_usage' => $this->analyze_changefreq_usage($urls)
+            )
+        );
+    }
+
+    /**
+     * Analyze changefreq usage in sitemap
+     */
+    private function analyze_changefreq_usage($urls) {
+        $changefreq_counts = array();
+        foreach ($urls as $url) {
+            if (!empty($url['changefreq'])) {
+                $freq = $url['changefreq'];
+                if (!isset($changefreq_counts[$freq])) {
+                    $changefreq_counts[$freq] = 0;
+                }
+                $changefreq_counts[$freq]++;
+            }
+        }
+        return $changefreq_counts;
+    }
+
+    /**
+     * Analyze canonical URLs
+     */
+    public function seo_analyze_canonical_urls($args) {
+        $max_pages = isset($args['max_pages']) ? intval($args['max_pages']) : 100;
+
+        $posts = get_posts(array(
+            'post_type' => array('post', 'page'),
+            'post_status' => 'publish',
+            'numberposts' => $max_pages,
+            'orderby' => 'date',
+            'order' => 'DESC'
+        ));
+
+        $results = array();
+        $issues = array();
+
+        foreach ($posts as $post) {
+            $url = get_permalink($post->ID);
+            $canonical = $this->get_canonical_url($url);
+            
+            $result = array(
+                'url' => $url,
+                'canonical' => $canonical,
+                'post_id' => $post->ID,
+                'post_title' => $post->post_title,
+                'issues' => array()
+            );
+
+            // Check for issues
+            if (!$canonical) {
+                $result['issues'][] = 'Missing canonical URL';
+                $issues['missing_canonical'] = ($issues['missing_canonical'] ?? 0) + 1;
+            } elseif ($canonical !== $url) {
+                $result['issues'][] = 'Canonical URL differs from actual URL';
+                $issues['canonical_mismatch'] = ($issues['canonical_mismatch'] ?? 0) + 1;
+            }
+
+            $results[] = $result;
+        }
+
+        return array(
+            'success' => true,
+            'analyzed_pages' => count($results),
+            'pages' => $results,
+            'summary' => array(
+                'total_pages' => count($results),
+                'pages_with_canonical' => count($results) - ($issues['missing_canonical'] ?? 0),
+                'canonical_issues' => $issues,
+                'canonical_coverage' => round(((count($results) - ($issues['missing_canonical'] ?? 0)) / count($results)) * 100, 2)
+            )
+        );
+    }
+
+    /**
+     * Get canonical URL from a page
+     */
+    private function get_canonical_url($url) {
+        $response = wp_remote_get($url, array('timeout' => 10));
+        
+        if (is_wp_error($response)) {
+            return null;
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $doc = new \DOMDocument();
+        @$doc->loadHTML($body);
+        $xpath = new \DOMXPath($doc);
+
+        $canonical_link = $xpath->query('//link[@rel="canonical"]')->item(0);
+        return $canonical_link ? $canonical_link->getAttribute('href') : null;
+    }
+
+    /**
+     * Placeholder methods for other SEO analysis functions
+     * These would need full implementations based on your specific requirements
+     */
+    public function seo_analyze_internal_links($args) {
+        // Implementation for internal linking analysis
+        return array('success' => true, 'message' => 'Internal linking analysis - implementation needed');
+    }
+
+    public function seo_analyze_indexation($args) {
+        // Implementation for indexation analysis
+        return array('success' => true, 'message' => 'Indexation analysis - implementation needed');
+    }
+
+    public function seo_analyze_page_content($args) {
+        // Implementation for page content analysis (headings, alt text, accessibility)
+        return array('success' => true, 'message' => 'Page content analysis - implementation needed');
+    }
+
+    public function seo_comprehensive_audit($args) {
+        $max_pages = isset($args['max_pages']) ? intval($args['max_pages']) : 25;
+        
+        // Initialize SEO Data Extractor
+        $seo_extractor = new SEO_Data_Extractor();
+        
+        // Run all analyses
+        $meta_results = $this->seo_analyze_meta_tags(array('analyze_all_pages' => true, 'max_pages' => $max_pages));
+        $structured_results = $this->seo_analyze_structured_data(array('analyze_all_pages' => true));
+        $opengraph_results = $this->seo_analyze_opengraph(array('analyze_all_pages' => true));
+        $sitemap_results = $this->seo_analyze_sitemap(array());
+        $canonical_results = $this->seo_analyze_canonical_urls(array('max_pages' => $max_pages));
+        
+        // Compile comprehensive data
+        $comprehensive_data = array(
+            'meta_analysis' => array(
+                'total_pages' => $meta_results['analyzed_pages'],
+                'pages_analyzed' => $meta_results['analyzed_pages'],
+                'meta_summary' => $meta_results['summary'],
+                'pages' => array_slice($meta_results['pages'], 0, 5) // Sample pages for frontend
+            ),
+            'structured_data' => array(
+                'total_pages' => $structured_results['analyzed_pages'],
+                'pages_with_schema' => count(array_filter($structured_results['pages'], function($p) { 
+                    return isset($p['structured_data_count']) && $p['structured_data_count'] > 0; 
+                })),
+                'schema_adoption_rate' => $structured_results['analyzed_pages'] > 0 ? 
+                    round((count(array_filter($structured_results['pages'], function($p) { 
+                        return isset($p['structured_data_count']) && $p['structured_data_count'] > 0; 
+                    })) / $structured_results['analyzed_pages']) * 100) : 0,
+                'most_common_schemas' => $structured_results['summary']['schema_types'] ?? array(),
+                'pages' => array_slice($structured_results['pages'], 0, 5)
+            ),
+            'opengraph' => array(
+                'total_pages' => $opengraph_results['analyzed_pages'],
+                'complete_opengraph' => $opengraph_results['summary']['complete_pages'] ?? 0,
+                'has_twitter_cards' => $opengraph_results['summary']['pages_with_twitter'] ?? 0,
+                'opengraph_completion_rate' => $opengraph_results['summary']['completion_rate'] ?? 0,
+                'twitter_adoption_rate' => $opengraph_results['summary']['twitter_adoption_rate'] ?? 0,
+                'most_common_issues' => $opengraph_results['summary']['common_issues'] ?? array(),
+                'pages' => array_slice($opengraph_results['pages'], 0, 5)
+            ),
+            'sitemap' => $sitemap_results,
+            'canonical_urls' => $canonical_results['summary'] ?? array(),
+            'summary' => array(
+                'overall_score' => $this->calculate_overall_seo_score($meta_results, $structured_results, $opengraph_results, $sitemap_results, $canonical_results),
+                'meta_score' => $this->calculate_meta_score($meta_results['summary']),
+                'structured_data_score' => $this->calculate_structured_data_score($structured_results),
+                'opengraph_score' => $this->calculate_opengraph_score($opengraph_results),
+                'sitemap_score' => $sitemap_results['success'] ? 95 : 0,
+                'canonical_score' => isset($canonical_results['summary']['canonical_coverage']) ? $canonical_results['summary']['canonical_coverage'] : 0,
+                'recommendations' => $this->generate_comprehensive_recommendations($meta_results, $structured_results, $opengraph_results, $sitemap_results, $canonical_results)
+            )
+        );
+        
+        // Save comprehensive data to database
+        $this->save_comprehensive_analysis_to_db($comprehensive_data);
+        
+        return array(
+            'success' => true,
+            'analyzed_pages' => $max_pages,
+            'active_seo_plugins' => $seo_extractor->get_active_plugins(),
+            'comprehensive_analysis' => $comprehensive_data
+        );
+    }
+    
+    /**
+     * Save meta analysis data to database
+     */
+    private function save_meta_analysis_to_db($results, $summary, $seo_extractor) {
+        if (!$this->ai_provider || !$this->ai_provider->get_db()) {
+            return false;
+        }
+        
+        $user_id = get_current_user_id();
+        $meta_data = array(
+            'meta_analysis' => array(
+                'total_pages' => count($results),
+                'pages_analyzed' => count($results),
+                'meta_summary' => $summary,
+                'pages' => array_slice($results, 0, 10), // Limit for storage
+                'active_seo_plugins' => $seo_extractor->get_active_plugins(),
+                'last_updated' => current_time('mysql')
+            )
+        );
+        
+        $this->ai_provider->get_db()->save_user_setting('site_analysis_data', $meta_data, $user_id);
+        return true;
+    }
+    
+    /**
+     * Save comprehensive site analysis to database
+     */
+    private function save_comprehensive_analysis_to_db($comprehensive_data) {
+        if (!$this->ai_provider || !$this->ai_provider->get_db()) {
+            return false;
+        }
+        
+        $user_id = get_current_user_id();
+        $comprehensive_data['last_updated'] = current_time('mysql');
+        
+        $this->ai_provider->get_db()->save_user_setting('site_analysis_data', $comprehensive_data, $user_id);
+        return true;
+    }
+    
+    /**
+     * Calculate overall SEO score based on all analyses
+     */
+    private function calculate_overall_seo_score($meta_results, $structured_results, $opengraph_results, $sitemap_results, $canonical_results) {
+        $meta_score = $this->calculate_meta_score($meta_results['summary']);
+        $structured_score = $this->calculate_structured_data_score($structured_results);
+        $opengraph_score = $this->calculate_opengraph_score($opengraph_results);
+        $sitemap_score = $sitemap_results['success'] ? 95 : 0;
+        $canonical_score = isset($canonical_results['summary']['canonical_coverage']) ? $canonical_results['summary']['canonical_coverage'] : 0;
+        
+        // Weighted average
+        return round(($meta_score * 0.3 + $structured_score * 0.2 + $opengraph_score * 0.2 + $sitemap_score * 0.15 + $canonical_score * 0.15), 0);
+    }
+    
+    /**
+     * Calculate meta tags score
+     */
+    private function calculate_meta_score($summary) {
+        $title_score = $summary['title_completion_rate'] ?? 0;
+        $desc_score = $summary['description_completion_rate'] ?? 0;
+        return round(($title_score + $desc_score) / 2, 0);
+    }
+    
+    /**
+     * Calculate structured data score
+     */
+    private function calculate_structured_data_score($results) {
+        if (!isset($results['analyzed_pages']) || $results['analyzed_pages'] == 0) {
+            return 0;
+        }
+        
+        $pages_with_schema = count(array_filter($results['pages'], function($p) {
+            return isset($p['structured_data_count']) && $p['structured_data_count'] > 0;
+        }));
+        
+        return round(($pages_with_schema / $results['analyzed_pages']) * 100, 0);
+    }
+    
+    /**
+     * Calculate OpenGraph score
+     */
+    private function calculate_opengraph_score($results) {
+        return round($results['summary']['completion_rate'] ?? 0, 0);
+    }
+    
+    /**
+     * Generate comprehensive recommendations
+     */
+    private function generate_comprehensive_recommendations($meta_results, $structured_results, $opengraph_results, $sitemap_results, $canonical_results) {
+        $recommendations = array();
+        
+        // Meta tag recommendations
+        $meta_summary = $meta_results['summary'];
+        if ($meta_summary['missing_descriptions'] > 0) {
+            $recommendations[] = "Add missing meta descriptions to {$meta_summary['missing_descriptions']} pages";
+        }
+        if ($meta_summary['missing_titles'] > 0) {
+            $recommendations[] = "Add missing title tags to {$meta_summary['missing_titles']} pages";
+        }
+        
+        // Structured data recommendations
+        $pages_without_schema = $structured_results['analyzed_pages'] - count(array_filter($structured_results['pages'], function($p) {
+            return isset($p['structured_data_count']) && $p['structured_data_count'] > 0;
+        }));
+        if ($pages_without_schema > 0) {
+            $recommendations[] = "Implement schema markup on {$pages_without_schema} additional pages";
+        }
+        
+        // OpenGraph recommendations
+        $opengraph_summary = $opengraph_results['summary'];
+        if (isset($opengraph_summary['common_issues']['Missing og:image']) && $opengraph_summary['common_issues']['Missing og:image'] > 0) {
+            $recommendations[] = "Add OpenGraph images to {$opengraph_summary['common_issues']['Missing og:image']} pages missing og:image";
+        }
+        
+        // Canonical URL recommendations
+        if (isset($canonical_results['summary']['canonical_issues']['missing_canonical'])) {
+            $missing = $canonical_results['summary']['canonical_issues']['missing_canonical'];
+            $recommendations[] = "Fix {$missing} pages with missing canonical URLs";
+        }
+        
+        // Limit recommendations
+        return array_slice($recommendations, 0, 5);
+    }
 }
+
