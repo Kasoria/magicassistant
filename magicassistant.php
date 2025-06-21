@@ -54,13 +54,16 @@ class MagicAssistant {
     // Initialize React development environment
     $this->react_dev = new MagicAssistant\React_Dev();
     
-    // Initialize MCP server
-    $this->mcp_server = new MagicAssistant\MCP_Server();
+    // Initialize MCP server with database instance
+    $this->mcp_server = new MagicAssistant\MCP_Server($this->db);
     
     // Initialize AI provider
     $this->ai_provider = new MagicAssistant\AI_Provider();
     $this->ai_provider->set_mcp_server($this->mcp_server);
     $this->ai_provider->set_db($this->db);
+    
+    // Set AI provider in MCP server for database access
+    $this->mcp_server->set_ai_provider($this->ai_provider);
     
     // Initialize public sharing
     $this->public_share = new MagicAssistant\Public_Share();
@@ -69,6 +72,7 @@ class MagicAssistant {
     // Initialize DataForSEO integration
     $this->dataforseo = new MagicAssistant\DataForSEO();
     $this->dataforseo->set_mcp_server($this->mcp_server);
+    $this->dataforseo->set_ai_provider($this->ai_provider);
     
     // Initialize admin functionality
     if (is_admin()) {
@@ -118,6 +122,13 @@ class MagicAssistant {
 
 // Initialize the plugin
 $GLOBALS['magic_assistant'] = new MagicAssistant();
+
+/**
+ * Global function to access MagicAssistant instance
+ */
+function magic_assistant() {
+  return $GLOBALS['magic_assistant'];
+}
 
 /**
  * Global function to access MagicAssistant MCP server
