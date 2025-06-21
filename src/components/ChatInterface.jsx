@@ -95,6 +95,13 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
   useEffect(() => {
     loadSettings()
     loadChatSessions(true) // Auto-load last session only on initial mount
+    
+    // Check for prefilled message from SEO Analytics
+    const prefillMessage = sessionStorage.getItem('mat_prefill_message')
+    if (prefillMessage) {
+      setInputMessage(prefillMessage)
+      sessionStorage.removeItem('mat_prefill_message')
+    }
   }, [])
 
   const loadSettings = async () => {
@@ -824,7 +831,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
             )}
           </div>
           
-                    <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2 shrink-0">
               <CustomSelect
                 value={agentModeOptions.find(option => option.value === forceAgentMode.toString())}
                 onChange={(option) => setForceAgentMode(option.value === 'true')}

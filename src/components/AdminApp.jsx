@@ -3,18 +3,29 @@ import { Button, Card, Select, Label, TextInput } from 'flowbite-react'
 import ChatInterface from './ChatInterface'
 import Settings from './Settings'
 import Analytics from './Analytics'
+import SEO from './SEO'
 import { ToastProvider } from './Toast'
 
 const navigationItems = [
   {
     id: 'dashboard',
     label: 'Dashboard',
-    icon: "M10 0c5.523 0 10 4.477 10 10s-4.477 10-10 10S0 15.523 0 10S4.477 0 10 0Zm.667 1.359v1.035a.667.667 0 0 1-1.334 0V1.359A8.614 8.614 0 0 0 5.637 2.51l.522.584a.667.667 0 0 1-.995.888l-.63-.707a8.714 8.714 0 0 0-1.776 1.962l.843.506a.667.667 0 0 1-.686 1.143l-.803-.481a8.607 8.607 0 0 0-.709 2.491h.907a.667.667 0 1 1 0 1.334l-.973-.001v.031a8.627 8.627 0 0 0 .742 3.263l.836-.559a.667.667 0 0 1 .741 1.109l-.939.627A8.66 8.66 0 0 0 10 18.667a8.662 8.662 0 0 0 7.447-4.23l-1.132-.757a.667.667 0 0 1 .74-1.109l.989.661a8.633 8.633 0 0 0 .62-3.003H17.58a.667.667 0 0 1 0-1.333h1.017a8.608 8.608 0 0 0-.57-2.168l-.95.492a.667.667 0 1 1-.612-1.184l.965-.5a8.71 8.71 0 0 0-1.839-2.158l-.602.789a.667.667 0 1 1-1.06-.81l.58-.76a8.615 8.615 0 0 0-3.842-1.238Zm3.248 5.46a.667.667 0 0 1-.104.937l-2.04 1.631l.007.12c0 .692-.529 1.262-1.205 1.326l-.129.006a1.333 1.333 0 1 1 .558-2.544l1.976-1.58a.667.667 0 0 1 .937.104Z"
+          icon: [
+        "M2.99914,6.5 C2.99914,3.87478705 3.02725,3 6.49914,3 C9.97103,3 9.99914,3.87478705 9.99914,6.5 C9.99914,9.12521295 10.0102,10 6.49914,10 C2.98808,10 2.99914,9.12521295 2.99914,6.5 Z",
+        "M13.9991,6.5 C13.9991,3.87478705 14.0272,3 17.4991,3 C20.971,3 20.9991,3.87478705 20.9991,6.5 C20.9991,9.12521295 21.0102,10 17.4991,10 C13.988,10 13.9991,9.12521295 13.9991,6.5 Z",
+        "M2.99914,17.5 C2.99914,14.8747871 3.02725,14 6.49914,14 C9.97103,14 9.99914,14.8747871 9.99914,17.5 C9.99914,20.1252129 10.0102,21 6.49914,21 C2.98808,21 2.99914,20.1252129 2.99914,17.5 Z",
+        "M13.9991,17.5 C13.9991,14.8747871 14.0272,14 17.4991,14 C20.971,14 20.9991,14.8747871 20.9991,17.5 C20.9991,20.1252129 21.0102,21 17.4991,21 C13.988,21 13.9991,20.1252129 13.9991,17.5 Z"
+      ]
   },
   {
     id: 'chat',
     label: 'AI Assistant',
     icon: "M12 21.25a9.25 9.25 0 1 0-8.307-5.177c.108.22.144.468.089.706l-.816 3.536a.6.6 0 0 0 .72.72l3.535-.817a1.06 1.06 0 0 1 .706.09A9.2 9.2 0 0 0 12 21.25M7.97 9.886h8.06m-8.06 4.228h5.748"
+  },
+  {
+    id: 'seo',
+    label: 'SEO',
+    icon: "M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"
   },
   {
     id: 'analytics',
@@ -103,8 +114,23 @@ const AdminApp = () => {
       }
     }
 
+    const handleTabSwitch = (event) => {
+      if (event.detail?.tab) {
+        setActiveTab(event.detail.tab)
+        // Close mobile sidebar when navigating
+        if (window.innerWidth < 1024) {
+          setSidebarOpen(false)
+        }
+      }
+    }
+
     window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
+    window.addEventListener('mat_switch_tab', handleTabSwitch)
+    
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      window.removeEventListener('mat_switch_tab', handleTabSwitch)
+    }
   }, [sidebarOpen])
 
   const loadSettings = async (data) => {
@@ -205,6 +231,8 @@ const AdminApp = () => {
           </div>
         )
 
+      case 'seo':
+        return <SEO adminData={adminData} />
       case 'analytics':
         return <Analytics adminData={adminData} />
       case 'settings':
@@ -278,7 +306,7 @@ const AdminApp = () => {
 
   return (
     <ToastProvider position="top-right" maxToasts={3}>
-      <div className={`flex min-h-[100vh] bg-brand-light dark:bg-brand-dark transition-colors duration-300 main-flex-container ${darkMode ? 'dark' : ''}`}>
+      <div className={`flex bg-brand-light dark:bg-brand-dark transition-colors duration-300 main-flex-container ${darkMode ? 'dark' : ''}`}>
         {/* Mobile Overlay */}
         <div
           className={`mobile-overlay ${sidebarOpen ? 'show' : ''}`}
@@ -359,10 +387,16 @@ const AdminApp = () => {
                             ? 'text-brand-dark'
                             : 'text-gray-500 dark:text-gray-400'
                         }`}
-                        fill="currentColor"
-                        viewBox="0 0 20 20"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
                       >
-                        <path d={item.icon} />
+                        {item.icon.map((path, index) => (
+                          <path key={index} d={path} />
+                        ))}
                       </svg>
                     ) : (
                       <svg
@@ -421,9 +455,9 @@ const AdminApp = () => {
       </div>
 
       {/* Main Content Area */}
-      <div className="flex flex-col flex-1 min-w-0 main-content-area">
+      <div className="flex flex-col flex-1 min-w-0 main-content-area w-full lg:w-auto">
         {/* Sticky Header */}
-        <header className="sticky top-[32px] z-40 bg-white dark:bg-brand-dark border-b border-gray-200 dark:border-gray-600 transition-colors duration-300 shadow-sm">
+        <header className="sticky top-[32px] z-30 bg-white dark:bg-brand-dark border-b border-gray-200 dark:border-gray-600 transition-colors duration-300 shadow-sm">
           {/* Desktop Header Layout */}
           <div className="hidden lg:flex items-center justify-between px-6 py-4">
             <div className="flex items-center">
@@ -434,6 +468,7 @@ const AdminApp = () => {
                 <p className="text-sm font-normal text-gray-600 dark:text-gray-300">
                   {activeTab === 'dashboard' && 'Your AI-powered WordPress assistant overview.'}
                   {activeTab === 'chat' && 'Interact with your AI assistant for content creation and optimization.'}
+                  {activeTab === 'seo' && 'Monitor your website\'s SEO performance and keyword rankings.'}
                   {activeTab === 'analytics' && 'View insights about your AI assistant usage and performance.'}
                   {activeTab === 'settings' && 'Configure your MagicAssistant preferences and settings.'}
                 </p>

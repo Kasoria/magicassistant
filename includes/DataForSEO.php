@@ -13,7 +13,9 @@ if (!defined('ABSPATH')) exit;
 class DataForSEO {
     
     private $proxy_url = 'https://magicplugins.io/wp-json/magicproxy/v1/dataforseo';
+    private $pagespeed_proxy_url = 'https://magicplugins.io/wp-json/magicproxy/v1/pagespeed';
     private $mcp_server;
+    private $ai_provider;
     private $timeout = 30;
     
     public function __construct() {
@@ -22,6 +24,10 @@ class DataForSEO {
     
     public function set_mcp_server($mcp_server) {
         $this->mcp_server = $mcp_server;
+    }
+    
+    public function set_ai_provider($ai_provider) {
+        $this->ai_provider = $ai_provider;
     }
     
     /**
@@ -57,6 +63,18 @@ class DataForSEO {
      */
     public function handle_technical_audit($args) {
         return $this->make_proxy_request('technical_audit', $args);
+    }
+    
+    /**
+     * Handle PageSpeed Insights analysis request
+     */
+    public function handle_pagespeed_analysis($args) {
+        $result = $this->make_pagespeed_request('analyze', $args);
+        
+        // Save to database for SEO Analytics view
+        $this->save_pagespeed_data_to_db($result, $args);
+        
+        return $result;
     }
     
     /**
@@ -105,6 +123,57 @@ class DataForSEO {
         
         if (isset($data['error'])) {
             throw new \Exception('DataForSEO API error: ' . $data['error']);
+        }
+        
+        return $data['data'] ?? $data;
+    }
+    
+    /**
+     * Make PageSpeed Insights request to magicplugins.io proxy
+     */
+    private function make_pagespeed_request($action, $args) {
+        // Prepare request data
+        $request_data = array(
+            'action' => $action,
+            'data' => $args,
+            'site_url' => home_url(),
+            'plugin_version' => MAGIC_ASSISTANT_VERSION,
+            'timestamp' => time()
+        );
+        
+        // Add site authentication
+        $request_data['auth'] = $this->generate_request_auth($request_data);
+        
+        // Make the request
+        $response = wp_remote_post($this->pagespeed_proxy_url, array(
+            'headers' => array(
+                'Content-Type' => 'application/json',
+                'User-Agent' => 'MagicAssistant/' . MAGIC_ASSISTANT_VERSION,
+            ),
+            'body' => wp_json_encode($request_data),
+            'timeout' => 45, // PageSpeed can take longer
+            'sslverify' => true
+        ));
+        
+        if (is_wp_error($response)) {
+            throw new \Exception('PageSpeed proxy request failed: ' . $response->get_error_message());
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        
+        if ($status_code !== 200) {
+            throw new \Exception('PageSpeed proxy returned error: HTTP ' . $status_code);
+        }
+        
+        $data = json_decode($body, true);
+        
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new \Exception('Invalid JSON response from PageSpeed proxy');
+        }
+        
+        if (isset($data['error'])) {
+            throw new \Exception('PageSpeed API error: ' . $data['error']);
         }
         
         return $data['data'] ?? $data;
@@ -255,5 +324,91 @@ class DataForSEO {
                 'error' => $e->getMessage()
             );
         }
+    }
+    
+    /**
+     * Save PageSpeed analysis data to database
+     */
+    private function save_pagespeed_data_to_db($result, $args) {
+        if (!$this->ai_provider || !$this->ai_provider->db) {
+            return false;
+        }
+        
+        // Transform the result to match frontend expected format
+        $pagespeed_data = array(
+            'url' => $args['url'] ?? '',
+            'strategy' => $args['strategy'] ?? 'mobile',
+            'scores' => array(),
+            'coreWebVitals' => array(),
+            'opportunities' => array(),
+            'lastUpdated' => current_time('mysql')
+        );
+        
+        // Transform scores if available
+        if (isset($result['lighthouseResult']['categories'])) {
+            foreach ($result['lighthouseResult']['categories'] as $category => $data) {
+                $pagespeed_data['scores'][$category] = array(
+                    'score' => round($data['score'] * 100),
+                    'title' => $data['title'] ?? ucfirst(str_replace('-', ' ', $category))
+                );
+            }
+        }
+        
+        // Transform Core Web Vitals if available
+        if (isset($result['lighthouseResult']['audits'])) {
+            $audits = $result['lighthouseResult']['audits'];
+            
+            $cwv_mapping = array(
+                'largest-contentful-paint' => 'LCP',
+                'first-input-delay' => 'FID',
+                'cumulative-layout-shift' => 'CLS',
+                'first-contentful-paint' => 'FCP',
+                'interaction-to-next-paint' => 'INP'
+            );
+            
+            foreach ($cwv_mapping as $audit_key => $metric_name) {
+                if (isset($audits[$audit_key])) {
+                    $audit = $audits[$audit_key];
+                    $pagespeed_data['coreWebVitals'][$metric_name] = array(
+                        'value' => $audit['numericValue'] ?? 0,
+                        'displayValue' => $audit['displayValue'] ?? 'N/A',
+                        'score' => $audit['score'] ?? null
+                    );
+                }
+            }
+        }
+        
+        // Transform opportunities if available
+        if (isset($result['lighthouseResult']['audits'])) {
+            $opportunity_audits = array(
+                'largest-contentful-paint',
+                'unused-css-rules',
+                'offscreen-images',
+                'render-blocking-resources',
+                'unminified-css',
+                'unminified-javascript'
+            );
+            
+            foreach ($opportunity_audits as $audit_key) {
+                if (isset($result['lighthouseResult']['audits'][$audit_key])) {
+                    $audit = $result['lighthouseResult']['audits'][$audit_key];
+                    if (isset($audit['details']['overallSavingsMs']) || isset($audit['details']['overallSavingsBytes'])) {
+                        $pagespeed_data['opportunities'][] = array(
+                            'id' => $audit_key,
+                            'title' => $audit['title'] ?? '',
+                            'description' => $audit['description'] ?? '',
+                            'score' => $audit['score'] ?? null,
+                            'displayValue' => $audit['displayValue'] ?? ''
+                        );
+                    }
+                }
+            }
+        }
+        
+        // Save to database
+        $user_id = get_current_user_id();
+        $this->ai_provider->db->save_user_setting('pagespeed_data', $pagespeed_data, $user_id);
+        
+        return true;
     }
 } 
