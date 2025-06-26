@@ -25,11 +25,13 @@ const includeFiles = [
   'magicassistant.php',
   'README.md',
   'includes',
-  'assets', // Root-level assets (fonts, images, etc.)
+  'assets',
   'languages',
   'uninstall.php',
-  'dist', // Built React assets
-  'vendor' // Composer dependencies
+  'dist',
+  'vendor',
+  'licensing',
+  'release.json'
 ];
 
 // Files and directories to exclude from the build

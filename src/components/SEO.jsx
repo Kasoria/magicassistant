@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { Button, Card, Badge, Spinner } from 'flowbite-react'
 import { useToast } from './Toast'
+import ApexCharts from 'apexcharts'
 
-const SEO = ({ adminData }) => {
+const SEO = ({ adminData, settings }) => {
   const [seoData, setSeoData] = useState(null)
   const [pagespeedData, setPagespeedData] = useState(null)
   const [siteAnalysisData, setSiteAnalysisData] = useState(null)
@@ -45,6 +46,18 @@ const SEO = ({ adminData }) => {
     }
   }, [])
 
+  // Re-initialize charts when switching back to SEO tab
+  useEffect(() => {
+    if (activeTab === 'seo' && seoData && hasData) {
+      // Small delay to ensure DOM elements are visible
+      const timeoutId = setTimeout(() => {
+        initializeCharts(seoData)
+      }, 100)
+      
+      return () => clearTimeout(timeoutId)
+    }
+  }, [activeTab, seoData, hasData])
+
   const loadSEOData = async () => {
     if (!adminData?.restUrl) {
       setLoading(false)
@@ -66,8 +79,12 @@ const SEO = ({ adminData }) => {
         if (data.success && data.data && Object.keys(data.data).length > 0) {
           setSeoData(data.data)
           setHasData(true)
-          // Initialize charts after data is loaded
-          setTimeout(() => initializeCharts(data.data), 100)
+          // Only initialize charts if we're on the SEO tab
+          if (activeTab === 'seo') {
+            setTimeout(() => {
+              initializeCharts(data.data)
+            }, 300)
+          }
         } else {
           setHasData(false)
         }
@@ -100,9 +117,29 @@ const SEO = ({ adminData }) => {
       
       if (response.ok) {
         const data = await response.json()
+        
         if (data.success && data.data && Object.keys(data.data).length > 0) {
-          setPagespeedData(data.data)
-          setHasPagespeedData(true)
+          // Check if we have meaningful data (not just empty arrays)
+          const hasScores = data.data.scores && 
+                           ((Array.isArray(data.data.scores) && data.data.scores.length > 0) ||
+                            (typeof data.data.scores === 'object' && Object.keys(data.data.scores).length > 0));
+          
+          const hasCoreWebVitals = data.data.coreWebVitals && 
+                                  ((Array.isArray(data.data.coreWebVitals) && data.data.coreWebVitals.length > 0) ||
+                                   (typeof data.data.coreWebVitals === 'object' && Object.keys(data.data.coreWebVitals).length > 0));
+          
+          const hasOpportunities = data.data.opportunities && 
+                                  ((Array.isArray(data.data.opportunities) && data.data.opportunities.length > 0) ||
+                                   (typeof data.data.opportunities === 'object' && Object.keys(data.data.opportunities).length > 0));
+          
+          
+          
+          if (hasScores || hasCoreWebVitals || hasOpportunities || data.data.lighthouse) {
+            setPagespeedData(data.data)
+            setHasPagespeedData(true)
+          } else {
+            setHasPagespeedData(false)
+          }
         } else {
           setHasPagespeedData(false)
         }
@@ -153,33 +190,43 @@ const SEO = ({ adminData }) => {
   }
 
   const initializeCharts = (data) => {
+    // Clean up existing charts first to prevent duplicates
+    chartInstancesRef.current.forEach(chart => {
+      if (chart && typeof chart.destroy === 'function') {
+        try {
+          chart.destroy()
+        } catch (error) {
+          console.warn('Error destroying existing chart during re-initialization:', error)
+        }
+      }
+    })
+    chartInstancesRef.current = []
+
     // Ensure DOM elements are available before rendering
-    const checkRefsAndRender = () => {
+    const checkRefsAndRender = (attempt = 0) => {
+      // Check if we're still on the SEO tab and elements are visible
+      if (activeTab !== 'seo') return
+      
       if (keywordRankingsChartRef.current && 
           organicTrafficChartRef.current && 
           competitorChartRef.current && 
           technicalScoreChartRef.current) {
         renderCharts(data)
+      } else if (attempt < 10) {
+        // Retry up to 10 times with increasing delay if refs are not ready
+        setTimeout(() => checkRefsAndRender(attempt + 1), 100 + (attempt * 50))
       } else {
-        // Retry after a short delay if refs are not ready
-        setTimeout(checkRefsAndRender, 50)
+        console.warn('Chart refs not ready after 10 attempts, giving up')
       }
     }
 
-    if (typeof window.ApexCharts === 'undefined') {
-      // Load ApexCharts if not available
-      const script = document.createElement('script')
-      script.src = 'https://cdn.jsdelivr.net/npm/apexcharts@3.46.0/dist/apexcharts.min.js'
-      script.onload = () => {
-        setTimeout(checkRefsAndRender, 100)
-      }
-      document.head.appendChild(script)
-    } else {
-      setTimeout(checkRefsAndRender, 50)
-    }
+    setTimeout(() => checkRefsAndRender(), 50)
   }
 
   const renderCharts = (data) => {
+    // Don't render charts if not on SEO tab
+    if (activeTab !== 'seo') return
+
     // Clear existing charts first
     chartInstancesRef.current.forEach(chart => {
       if (chart && typeof chart.destroy === 'function') {
@@ -192,55 +239,217 @@ const SEO = ({ adminData }) => {
     })
     chartInstancesRef.current = []
 
-    // Keyword Rankings Chart
+    // Keyword Rankings Chart (Line Chart)
     if (keywordRankingsChartRef.current && data.keywordRankings && document.documentElement) {
       try {
+        // Filter unique keywords and ensure we have valid data
+        const uniqueKeywords = data.keywordRankings.filter((item, index, arr) => 
+          item.keyword && 
+          arr.findIndex(k => k.keyword === item.keyword) === index
+        ).map(item => ({
+          keyword: item.keyword,
+          position: item.position || null, // Use null for unranked keywords
+          volume: item.search_volume || item.volume || 0,
+          difficulty: item.difficulty || 0,
+          cpc: item.cpc || 0,
+          competition: item.competition || 'UNKNOWN'
+        }))
+        
+        if (uniqueKeywords.length === 0) {
+          return
+        }
+        
+        // Separate ranked and unranked keywords for better visualization
+        const rankedKeywords = uniqueKeywords.filter(k => k.position !== null && k.position !== undefined && k.position > 0)
+        const unrankedKeywords = uniqueKeywords.filter(k => k.position === null || k.position === undefined || k.position <= 0)
+        
+        // Combine all keywords: ranked ones keep their positions, unranked get 100+ positions
+        const keywordsToShow = [
+          ...rankedKeywords, // Keywords with actual positions
+          ...unrankedKeywords.map((keyword, index) => ({
+            ...keyword,
+            position: 100 + (index * 2), // Place unranked keywords at 100+ (bottom of chart)
+            isUnranked: true // Flag to identify unranked keywords
+          }))
+        ]
+        
         const keywordOptions = {
           chart: {
             height: 350,
-            type: 'line',
+            type: 'line', // Explicitly set to line chart
             fontFamily: 'Inter, sans-serif',
-            toolbar: { show: false }
+            toolbar: { show: false },
+            zoom: { enabled: false }
           },
           series: [{
-            name: 'Average Position',
-            data: data.keywordRankings.map(item => ({
+            name: 'Search Position',
+            type: 'line', // Explicitly set series type to line
+            data: keywordsToShow.map(item => ({
               x: item.keyword,
               y: item.position
             }))
           }],
+          colors: ['#3B82F6'],
+          dataLabels: {
+            enabled: true,
+            formatter: function(val) {
+              return `#${Math.round(val)}`
+            },
+            style: {
+              fontSize: '11px',
+              fontWeight: 'bold',
+              colors: ['#FFFFFF']
+            },
+            background: {
+              enabled: true,
+              foreColor: '#fff',
+              borderRadius: 4,
+              borderWidth: 1,
+              borderColor: '#3B82F6',
+              opacity: 0.9
+            },
+            offsetY: -8
+          },
+          stroke: {
+            curve: 'smooth', // Use smooth curve for better line visualization
+            width: 3,
+            lineCap: 'round'
+          },
+          markers: {
+            size: keywordsToShow.map(keyword => keyword.isUnranked ? 8 : 6), // Larger markers for unranked keywords
+            colors: keywordsToShow.map(keyword => keyword.isUnranked ? '#F59E0B' : '#3B82F6'), // Orange for unranked, blue for ranked
+            strokeColors: '#fff',
+            strokeWidth: 2,
+            hover: {
+              sizeOffset: 3
+            }
+          },
           xaxis: {
             type: 'category',
+            categories: keywordsToShow.map(item => item.keyword), // Explicitly set categories
             labels: {
               style: {
-                colors: document.documentElement.classList.contains('dark') ? '#9CA3AF' : '#6B7280'
-              }
+                colors: document.documentElement.classList.contains('dark') ? '#9CA3AF' : '#6B7280',
+                fontSize: '12px'
+              },
+              rotate: keywordsToShow.length > 3 ? -45 : 0,
+              maxHeight: 120
             }
           },
           yaxis: {
-            reversed: true,
+            reversed: true, // Lower position numbers are better (rank 1 = top)
             min: 1,
-            max: 100,
+            max: function(max) {
+              // Extend max to accommodate unranked keywords at 100+
+              const hasUnranked = unrankedKeywords.length > 0
+              return hasUnranked ? Math.max(110, max + 5) : Math.min(100, max + 5)
+            },
+            title: {
+              text: 'Search Position (Lower is Better)',
+              style: {
+                color: document.documentElement.classList.contains('dark') ? '#9CA3AF' : '#6B7280'
+              }
+            },
             labels: {
+              formatter: function(val) {
+                if (val >= 100) {
+                  return 'Unranked'
+                }
+                return '#' + Math.round(val)
+              },
               style: {
                 colors: document.documentElement.classList.contains('dark') ? '#9CA3AF' : '#6B7280'
               }
             }
           },
-          stroke: {
-            curve: 'smooth',
-            width: 3
-          },
-          colors: ['#3B82F6'],
           grid: {
-            borderColor: document.documentElement.classList.contains('dark') ? '#374151' : '#E5E7EB'
+            borderColor: document.documentElement.classList.contains('dark') ? '#374151' : '#E5E7EB',
+            strokeDashArray: 3,
+            xaxis: {
+              lines: {
+                show: true
+              }
+            },
+            yaxis: {
+              lines: {
+                show: true
+              }
+            }
           },
           theme: {
             mode: document.documentElement.classList.contains('dark') ? 'dark' : 'light'
-          }
+          },
+          tooltip: {
+            shared: false,
+            intersect: true,
+            x: {
+              show: true,
+              formatter: function(value, { dataPointIndex }) {
+                const keyword = keywordsToShow[dataPointIndex]
+                return keyword ? keyword.keyword : value
+              }
+            },
+            y: {
+              formatter: function(value, { dataPointIndex }) {
+                const keyword = keywordsToShow[dataPointIndex]
+                if (!keyword) return value
+                
+                if (keyword.isUnranked) {
+                  return 'Unranked'
+                }
+                return '#' + value
+              },
+              title: {
+                formatter: function() {
+                  return 'Position:'
+                }
+              }
+            },
+            marker: {
+              show: true
+            },
+            custom: function({series, seriesIndex, dataPointIndex, w}) {
+              const keyword = keywordsToShow[dataPointIndex]
+              if (!keyword) return ''
+              
+              const positionText = keyword.isUnranked ? 'Unranked' : `#${keyword.position}`
+              const bgColor = keyword.isUnranked ? '#FEF3C7' : '#FFFFFF'
+              const textColor = keyword.isUnranked ? '#92400E' : '#374151'
+              const borderColor = keyword.isUnranked ? '#F59E0B' : '#D1D5DB'
+              
+              return `
+                <div style="padding: 12px; background: ${bgColor}; border: 1px solid ${borderColor}; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+                  <div style="font-weight: 600; color: ${textColor}; margin-bottom: 4px;">${keyword.keyword}</div>
+                  <div style="font-size: 14px; color: ${textColor};">Position: ${positionText}</div>
+                  ${keyword.isUnranked ? '<div style="font-size: 12px; color: #92400E; margin-top: 2px;">Not currently ranking in top 100</div>' : ''}
+                  ${keyword.volume ? `<div style="font-size: 12px; color: ${textColor}; margin-top: 2px;">Volume: ${keyword.volume.toLocaleString()}/month</div>` : ''}
+                  ${keyword.difficulty ? `<div style="font-size: 12px; color: ${textColor}; margin-top: 2px;">Difficulty: ${keyword.difficulty}%</div>` : ''}
+                  ${keyword.cpc ? `<div style="font-size: 12px; color: ${textColor}; margin-top: 2px;">CPC: $${keyword.cpc}</div>` : ''}
+                </div>
+              `
+            }
+          },
+          // Add annotations to separate ranked from unranked keywords
+          annotations: unrankedKeywords.length > 0 ? {
+            yaxis: [{
+              y: 100,
+              borderColor: '#F59E0B',
+              strokeDashArray: 5,
+              label: {
+                borderColor: '#F59E0B',
+                style: {
+                  color: '#fff',
+                  background: '#F59E0B',
+                  fontSize: '11px'
+                },
+                text: 'Unranked Keywords (100+)',
+                position: 'left'
+              }
+            }]
+          } : {}
         }
         
-        const chart = new window.ApexCharts(keywordRankingsChartRef.current, keywordOptions)
+        const chart = new ApexCharts(keywordRankingsChartRef.current, keywordOptions)
         chartInstancesRef.current.push(chart)
         chart.render()
       } catch (error) {
@@ -300,7 +509,7 @@ const SEO = ({ adminData }) => {
           }
         }
         
-        const chart = new window.ApexCharts(organicTrafficChartRef.current, trafficOptions)
+        const chart = new ApexCharts(organicTrafficChartRef.current, trafficOptions)
         chartInstancesRef.current.push(chart)
         chart.render()
       } catch (error) {
@@ -308,25 +517,113 @@ const SEO = ({ adminData }) => {
       }
     }
 
-    // Competitor Analysis Chart
+    // Competitor Analysis Chart - Horizontal Bar Chart
     if (competitorChartRef.current && data.competitors && document.documentElement) {
       try {
+        // Sort competitors by authority for better visualization
+        const sortedCompetitors = [...data.competitors].sort((a, b) => (b.authority || 0) - (a.authority || 0))
+        
         const competitorOptions = {
           chart: {
-            height: 350,
+            height: Math.max(350, sortedCompetitors.length * 45), // Dynamic height based on competitor count
             type: 'bar',
             fontFamily: 'Inter, sans-serif',
             toolbar: { show: false }
           },
-          series: [{
-            name: 'Domain Authority',
-            data: data.competitors.map(item => ({
-              x: item.domain,
-              y: item.authority
-            }))
-          }],
+          series: [
+            {
+              name: 'Domain Authority',
+              data: sortedCompetitors.map(item => {
+                const authority = item.authority || 0
+                // Color coding based on domain authority
+                let fillColor
+                if (authority >= 80) fillColor = '#10B981' // Green - Excellent
+                else if (authority >= 60) fillColor = '#F59E0B' // Yellow - Good  
+                else if (authority >= 40) fillColor = '#8B5CF6' // Purple - Moderate
+                else fillColor = '#EF4444' // Red - Poor
+                
+                return {
+                  x: item.domain,
+                  y: authority,
+                  fillColor: fillColor,
+                  goals: [
+                    {
+                      name: 'Excellent',
+                      value: 80,
+                      strokeHeight: 2,
+                      strokeColor: '#10B981'
+                    },
+                    {
+                      name: 'Good',
+                      value: 60,
+                      strokeHeight: 2,
+                      strokeColor: '#F59E0B'
+                    }
+                  ]
+                }
+              })
+            }
+          ],
+          plotOptions: {
+            bar: {
+              horizontal: true,
+              borderRadius: 6,
+              distributed: true, // Enable different colors for each bar
+              dataLabels: {
+                position: 'center'
+              }
+            }
+          },
+          colors: sortedCompetitors.map(item => {
+            const authority = item.authority || 0
+            if (authority >= 80) return '#10B981' // Green - Excellent
+            else if (authority >= 60) return '#F59E0B' // Yellow - Good
+            else if (authority >= 40) return '#8B5CF6' // Purple - Moderate
+            else return '#EF4444' // Red - Poor
+          }),
+          dataLabels: {
+            enabled: true,
+            textAnchor: 'middle',
+            offsetX: 0,
+            formatter: function(val, opts) {
+              const competitor = sortedCompetitors[opts.dataPointIndex]
+              const keywords = competitor.keywords ? 
+                (competitor.keywords >= 1000 ? (competitor.keywords/1000).toFixed(1) + 'K' : competitor.keywords) : 
+                'N/A'
+              const traffic = competitor.traffic ? 
+                (competitor.traffic >= 1000 ? (competitor.traffic/1000).toFixed(1) + 'K' : competitor.traffic) : 
+                'N/A'
+              
+              // For very short bars, show abbreviated text
+              if (val < 20) {
+                return `${val} DA`
+              }
+              // For medium bars, show medium text
+              if (val < 40) {
+                return `${val} DA • ${keywords} kw`
+              }
+              // For long bars, show full text
+              return `${val} DA • ${keywords} keywords • ${traffic} traffic`
+            },
+            style: {
+              fontSize: '11px',
+              fontWeight: '600',
+              colors: sortedCompetitors.map(item => {
+                const authority = item.authority || 0
+                // Use white text for all bars for better contrast
+                return '#FFFFFF'
+              })
+            },
+            dropShadow: {
+              enabled: true,
+              top: 1,
+              left: 1,
+              blur: 1,
+              opacity: 0.45
+            }
+          },
           xaxis: {
-            type: 'category',
+            categories: sortedCompetitors.map(item => item.domain),
             labels: {
               style: {
                 colors: document.documentElement.classList.contains('dark') ? '#9CA3AF' : '#6B7280'
@@ -334,30 +631,99 @@ const SEO = ({ adminData }) => {
             }
           },
           yaxis: {
-            min: 0,
-            max: 100,
+            title: {
+              text: 'Domain Authority',
+              style: {
+                color: document.documentElement.classList.contains('dark') ? '#9CA3AF' : '#6B7280'
+              }
+            },
             labels: {
               style: {
-                colors: document.documentElement.classList.contains('dark') ? '#9CA3AF' : '#6B7280'
+                colors: document.documentElement.classList.contains('dark') ? '#9CA3AF' : '#6B7280',
+                fontSize: '11px'
+              },
+              maxWidth: 120
+            }
+          },
+          grid: {
+            borderColor: document.documentElement.classList.contains('dark') ? '#374151' : '#E5E7EB',
+            xaxis: {
+              lines: {
+                show: true
+              }
+            },
+            yaxis: {
+              lines: {
+                show: false
               }
             }
           },
-          plotOptions: {
-            bar: {
-              borderRadius: 4,
-              horizontal: false
-            }
-          },
-          colors: ['#8B5CF6'],
-          grid: {
-            borderColor: document.documentElement.classList.contains('dark') ? '#374151' : '#E5E7EB'
-          },
           theme: {
             mode: document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+          },
+          tooltip: {
+            custom: function({ seriesIndex, dataPointIndex, w }) {
+              const competitor = sortedCompetitors[dataPointIndex]
+              const authorityColor = competitor.authority >= 80 ? '#10B981' : 
+                                   competitor.authority >= 60 ? '#F59E0B' : 
+                                   competitor.authority >= 40 ? '#8B5CF6' : '#EF4444'
+              
+              return `
+                <div style="padding: 12px; background: ${document.documentElement.classList.contains('dark') ? '#1F2937' : '#FFFFFF'}; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+                  <div style="font-weight: bold; margin-bottom: 8px; color: ${document.documentElement.classList.contains('dark') ? '#F9FAFB' : '#1F2937'}; font-size: 14px;">
+                    ${competitor.domain}
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 4px; font-size: 12px;">
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                      <div style="width: 12px; height: 12px; background: ${authorityColor}; border-radius: 2px;"></div>
+                      <span style="color: ${document.documentElement.classList.contains('dark') ? '#D1D5DB' : '#6B7280'};">
+                        Domain Authority: <strong style="color: ${authorityColor};">${competitor.authority || 'N/A'}</strong>
+                      </span>
+                    </div>
+                    <div style="color: ${document.documentElement.classList.contains('dark') ? '#D1D5DB' : '#6B7280'};">
+                      Keywords: <strong>${(competitor.keywords || 0).toLocaleString()}</strong>
+                    </div>
+                    <div style="color: ${document.documentElement.classList.contains('dark') ? '#D1D5DB' : '#6B7280'};">
+                      Traffic: <strong>${(competitor.traffic || 0).toLocaleString()}</strong>
+                    </div>
+                  </div>
+                </div>
+              `
+            }
+          },
+          annotations: {
+            yaxis: [
+              {
+                y: 80,
+                borderColor: '#10B981',
+                label: {
+                  borderColor: '#10B981',
+                  style: {
+                    color: '#fff',
+                    background: '#10B981',
+                    fontSize: '10px'
+                  },
+                  text: 'Excellent (80+)'
+                }
+              },
+              {
+                y: 60,
+                borderColor: '#F59E0B',
+                label: {
+                  borderColor: '#F59E0B',
+                  style: {
+                    color: '#fff',
+                    background: '#F59E0B',
+                    fontSize: '10px'
+                  },
+                  text: 'Good (60+)'
+                }
+              }
+            ]
           }
         }
         
-        const chart = new window.ApexCharts(competitorChartRef.current, competitorOptions)
+        const chart = new ApexCharts(competitorChartRef.current, competitorOptions)
         chartInstancesRef.current.push(chart)
         chart.render()
       } catch (error) {
@@ -365,34 +731,82 @@ const SEO = ({ adminData }) => {
       }
     }
 
-    // Technical SEO Score Chart
+    // Technical SEO Score Chart (Horizontal Bar)
     if (technicalScoreChartRef.current && data.technicalScores && document.documentElement) {
       try {
         const technicalOptions = {
           chart: {
             height: 350,
-            type: 'radialBar',
-            fontFamily: 'Inter, sans-serif'
+            type: 'bar',
+            fontFamily: 'Inter, sans-serif',
+            toolbar: { show: false }
           },
-          series: [
-            data.technicalScores.performance || 0,
-            data.technicalScores.accessibility || 0,
-            data.technicalScores.bestPractices || 0,
-            data.technicalScores.seo || 0
-          ],
-          labels: ['Performance', 'Accessibility', 'Best Practices', 'SEO'],
+          series: [{
+            name: 'Score',
+            data: [
+              { x: 'Performance', y: data.technicalScores.performance || 0 },
+              { x: 'Accessibility', y: data.technicalScores.accessibility || 0 },
+              { x: 'Best Practices', y: data.technicalScores.bestPractices || 0 },
+              { x: 'SEO', y: data.technicalScores.seo || 0 }
+            ]
+          }],
           colors: ['#3B82F6', '#10B981', '#F59E0B', '#EF4444'],
           plotOptions: {
-            radialBar: {
+            bar: {
+              horizontal: true,
+              borderRadius: 8,
+              distributed: true,
+              barHeight: '60%',
               dataLabels: {
-                name: {
-                  fontSize: '16px',
-                  color: document.documentElement.classList.contains('dark') ? '#F9FAFB' : '#1F2937'
-                },
-                value: {
-                  fontSize: '14px',
-                  color: document.documentElement.classList.contains('dark') ? '#9CA3AF' : '#6B7280'
-                }
+                position: 'center'
+              }
+            }
+          },
+          dataLabels: {
+            enabled: true,
+            formatter: function(val) {
+              return val + '%'
+            },
+            style: {
+              fontSize: '14px',
+              fontWeight: 'bold',
+              colors: ['#FFFFFF']
+            }
+          },
+          xaxis: {
+            type: 'numeric',
+            min: 0,
+            max: 100,
+            labels: {
+              formatter: function(val) {
+                return val + '%'
+              },
+              style: {
+                colors: document.documentElement.classList.contains('dark') ? '#9CA3AF' : '#6B7280'
+              }
+            }
+          },
+          yaxis: {
+            labels: {
+              style: {
+                colors: document.documentElement.classList.contains('dark') ? '#9CA3AF' : '#6B7280',
+                fontSize: '13px'
+              }
+            }
+          },
+          grid: {
+            borderColor: document.documentElement.classList.contains('dark') ? '#374151' : '#E5E7EB',
+            xaxis: {
+              lines: { show: true }
+            },
+            yaxis: {
+              lines: { show: false }
+            }
+          },
+          tooltip: {
+            y: {
+              formatter: function(val) {
+                return val + '%'
               }
             }
           },
@@ -401,7 +815,7 @@ const SEO = ({ adminData }) => {
           }
         }
         
-        const chart = new window.ApexCharts(technicalScoreChartRef.current, technicalOptions)
+        const chart = new ApexCharts(technicalScoreChartRef.current, technicalOptions)
         chartInstancesRef.current.push(chart)
         chart.render()
       } catch (error) {
@@ -513,8 +927,12 @@ Please use the DataForSEO tools to gather this information and provide me with a
           setSeoData(sampleData)
           setHasData(true)
           showSuccess('Sample SEO data loaded successfully!')
-          // Initialize charts with sample data
-          setTimeout(() => initializeCharts(sampleData), 100)
+          // Initialize charts with sample data, but only if we're on the SEO tab
+          if (activeTab === 'seo') {
+            setTimeout(() => {
+              initializeCharts(sampleData)
+            }, 300)
+          }
         } else {
           showError('Failed to save sample data')
         }
@@ -524,6 +942,81 @@ Please use the DataForSEO tools to gather this information and provide me with a
     } catch (error) {
       console.error('Failed to generate sample data:', error)
       showError('Failed to generate sample data. Please try again.')
+    } finally {
+      setIsGeneratingData(false)
+    }
+  }
+
+  const clearSampleData = async () => {
+    if (!adminData?.restUrl || !adminData?.nonce) {
+      showError('Unable to connect to WordPress API')
+      return
+    }
+
+    setIsGeneratingData(true)
+
+    try {
+      const response = await fetch(`${adminData.restUrl}magicassistant/v1/clear-sample-seo-data`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-WP-Nonce': adminData.nonce
+        }
+      })
+
+      const result = await response.json()
+
+      if (result.success) {
+        showSuccess(result.message || 'Sample data cleared successfully')
+        // Reload the fresh data
+        await loadSEOData()
+      } else {
+        showError(result.message || 'Failed to clear sample data')
+      }
+    } catch (error) {
+      console.error('Failed to clear sample data:', error)
+      showError('Failed to clear sample data. Please try again.')
+    } finally {
+      setIsGeneratingData(false)
+    }
+  }
+
+  const refreshSEOAnalytics = async () => {
+    if (!adminData?.restUrl || !adminData?.nonce) {
+      showError('Unable to connect to WordPress API')
+      return
+    }
+
+    setIsGeneratingData(true)
+
+    try {
+      const response = await fetch(`${adminData.restUrl}magicassistant/v1/refresh-seo-analytics`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-WP-Nonce': adminData.nonce
+        }
+      })
+
+      const result = await response.json()
+
+      if (result.success) {
+        showSuccess(result.message || 'SEO analytics refreshed successfully')
+        // Load the refreshed analytics data
+        setSeoData(result.data || {})
+        setHasData(result.data && Object.keys(result.data).length > 0)
+        
+        if (result.data && Object.keys(result.data).length > 0 && activeTab === 'seo') {
+          setTimeout(() => {
+            initializeCharts(result.data)
+          }, 300)
+        }
+      } else {
+        showError(result.message || 'No data available to refresh from. Please run some SEO analysis tools first.')
+      }
+    } catch (error) {
+      console.error('Failed to refresh SEO analytics:', error)
+      showError('Failed to refresh SEO analytics. Please try again.')
     } finally {
       setIsGeneratingData(false)
     }
@@ -602,38 +1095,52 @@ Use max_pages=25 for a thorough analysis of my most important pages.`
   }
 
   const requestPagespeedAnalysis = () => {
-    setIsGeneratingData(true)
+    const message = `Please run a PageSpeed Insights analysis on my website. I need you to:
+
+1. Use pagespeed_analyze tool (dedicated Google PageSpeed Insights API)
+2. Get detailed performance metrics including Core Web Vitals 
+3. Identify optimization opportunities
+4. Provide actionable recommendations to improve site speed
+
+Note: This tool uses Google PageSpeed Insights API directly and saves data only to the PageSpeed section (not mixed with SEO data). This ensures proper data separation and prevents database bloat from binary image data.`
+
+    // Save the message and switch to chat
+    sessionStorage.setItem('mat_prefill_message', message)
     
-    // Create a comprehensive PageSpeed analysis request message
-    const pagespeedAnalysisMessage = `Please perform a comprehensive PageSpeed Insights analysis of my website. I need:
-
-1. **Performance Analysis**: Use pagespeed_analyze to check my website's performance on both mobile and desktop
-2. **Core Web Vitals**: Get detailed metrics for LCP, FID, CLS, FCP, and INP
-3. **Accessibility Score**: Check accessibility compliance and issues
-4. **SEO Score**: Analyze SEO-related performance factors
-5. **Best Practices**: Review adherence to web development best practices
-6. **Performance Opportunities**: Identify specific areas for improvement
-
-Please start by analyzing my homepage (${window.location.origin}) and provide actionable recommendations based on the results. Focus on:
-- Critical performance issues
-- Core Web Vitals improvements
-- Accessibility enhancements
-- SEO optimization opportunities
-
-Use both mobile and desktop strategies for a complete analysis.`
-
-    // Store the message in sessionStorage for the chat interface to pick up
-    sessionStorage.setItem('mat_prefill_message', pagespeedAnalysisMessage)
+    const url = new URL(window.location)
+    url.searchParams.set('tab', 'chat')
+    window.history.pushState({}, '', url)
     
-    // Dispatch custom event to switch to chat tab
-    window.dispatchEvent(new CustomEvent('mat_switch_tab', {
-      detail: { tab: 'chat' }
+    window.dispatchEvent(new CustomEvent('mat_switch_tab', { 
+      detail: { tab: 'chat', prefillMessage: message } 
     }))
     
-    // Reset the generating state after a short delay
-    setTimeout(() => {
-      setIsGeneratingData(false)
-    }, 1000)
+    showSuccess('Redirecting to AI Assistant for PageSpeed analysis...')
+  }
+
+  const requestTechnicalAudit = () => {
+    const message = `Please perform a comprehensive technical SEO audit of my website. I need you to:
+
+1. Use dataforseo_technical_audit for DataForSEO's Lighthouse analysis (focuses on SEO-specific technical issues)
+2. For performance metrics and Core Web Vitals, use the dedicated pagespeed_analyze tool instead
+3. Analyze accessibility issues and best practices violations  
+4. Identify technical SEO issues and opportunities
+5. Provide specific recommendations to improve technical scores
+
+Important: Use pagespeed_analyze for performance data (Core Web Vitals, PageSpeed scores) and dataforseo_technical_audit for broader technical SEO insights. This ensures proper data separation and better analysis coverage.`
+
+    // Save the message and switch to chat
+    sessionStorage.setItem('mat_prefill_message', message)
+    
+    const url = new URL(window.location)
+    url.searchParams.set('tab', 'chat')
+    window.history.pushState({}, '', url)
+    
+    window.dispatchEvent(new CustomEvent('mat_switch_tab', { 
+      detail: { tab: 'chat', prefillMessage: message } 
+    }))
+    
+    showSuccess('Redirecting to AI Assistant for technical audit...')
   }
 
   const generateSamplePagespeedData = async () => {
@@ -922,7 +1429,7 @@ Use both mobile and desktop strategies for a complete analysis.`
         <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-lg border border-blue-200 dark:border-blue-700">
           <h4 className="font-medium text-gray-900 dark:text-white mb-2">🎯 Real SEO Analysis</h4>
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
-            Let our AI analyze your website's SEO performance, keyword rankings, competitors, and technical health.
+            Let our AI analyze your website's SEO performance, keyword rankings, competitors, and technical health using DataForSEO tools. Results will be automatically saved to this dashboard.
           </p>
           <Button
             onClick={requestSEOAnalysis}
@@ -976,16 +1483,20 @@ Use both mobile and desktop strategies for a complete analysis.`
         </div>
       </div>
 
-      <div className="mt-6 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-700">
-        <p className="text-xs text-amber-800 dark:text-amber-200">
-          💡 <strong>Tip:</strong> Real analysis provides actionable insights specific to your website, while sample data helps you understand the interface.
-        </p>
-      </div>
+      {settings?.show_tips !== false && (
+        <div className="mt-6 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-700">
+          <p className="text-xs text-amber-800 dark:text-amber-200">
+            💡 <strong>Tip:</strong> Real analysis provides actionable insights specific to your website, while sample data helps you understand the interface.
+          </p>
+        </div>
+      )}
     </div>
   )
 
   const DataView = () => (
     <div className="space-y-6">
+
+
       {/* SEO Overview Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card>
@@ -1056,9 +1567,16 @@ Use both mobile and desktop strategies for a complete analysis.`
       {/* Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-            Keyword Rankings
-          </h3>
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+              Keyword Rankings
+            </h3>
+            {seoData?.keywordRankings && (
+              <span className="text-sm text-gray-600 dark:text-gray-400">
+                {seoData.keywordRankings.filter(k => k.keyword && k.position).length} keywords
+              </span>
+            )}
+          </div>
           <div ref={keywordRankingsChartRef}></div>
         </Card>
 
@@ -1073,6 +1591,27 @@ Use both mobile and desktop strategies for a complete analysis.`
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
             Competitor Analysis
           </h3>
+          <div className="text-xs text-gray-500 dark:text-gray-400 mb-2 space-y-1">
+            <div>Domain Authority comparison sorted by performance</div>
+            <div className="flex flex-wrap gap-4 items-center">
+              <div className="flex items-center gap-1">
+                <div className="w-3 h-3 bg-green-500 rounded"></div>
+                <span>Excellent (80+)</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="w-3 h-3 bg-yellow-500 rounded"></div>
+                <span>Good (60-79)</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="w-3 h-3 bg-purple-500 rounded"></div>
+                <span>Moderate (40-59)</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="w-3 h-3 bg-red-500 rounded"></div>
+                <span>Poor (&lt;40)</span>
+              </div>
+            </div>
+          </div>
           <div ref={competitorChartRef}></div>
         </Card>
 
@@ -1081,15 +1620,61 @@ Use both mobile and desktop strategies for a complete analysis.`
             Technical SEO Scores
           </h3>
           <div ref={technicalScoreChartRef}></div>
+          
+          {/* No Technical Data Message */}
+          {!seoData?.technicalScores && !seoData?.technicalAuditInfo && (
+            <div className="text-center py-8">
+              <div className="flex flex-col items-center">
+                <div className="w-12 h-12 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center mb-3">
+                  <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H9z" />
+                  </svg>
+                </div>
+                <p className="text-gray-500 dark:text-gray-400 font-medium mb-2">No technical audit data available</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">
+                  Run a technical audit to get performance, accessibility, and SEO scores
+                </p>
+                <Button
+                  size="sm"
+                  onClick={requestTechnicalAudit}
+                  disabled={isGeneratingData}
+                  className="bg-orange-600 hover:bg-orange-700 focus:ring-orange-500"
+                >
+                  {isGeneratingData ? (
+                    <>
+                      <Spinner size="sm" className="mr-2" />
+                      Running Audit...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      Run Technical Audit
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
         </Card>
       </div>
 
       {/* Data Tables */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-            Top Keywords
-          </h3>
+                      <div className="flex justify-between items-center mb-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  Keywords Analysis
+                </h3>
+                {seoData?.keywordRankings && (
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Showing {Math.min(10, seoData.keywordRankings.filter(k => k.keyword && k.position).length)} of {seoData.keywordRankings.filter(k => k.keyword && k.position).length} keywords
+                  </p>
+                )}
+              </div>
+            </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left text-gray-500 dark:text-gray-400">
               <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
@@ -1101,24 +1686,43 @@ Use both mobile and desktop strategies for a complete analysis.`
                 </tr>
               </thead>
               <tbody>
-                {seoData?.keywordRankings?.slice(0, 5).map((keyword, index) => (
-                  <tr key={index} className="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
-                    <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">
-                      {keyword.keyword}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge color={keyword.position <= 10 ? 'success' : keyword.position <= 30 ? 'warning' : 'failure'}>
-                        #{keyword.position}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3">{keyword.volume || 'N/A'}</td>
-                    <td className="px-4 py-3">
-                      <Badge color={keyword.difficulty <= 30 ? 'success' : keyword.difficulty <= 60 ? 'warning' : 'failure'}>
-                        {keyword.difficulty || 'N/A'}%
-                      </Badge>
-                    </td>
-                  </tr>
-                )) || (
+                {(() => {
+                  // Get unique keywords by filtering duplicates
+                  const uniqueKeywords = seoData?.keywordRankings?.filter((item, index, arr) => 
+                    item.keyword && item.position && arr.findIndex(k => k.keyword === item.keyword) === index
+                  ) || []
+                  
+                  // If we have no keywords, show empty state
+                  if (uniqueKeywords.length === 0) {
+                    return null
+                  }
+                  
+                  // Show all unique keywords (up to 10 for table readability)
+                  return uniqueKeywords.slice(0, 10).map((keyword, index) => (
+                    <tr key={`${keyword.keyword}-${index}`} className="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
+                      <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">
+                        {keyword.keyword}
+                        {/* Show data source indicator */}
+                        {keyword.source && (
+                          <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+                            {keyword.source}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge color={keyword.position <= 10 ? 'success' : keyword.position <= 30 ? 'warning' : 'failure'}>
+                          #{keyword.position}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3">{keyword.volume?.toLocaleString() || 'N/A'}</td>
+                      <td className="px-4 py-3">
+                        <Badge color={keyword.difficulty <= 30 ? 'success' : keyword.difficulty <= 60 ? 'warning' : 'failure'}>
+                          {keyword.difficulty || 'N/A'}%
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))
+                })() || (
                   <tr>
                     <td colSpan="4" className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
                       No keyword data available
@@ -1160,8 +1764,14 @@ Use both mobile and desktop strategies for a complete analysis.`
                   </tr>
                 )) || (
                   <tr>
-                    <td colSpan="4" className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
-                      No competitor data available
+                    <td colSpan="4" className="px-4 py-12 text-center">
+                      <div className="flex flex-col items-center">
+                        <svg className="w-8 h-8 text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                        </svg>
+                        <p className="text-gray-500 dark:text-gray-400 font-medium mb-1">No competitor data available</p>
+                        <p className="text-xs text-gray-400 dark:text-gray-500">Ask your AI assistant to analyze competitor data with DataForSEO tools</p>
+                      </div>
                     </td>
                   </tr>
                 )}
@@ -1280,11 +1890,13 @@ Use both mobile and desktop strategies for a complete analysis.`
         </div>
       </div>
 
-      <div className="mt-6 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-700">
-        <p className="text-xs text-amber-800 dark:text-amber-200">
-          💡 <strong>Tip:</strong> Site analysis examines your website's technical SEO elements to identify optimization opportunities for better search engine visibility.
-        </p>
-      </div>
+      {settings?.show_tips !== false && (
+        <div className="mt-6 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-700">
+          <p className="text-xs text-amber-800 dark:text-amber-200">
+            💡 <strong>Tip:</strong> Site analysis examines your website's technical SEO elements to identify optimization opportunities for better search engine visibility.
+          </p>
+        </div>
+      )}
     </div>
   )
 
@@ -1362,146 +1974,1114 @@ Use both mobile and desktop strategies for a complete analysis.`
         </div>
       </div>
 
-      <div className="mt-6 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-700">
-        <p className="text-xs text-amber-800 dark:text-amber-200">
-          💡 <strong>Tip:</strong> Real analysis provides actionable insights specific to your website, while sample data helps you understand the interface.
-        </p>
-      </div>
+      {settings?.show_tips !== false && (
+        <div className="mt-6 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-700">
+          <p className="text-xs text-amber-800 dark:text-amber-200">
+            💡 <strong>Tip:</strong> Real analysis provides actionable insights specific to your website, while sample data helps you understand the interface.
+          </p>
+        </div>
+      )}
     </div>
   )
 
-  const PagespeedDataView = () => (
-    <div className="space-y-6">
-      {/* PageSpeed Overview Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {pagespeedData?.scores && Object.entries(pagespeedData.scores).map(([category, scoreData]) => (
-          <Card key={category}>
-            <div className="flex items-center">
-              <div className={`p-3 rounded-full ${
-                scoreData.score >= 90 ? 'bg-green-100 dark:bg-green-900/30' :
-                scoreData.score >= 50 ? 'bg-yellow-100 dark:bg-yellow-900/30' :
-                'bg-red-100 dark:bg-red-900/30'
-              }`}>
-                <svg className={`w-6 h-6 ${
-                  scoreData.score >= 90 ? 'text-green-600 dark:text-green-400' :
-                  scoreData.score >= 50 ? 'text-yellow-600 dark:text-yellow-400' :
-                  'text-red-600 dark:text-red-400'
-                }`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-              </div>
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600 dark:text-gray-300">{scoreData.title}</p>
-                <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {scoreData.score}
-                </p>
-              </div>
-            </div>
-          </Card>
-        ))}
-      </div>
+  const PagespeedDataView = () => {
+    // Helper function to get score color and background
+    const getScoreColor = (score) => {
+      if (score >= 90) return 'text-green-600 dark:text-green-400'
+      if (score >= 50) return 'text-yellow-600 dark:text-yellow-400'
+      return 'text-red-600 dark:text-red-400'
+    }
+    
+    const getScoreBgColor = (score) => {
+      if (score >= 90) return 'bg-green-100 dark:bg-green-900/30'
+      if (score >= 50) return 'bg-yellow-100 dark:bg-yellow-900/30'
+      return 'bg-red-100 dark:bg-red-900/30'
+    }
 
-      {/* Core Web Vitals */}
-      {pagespeedData?.coreWebVitals && (
-        <Card>
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-            Core Web Vitals
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-            {Object.entries(pagespeedData.coreWebVitals).map(([metric, data]) => (
-              <div key={metric} className="text-center p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                <h4 className="font-medium text-gray-900 dark:text-white mb-2">{metric}</h4>
-                <p className="text-2xl font-bold text-gray-900 dark:text-white mb-1">
-                  {data.displayValue}
-                </p>
-                {data.score !== null && (
-                  <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                    data.score >= 0.9 ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
-                    data.score >= 0.5 ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400' :
-                    'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
-                  }`}>
-                    {Math.round(data.score * 100)}%
+    const getBadgeColor = (score) => {
+      if (score >= 90) return 'success'
+      if (score >= 50) return 'warning'
+      return 'failure'
+    }
+
+    // Helper to format bytes
+    const formatBytes = (bytes) => {
+      if (bytes === 0) return '0 Bytes'
+      const k = 1024
+      const sizes = ['Bytes', 'KB', 'MB', 'GB']
+      const i = Math.floor(Math.log(bytes) / Math.log(k))
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+    }
+
+    // Helper to format milliseconds
+    const formatMs = (ms) => {
+      if (ms >= 1000) {
+        return (ms / 1000).toFixed(1) + ' s'
+      }
+      return Math.round(ms) + ' ms'
+    }
+
+    // Parse raw response data for detailed insights
+    const rawData = pagespeedData?.raw_response || pagespeedData?.raw_data
+    const lighthouseData = rawData?.raw_data?.lighthouseResult || rawData?.lighthouseResult
+
+    // Extract all category scores from lighthouse data
+    const getAllScores = () => {
+      const scores = {}
+      
+      // First check if we have scores in the raw response
+      if (rawData?.scores) {
+        Object.entries(rawData.scores).forEach(([key, value]) => {
+          scores[key] = value
+        })
+      }
+      
+      // Then extract category scores from lighthouse data
+      if (lighthouseData?.categories) {
+        Object.entries(lighthouseData.categories).forEach(([key, category]) => {
+          scores[key] = {
+            score: Math.round(category.score * 100),
+            title: category.title
+          }
+        })
+      }
+      
+      // Check if we have stored scores but they're not showing up - look for alternative paths
+      if (Object.keys(scores).length === 0) {
+        
+        // Check if scores are stored directly in pagespeedData
+        if (pagespeedData?.scores) {
+          Object.entries(pagespeedData.scores).forEach(([key, value]) => {
+            scores[key] = value
+          })
+        }
+        
+        // Check if data is nested differently
+        if (pagespeedData?.raw_response?.lighthouseResult?.categories) {
+          Object.entries(pagespeedData.raw_response.lighthouseResult.categories).forEach(([key, category]) => {
+            scores[key] = {
+              score: Math.round(category.score * 100),
+              title: category.title
+            }
+          })
+        }
+        
+        // Check if data is in raw_data
+        if (pagespeedData?.raw_data?.lighthouseResult?.categories) {
+          Object.entries(pagespeedData.raw_data.lighthouseResult.categories).forEach(([key, category]) => {
+            scores[key] = {
+              score: Math.round(category.score * 100),
+              title: category.title
+            }
+          })
+        }
+      }
+      
+      return scores
+    }
+
+    const allScores = getAllScores()
+
+    // Get category-specific icon
+    const getCategoryIcon = (category) => {
+      const iconClass = "w-6 h-6"
+      switch (category) {
+        case 'performance':
+          return (
+            <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+          )
+        case 'accessibility':
+          return (
+            <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+          )
+        case 'best-practices':
+          return (
+            <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          )
+        case 'seo':
+          return (
+            <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          )
+        case 'pwa':
+          return (
+            <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+            </svg>
+          )
+        default:
+          return (
+            <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+          )
+      }
+    }
+
+    return (
+      <div className="space-y-6">
+        {/* PageSpeed Overview Cards - All Category Scores */}
+        {Object.keys(allScores).length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {Object.entries(allScores).map(([category, scoreData]) => (
+              <Card key={category}>
+                <div className="flex items-center">
+                  <div className={`p-3 rounded-full ${getScoreBgColor(scoreData.score)}`}>
+                    <div className={getScoreColor(scoreData.score)}>
+                      {getCategoryIcon(category)}
+                    </div>
                   </div>
-                )}
-              </div>
+                  <div className="ml-4">
+                    <p className="text-sm font-medium text-gray-600 dark:text-gray-300">{scoreData.title}</p>
+                    <p className={`text-2xl font-bold ${getScoreColor(scoreData.score)}`}>
+                      {scoreData.score}
+                    </p>
+                  </div>
+                </div>
+              </Card>
             ))}
           </div>
-        </Card>
-      )}
+        )}
 
-      {/* Performance Opportunities */}
-      {pagespeedData?.opportunities && pagespeedData.opportunities.length > 0 && (
-        <Card>
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-            Performance Opportunities
-          </h3>
-          <div className="space-y-4">
-            {pagespeedData.opportunities.map((opportunity, index) => (
-              <div key={index} className="border border-gray-200 dark:border-gray-600 rounded-lg p-4">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <h4 className="font-medium text-gray-900 dark:text-white mb-2">
-                      {opportunity.title}
-                    </h4>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                      {opportunity.description}
+        {/* Critical Issues Alert - Updated to check all scores */}
+        {Object.keys(allScores).length > 0 && (
+          Object.values(allScores).some(score => score.score < 50) && (
+            <Card>
+              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg p-4">
+                <div className="flex items-start">
+                  <svg className="w-5 h-5 text-red-600 dark:text-red-400 mr-3 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                  <div>
+                    <h3 className="text-sm font-medium text-red-800 dark:text-red-200 mb-1">
+                      Critical Issues Detected
+                    </h3>
+                    <div className="text-sm text-red-700 dark:text-red-300 space-y-1">
+                      {Object.entries(allScores).filter(([_, score]) => score.score < 50).map(([category, score]) => (
+                        <p key={category}>• {score.title} score ({score.score}) is critically low and needs immediate attention</p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          )
+        )}
+
+        {/* Enhanced Core Web Vitals */}
+        {((rawData?.core_web_vitals || rawData?.coreWebVitals || pagespeedData?.coreWebVitals) && Object.keys(rawData?.core_web_vitals || rawData?.coreWebVitals || pagespeedData?.coreWebVitals || {}).length > 0) && (
+          <Card>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+              ⚡ Core Web Vitals
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {Object.entries(rawData?.core_web_vitals || rawData?.coreWebVitals || pagespeedData?.coreWebVitals || {}).map(([metric, data]) => {
+                const score = data.score !== null ? data.score : (data.score === 0 ? 0 : null)
+                const scoreValue = score !== null ? (score <= 1 ? score * 100 : score) : null
+                
+                return (
+                  <div key={metric} className="text-center p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border-l-4 border-gray-300 dark:border-gray-600">
+                    <h4 className="font-medium text-gray-900 dark:text-white mb-2">{data.title || metric}</h4>
+                    <p className="text-3xl font-bold mb-2" style={{
+                      color: scoreValue !== null 
+                        ? (scoreValue >= 90 ? '#059669' : scoreValue >= 50 ? '#d97706' : '#dc2626')
+                        : '#6b7280'
+                    }}>
+                      {data.displayValue}
                     </p>
-                    {opportunity.displayValue && (
-                      <p className="text-sm font-medium text-blue-600 dark:text-blue-400">
+                    {scoreValue !== null && (
+                      <div className="space-y-1">
+                        <Badge color={getBadgeColor(scoreValue)} size="sm" className="justify-self-center">
+                          {scoreValue >= 90 ? 'Good' : scoreValue >= 50 ? 'Needs Improvement' : 'Poor'}
+                        </Badge>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          Score: {Math.round(scoreValue)}/100
+                        </p>
+                      </div>
+                    )}
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                      Raw value: {typeof data.value === 'number' ? data.value.toFixed(2) : data.value}
+                      {typeof data.value === 'number' && data.value > 1000 ? 'ms' : (data.value < 1 ? '' : 'ms')}
+                    </p>
+                  </div>
+                )
+              })}
+            </div>
+            {settings?.show_tips !== false && (
+              <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg">
+                <h4 className="font-medium text-blue-800 dark:text-blue-200 mb-2">Understanding Core Web Vitals</h4>
+                <div className="text-xs text-blue-700 dark:text-blue-300 space-y-1">
+                  <p><strong>LCP (Largest Contentful Paint):</strong> Time until largest content element loads (Good: &lt;2.5s)</p>
+                  <p><strong>FID (First Input Delay):</strong> Time until page becomes interactive (Good: &lt;100ms)</p>
+                  <p><strong>CLS (Cumulative Layout Shift):</strong> Visual stability measure (Good: &lt;0.1)</p>
+                  <p><strong>FCP (First Contentful Paint):</strong> Time until first content appears (Good: &lt;1.8s)</p>
+                </div>
+              </div>
+            )}
+          </Card>
+        )}
+
+        {/* Warning for moderately low scores */}
+        {Object.keys(allScores).length > 0 && (
+          Object.values(allScores).some(score => score.score >= 50 && score.score < 80) && (
+            <Card>
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4">
+                <div className="flex items-start">
+                  <svg className="w-5 h-5 text-yellow-600 dark:text-yellow-400 mr-3 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                  <div>
+                    <h3 className="text-sm font-medium text-yellow-800 dark:text-yellow-200 mb-1">
+                      Areas for Improvement
+                    </h3>
+                    <div className="text-sm text-yellow-700 dark:text-yellow-300 space-y-1">
+                      {Object.entries(allScores).filter(([_, score]) => score.score >= 50 && score.score < 80).map(([category, score]) => (
+                        <p key={category}>• {score.title} score ({score.score}) could be improved</p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          )
+        )}
+
+        {/* Action Items Summary */}
+        {rawData?.opportunities && rawData.opportunities.length > 0 && (
+          <Card>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+              🎯 Priority Action Items
+            </h3>
+            <div className="space-y-3">
+              {rawData.opportunities
+                .filter(opp => opp.score === 0 || opp.score < 0.5)
+                .slice(0, 5)
+                .map((opportunity, index) => (
+                <div key={index} className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg p-4">
+                  <div className="flex items-start">
+                    <div className="flex-shrink-0">
+                      <span className="inline-flex items-center justify-center w-6 h-6 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-full text-sm font-medium">
+                        {index + 1}
+                      </span>
+                    </div>
+                    <div className="ml-3">
+                      <h4 className="font-medium text-red-800 dark:text-red-200">{opportunity.title}</h4>
+                      <p className="text-sm text-red-700 dark:text-red-300 mt-1">
                         {opportunity.displayValue}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        {/* Detailed Audits from stored data */}
+        {(pagespeedData?.audits || rawData?.audits) && (
+          <div className="space-y-6">
+            {/* Performance Metrics */}
+            <Card>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                🚀 Performance Metrics
+              </h3>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {[
+                  'first-contentful-paint',
+                  'largest-contentful-paint',
+                  'total-blocking-time',
+                  'cumulative-layout-shift',
+                  'speed-index',
+                  'interactive'
+                ].map(auditId => {
+                  const audit = (pagespeedData?.audits || rawData?.audits)?.[auditId]
+                  if (!audit) return null
+                  
+                  return (
+                    <div key={auditId} className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="font-medium text-gray-900 dark:text-white">{audit.title}</h4>
+                        {audit.score !== null && (
+                          <Badge color={getBadgeColor(audit.score * 100)}>
+                            {audit.score === 1 ? 'Good' : audit.score >= 0.9 ? 'Good' : audit.score >= 0.5 ? 'Needs Improvement' : 'Poor'}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-lg font-bold text-gray-900 dark:text-white">{audit.displayValue}</p>
+                      {audit.description && (
+                        <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">{audit.description.substring(0, 150)}...</p>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </Card>
+
+            {/* Failed Audits - Critical Issues */}
+            {(() => {
+              const audits = pagespeedData?.audits || rawData?.audits || {}
+              const failedAudits = Object.entries(audits).filter(([_, audit]) => 
+                audit.score !== null && audit.score < 0.5 && audit.scoreDisplayMode !== 'notApplicable'
+              ).slice(0, 10)
+              
+              if (failedAudits.length === 0) return null
+              
+              return (
+                <Card>
+                  <h3 className="text-lg font-semibold text-red-800 dark:text-red-200 mb-4">
+                    ⚠️ Failed Audits - Needs Attention ({failedAudits.length})
+                  </h3>
+                  <div className="space-y-4">
+                    {failedAudits.map(([auditId, audit]) => (
+                      <div key={auditId} className="border border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex-1">
+                            <h4 className="font-medium text-red-800 dark:text-red-200">{audit.title}</h4>
+                            <p className="text-sm text-red-700 dark:text-red-300 mt-1">
+                              {audit.description ? audit.description.substring(0, 200) + '...' : 'No description available'}
+                            </p>
+                          </div>
+                          <Badge color="failure" className="ml-2">
+                            {audit.score !== null ? Math.round(audit.score * 100) : 'Failed'}
+                          </Badge>
+                        </div>
+                        {audit.displayValue && (
+                          <p className="text-sm font-medium text-red-800 dark:text-red-200">
+                            Impact: {audit.displayValue}
+                          </p>
+                        )}
+                        {audit.details && (
+                          <div className="mt-2 text-xs text-red-600 dark:text-red-400">
+                            {audit.details.overallSavingsMs && `Time savings: ${formatMs(audit.details.overallSavingsMs)}`}
+                            {audit.details.overallSavingsBytes && ` • Data savings: ${formatBytes(audit.details.overallSavingsBytes)}`}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )
+            })()}
+
+            {/* Resource Optimization Opportunities */}
+            <Card>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                🔧 Resource Optimization
+              </h3>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {[
+                  'unused-css-rules',
+                  'unused-javascript',
+                  'unminified-javascript',
+                  'render-blocking-resources',
+                  'uses-responsive-images',
+                  'legacy-javascript',
+                  'uses-text-compression',
+                  'uses-long-cache-ttl'
+                ].map(auditId => {
+                  const audit = (pagespeedData?.audits || rawData?.audits)?.[auditId]
+                  if (!audit) return null
+                  
+                  return (
+                    <div key={auditId} className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="font-medium text-gray-900 dark:text-white text-sm">{audit.title}</h4>
+                        {audit.score !== null && (
+                          <Badge color={getBadgeColor(audit.score * 100)} size="sm">
+                            {audit.score === 1 ? 'Optimized' : audit.score >= 0.9 ? 'Good' : audit.score >= 0.5 ? 'Moderate' : 'Poor'}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-sm font-bold text-gray-900 dark:text-white">{audit.displayValue}</p>
+                      <div className="mt-2 space-y-1">
+                        {audit.details?.overallSavingsMs && audit.details.overallSavingsMs > 0 && (
+                          <p className="text-xs text-green-600 dark:text-green-400">
+                            ⚡ Time savings: {formatMs(audit.details.overallSavingsMs)}
+                          </p>
+                        )}
+                        {audit.details?.overallSavingsBytes && audit.details.overallSavingsBytes > 0 && (
+                          <p className="text-xs text-purple-600 dark:text-purple-400">
+                            💾 Data savings: {formatBytes(audit.details.overallSavingsBytes)}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Comprehensive Resource Breakdown */}
+        {(pagespeedData?.audits || rawData?.audits) && (
+          <div className="space-y-6">
+            {/* Resource Summary Overview */}
+            {(() => {
+              const audits = pagespeedData?.audits || rawData?.audits || {}
+              const resourceSummary = audits['resource-summary']
+              const networkRequests = audits['network-requests']
+              
+              if (!resourceSummary && !networkRequests) return null
+              
+              return (
+                <Card>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                    📊 Resource Loading Analysis
+                  </h3>
+                  
+                  {/* Resource Types Breakdown */}
+                  {resourceSummary?.details?.items && (
+                    <div className="mb-6">
+                      <h4 className="font-medium text-gray-900 dark:text-white mb-3">Resource Types</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                        {resourceSummary.details.items
+                          .filter(item => item.resourceType !== 'total')
+                          .map((item, index) => (
+                          <div key={index} className="bg-gray-50 dark:bg-gray-800 p-3 rounded-lg text-center border">
+                            <p className="text-sm font-medium text-gray-900 dark:text-white">{item.label || item.resourceType}</p>
+                            <p className="text-lg font-bold text-blue-600 dark:text-blue-400">{item.requestCount}</p>
+                            <p className="text-xs text-gray-600 dark:text-gray-400">requests</p>
+                            <p className="text-xs text-purple-600 dark:text-purple-400">{formatBytes(item.transferSize)}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Total Resources Summary */}
+                  {(() => {
+                    const totalItem = resourceSummary?.details?.items?.find(item => item.resourceType === 'total')
+                    if (!totalItem) return null
+                    
+                    return (
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                        <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-700">
+                          <h4 className="font-medium text-blue-800 dark:text-blue-200">Total Requests</h4>
+                          <p className="text-2xl font-bold text-blue-900 dark:text-blue-100">{totalItem.requestCount}</p>
+                        </div>
+                        <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-lg border border-purple-200 dark:border-purple-700">
+                          <h4 className="font-medium text-purple-800 dark:text-purple-200">Transfer Size</h4>
+                          <p className="text-2xl font-bold text-purple-900 dark:text-purple-100">{formatBytes(totalItem.transferSize)}</p>
+                        </div>
+                        <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg border border-green-200 dark:border-green-700">
+                          <h4 className="font-medium text-green-800 dark:text-green-200">Resource Size</h4>
+                          <p className="text-2xl font-bold text-green-900 dark:text-green-100">{formatBytes(totalItem.resourceSize || 0)}</p>
+                        </div>
+                      </div>
+                    )
+                  })()}
+                </Card>
+              )
+            })()}
+
+            {/* Cache Performance */}
+            {(() => {
+              const audits = pagespeedData?.audits || rawData?.audits || {}
+              const cacheAudit = audits['uses-long-cache-ttl']
+              
+              if (!cacheAudit || !cacheAudit.details?.items) return null
+              
+              return (
+                <Card>
+                  <h3 className="text-lg font-semibold text-orange-800 dark:text-orange-200 mb-4">
+                    🗄️ Cache Performance Issues
+                  </h3>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between p-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-700 rounded-lg">
+                      <div>
+                        <h4 className="font-medium text-orange-800 dark:text-orange-200">{cacheAudit.title}</h4>
+                        <p className="text-sm text-orange-700 dark:text-orange-300">
+                          {cacheAudit.displayValue} - Resources without proper cache headers
+                        </p>
+                      </div>
+                      <Badge color={getBadgeColor(cacheAudit.score * 100)}>
+                        {Math.round(cacheAudit.score * 100)}
+                      </Badge>
+                    </div>
+                    
+                    {cacheAudit.details.items.slice(0, 8).map((item, index) => (
+                      <div key={index} className="flex justify-between items-center p-2 bg-gray-50 dark:bg-gray-800 rounded text-sm">
+                        <span className="text-gray-900 dark:text-white truncate max-w-md" title={item.url}>
+                          {item.url ? new URL(item.url).pathname.split('/').pop() || item.url : 'Unknown'}
+                        </span>
+                        <div className="text-right">
+                          <p className="text-gray-600 dark:text-gray-400">{formatBytes(item.totalBytes)}</p>
+                          <p className="text-xs text-orange-600 dark:text-orange-400">
+                            {item.cacheLifetimeMs ? formatMs(item.cacheLifetimeMs) : 'No cache'}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )
+            })()}
+          </div>
+        )}
+
+        {/* Network Analysis */}
+        {(lighthouseData?.audits?.['network-requests']?.details?.items || (pagespeedData?.audits || rawData?.audits)?.['server-response-time']) && (
+          <Card>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+              🌐 Network Performance Analysis
+            </h3>
+            <div className="space-y-4">
+              {/* Server Response Time Issues */}
+              {(() => {
+                const audits = pagespeedData?.audits || rawData?.audits || lighthouseData?.audits || {}
+                const serverResponseAudit = audits['server-response-time']
+                
+                if (!serverResponseAudit || serverResponseAudit.score >= 0.9) return null
+                
+                return (
+                  <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-700 rounded-lg p-4">
+                    <h4 className="font-medium text-orange-800 dark:text-orange-200 mb-2">
+                      🐌 Slow Server Response Detected
+                    </h4>
+                    <p className="text-sm text-orange-700 dark:text-orange-300">
+                      Server response time: {serverResponseAudit.displayValue} - 
+                      Your server is taking too long to respond. Consider optimizing your backend, using a CDN, or upgrading your hosting.
+                    </p>
+                    <div className="mt-2">
+                      <Badge color={getBadgeColor(serverResponseAudit.score * 100)}>
+                        Score: {Math.round(serverResponseAudit.score * 100)}/100
+                      </Badge>
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* Third Party Impact */}
+              {(() => {
+                const audits = pagespeedData?.audits || rawData?.audits || lighthouseData?.audits || {}
+                const thirdPartyAudit = audits['third-party-summary']
+                
+                if (!thirdPartyAudit?.details?.items || thirdPartyAudit.details.items.length === 0) return null
+                
+                return (
+                  <div>
+                    <h4 className="font-medium text-gray-900 dark:text-white mb-3">Third-Party Impact</h4>
+                    <div className="space-y-2">
+                      {thirdPartyAudit.details.items.slice(0, 6).map((item, index) => (
+                        <div key={index} className="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-800 rounded">
+                          <span className="text-sm font-medium text-gray-900 dark:text-white">{item.entity}</span>
+                          <div className="text-right">
+                            <p className="text-sm text-gray-600 dark:text-gray-400">{formatBytes(item.transferSize)}</p>
+                            <p className="text-xs text-orange-600 dark:text-orange-400">
+                              {formatMs(item.mainThreadTime)} blocking
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-3 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded">
+                      <p className="text-sm text-blue-800 dark:text-blue-200">
+                        📊 Total main thread blocking time: {thirdPartyAudit.displayValue}
+                      </p>
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* Network RTT Information */}
+              {(() => {
+                const audits = pagespeedData?.audits || rawData?.audits || {}
+                const networkRTT = audits['network-rtt']
+                
+                if (!networkRTT?.details?.items) return null
+                
+                return (
+                  <div>
+                    <h4 className="font-medium text-gray-900 dark:text-white mb-3">Network Round Trip Time</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {networkRTT.details.items.slice(0, 6).map((item, index) => (
+                        <div key={index} className="flex justify-between items-center p-2 bg-gray-50 dark:bg-gray-800 rounded text-sm">
+                          <span className="text-gray-900 dark:text-white truncate">{item.origin}</span>
+                          <span className="text-blue-600 dark:text-blue-400 font-medium">{formatMs(item.rtt)}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {settings?.show_tips !== false && (
+                      <p className="text-xs text-gray-600 dark:text-gray-400 mt-2">
+                        Lower RTT values indicate better network performance
                       </p>
                     )}
                   </div>
-                  {opportunity.score !== null && (
-                    <div className={`ml-4 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      opportunity.score >= 0.9 ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
-                      opportunity.score >= 0.5 ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400' :
-                      'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
-                    }`}>
-                      {Math.round(opportunity.score * 100)}%
+                )
+              })()}
+            </div>
+          </Card>
+        )}
+
+        {/* Performance Opportunities */}
+        {(rawData?.opportunities || pagespeedData?.opportunities) && (
+          <Card>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+              🎯 Performance Opportunities
+            </h3>
+            <div className="space-y-4">
+              {(rawData?.opportunities || pagespeedData?.opportunities || []).map((opportunity, index) => (
+                <div key={index} className="border border-gray-200 dark:border-gray-600 rounded-lg p-4">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <h4 className="font-medium text-gray-900 dark:text-white mb-2">
+                        {opportunity.title}
+                      </h4>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                        {opportunity.description}
+                      </p>
+                      <div className="flex flex-wrap gap-3 text-sm">
+                        {opportunity.displayValue && (
+                          <span className="font-medium text-blue-600 dark:text-blue-400">
+                            💡 {opportunity.displayValue}
+                          </span>
+                        )}
+                        {opportunity.overallSavingsMs && opportunity.overallSavingsMs > 0 && (
+                          <span className="font-medium text-green-600 dark:text-green-400">
+                            ⚡ {formatMs(opportunity.overallSavingsMs)} faster
+                          </span>
+                        )}
+                        {opportunity.overallSavingsBytes && opportunity.overallSavingsBytes > 0 && (
+                          <span className="font-medium text-purple-600 dark:text-purple-400">
+                            💾 {formatBytes(opportunity.overallSavingsBytes)} less data
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {opportunity.score !== null && (
+                      <Badge color={getBadgeColor(opportunity.score * 100)} className="ml-4">
+                        {opportunity.score === 0 ? 'Critical' : opportunity.score < 0.5 ? 'Poor' : 'Good'}
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        {/* Comprehensive Diagnostics */}
+        {(rawData?.diagnostics || pagespeedData?.diagnostics) && (
+          <div className="space-y-6">
+            {/* Accessibility Issues */}
+            {(() => {
+              const diagnostics = rawData?.diagnostics || pagespeedData?.diagnostics || []
+              const accessibilityIssues = diagnostics.filter(d => 
+                d.score !== null && d.score < 1 && (
+                  d.title?.toLowerCase().includes('aria') ||
+                  d.title?.toLowerCase().includes('accessibility') ||
+                  d.title?.toLowerCase().includes('contrast') ||
+                  d.id?.includes('aria') ||
+                  d.id?.includes('color')
+                )
+              )
+              
+              if (accessibilityIssues.length === 0) return null
+              
+              return (
+                <Card>
+                  <h3 className="text-lg font-semibold text-blue-800 dark:text-blue-200 mb-4">
+                    ♿ Accessibility Issues ({accessibilityIssues.length})
+                  </h3>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {accessibilityIssues.map((diagnostic, index) => (
+                      <div key={index} className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg">
+                        <div className="flex items-start justify-between mb-2">
+                          <h4 className="font-medium text-blue-800 dark:text-blue-200 text-sm">{diagnostic.title}</h4>
+                          {diagnostic.score !== null && (
+                            <Badge color={diagnostic.score === 1 ? 'success' : 'warning'} size="sm">
+                              {diagnostic.score === 1 ? 'Pass' : 'Fail'}
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-blue-700 dark:text-blue-300">
+                          {diagnostic.description ? diagnostic.description.substring(0, 150) + '...' : 'No description available'}
+                        </p>
+                        {diagnostic.displayValue && (
+                          <p className="text-xs font-medium text-blue-800 dark:text-blue-200 mt-1">
+                            {diagnostic.displayValue}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )
+            })()}
+
+            {/* SEO Issues */}
+            {(() => {
+              const diagnostics = rawData?.diagnostics || pagespeedData?.diagnostics || []
+              const seoIssues = diagnostics.filter(d => 
+                d.score !== null && d.score < 1 && (
+                  d.title?.toLowerCase().includes('seo') ||
+                  d.title?.toLowerCase().includes('meta') ||
+                  d.title?.toLowerCase().includes('title') ||
+                  d.title?.toLowerCase().includes('description') ||
+                  d.title?.toLowerCase().includes('canonical') ||
+                  d.title?.toLowerCase().includes('robots') ||
+                  d.id?.includes('meta') ||
+                  d.id?.includes('title') ||
+                  d.id?.includes('canonical')
+                )
+              )
+              
+              if (seoIssues.length === 0) return null
+              
+              return (
+                <Card>
+                  <h3 className="text-lg font-semibold text-green-800 dark:text-green-200 mb-4">
+                    🔍 SEO Issues ({seoIssues.length})
+                  </h3>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {seoIssues.map((diagnostic, index) => (
+                      <div key={index} className="p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 rounded-lg">
+                        <div className="flex items-start justify-between mb-2">
+                          <h4 className="font-medium text-green-800 dark:text-green-200 text-sm">{diagnostic.title}</h4>
+                          {diagnostic.score !== null && (
+                            <Badge color={diagnostic.score === 1 ? 'success' : 'warning'} size="sm">
+                              {diagnostic.score === 1 ? 'Pass' : 'Fail'}
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-green-700 dark:text-green-300">
+                          {diagnostic.description ? diagnostic.description.substring(0, 150) + '...' : 'No description available'}
+                        </p>
+                        {diagnostic.displayValue && (
+                          <p className="text-xs font-medium text-green-800 dark:text-green-200 mt-1">
+                            {diagnostic.displayValue}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )
+            })()}
+
+            {/* Best Practices Issues */}
+            {(() => {
+              const diagnostics = rawData?.diagnostics || pagespeedData?.diagnostics || []
+              const bestPracticesIssues = diagnostics.filter(d => 
+                d.score !== null && d.score < 1 && (
+                  d.title?.toLowerCase().includes('security') ||
+                  d.title?.toLowerCase().includes('https') ||
+                  d.title?.toLowerCase().includes('deprecated') ||
+                  d.title?.toLowerCase().includes('console') ||
+                  d.title?.toLowerCase().includes('errors') ||
+                  d.title?.toLowerCase().includes('vulnerability') ||
+                  d.id?.includes('security') ||
+                  d.id?.includes('https') ||
+                  d.id?.includes('errors')
+                )
+              )
+              
+              if (bestPracticesIssues.length === 0) return null
+              
+              return (
+                <Card>
+                  <h3 className="text-lg font-semibold text-purple-800 dark:text-purple-200 mb-4">
+                    ✅ Best Practices Issues ({bestPracticesIssues.length})
+                  </h3>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {bestPracticesIssues.map((diagnostic, index) => (
+                      <div key={index} className="p-4 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-700 rounded-lg">
+                        <div className="flex items-start justify-between mb-2">
+                          <h4 className="font-medium text-purple-800 dark:text-purple-200 text-sm">{diagnostic.title}</h4>
+                          {diagnostic.score !== null && (
+                            <Badge color={diagnostic.score === 1 ? 'success' : 'warning'} size="sm">
+                              {diagnostic.score === 1 ? 'Pass' : 'Fail'}
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-purple-700 dark:text-purple-300">
+                          {diagnostic.description ? diagnostic.description.substring(0, 150) + '...' : 'No description available'}
+                        </p>
+                        {diagnostic.displayValue && (
+                          <p className="text-xs font-medium text-purple-800 dark:text-purple-200 mt-1">
+                            {diagnostic.displayValue}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )
+            })()}
+
+            {/* Technical Diagnostics */}
+            <Card>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                🔧 Technical Diagnostics
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {(rawData?.diagnostics || pagespeedData?.diagnostics || [])
+                  .filter(d => d.scoreDisplayMode === 'informative' || d.scoreDisplayMode === 'metricSavings')
+                  .slice(0, 12)
+                  .map((diagnostic, index) => (
+                  <div key={index} className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                    <h4 className="font-medium text-gray-900 dark:text-white text-sm mb-1">{diagnostic.title}</h4>
+                    <p className="text-sm text-gray-900 dark:text-white font-bold">{diagnostic.displayValue || 'N/A'}</p>
+                    {diagnostic.numericValue && (
+                      <p className="text-xs text-gray-600 dark:text-gray-400">
+                        Raw value: {typeof diagnostic.numericValue === 'number' ? diagnostic.numericValue.toFixed(2) : diagnostic.numericValue}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Actionable Insights & Recommendations */}
+        {(pagespeedData?.scores || pagespeedData?.opportunities || pagespeedData?.audits) && (
+          <Card>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+              🎯 Action Plan & Recommendations
+            </h3>
+            
+            {/* Priority Actions */}
+            {(() => {
+              const scores = pagespeedData?.scores || {}
+              const opportunities = pagespeedData?.opportunities || []
+              const audits = pagespeedData?.audits || {}
+              
+              const criticalIssues = []
+              const majorImprovements = []
+              const quickWins = []
+              
+              // Analyze scores for critical issues
+              Object.entries(scores).forEach(([category, scoreData]) => {
+                if (scoreData.score < 50) {
+                  criticalIssues.push({
+                    type: 'score',
+                    category: scoreData.title,
+                    score: scoreData.score,
+                    priority: 'critical',
+                    impact: 'high'
+                  })
+                }
+              })
+              
+              // Analyze opportunities for improvements
+              opportunities.forEach(opp => {
+                if (opp.score === 0 || opp.score < 0.5) {
+                  if (opp.overallSavingsMs > 1000) {
+                    majorImprovements.push({
+                      type: 'opportunity',
+                      title: opp.title,
+                      savings: opp.overallSavingsMs,
+                      priority: 'high',
+                      impact: 'high'
+                    })
+                  } else if (opp.overallSavingsMs > 200) {
+                    quickWins.push({
+                      type: 'opportunity',
+                      title: opp.title,
+                      savings: opp.overallSavingsMs,
+                      priority: 'medium',
+                      impact: 'medium'
+                    })
+                  }
+                }
+              })
+              
+              return (
+                <div className="space-y-6">
+                  {/* Critical Issues */}
+                  {criticalIssues.length > 0 && (
+                    <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg p-4">
+                      <h4 className="font-medium text-red-800 dark:text-red-200 mb-3">🚨 Critical Issues (Immediate Action Required)</h4>
+                      <div className="space-y-2">
+                        {criticalIssues.map((issue, index) => (
+                          <div key={index} className="flex items-center justify-between">
+                            <span className="text-sm text-red-700 dark:text-red-300">
+                              {issue.category} score is critically low
+                            </span>
+                            <Badge color="failure">{issue.score}/100</Badge>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
+                  
+                  {/* Major Improvements */}
+                  {majorImprovements.length > 0 && (
+                    <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-700 rounded-lg p-4">
+                      <h4 className="font-medium text-orange-800 dark:text-orange-200 mb-3">⚡ High-Impact Improvements</h4>
+                      <div className="space-y-2">
+                        {majorImprovements.slice(0, 5).map((improvement, index) => (
+                          <div key={index} className="flex items-center justify-between">
+                            <span className="text-sm text-orange-700 dark:text-orange-300">
+                              {improvement.title}
+                            </span>
+                            <span className="text-green-600 dark:text-green-400 font-medium text-sm">
+                              +{formatMs(improvement.savings)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Quick Wins */}
+                  {quickWins.length > 0 && (
+                    <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 rounded-lg p-4">
+                      <h4 className="font-medium text-green-800 dark:text-green-200 mb-3">✅ Quick Wins (Easy to Fix)</h4>
+                      <div className="space-y-2">
+                        {quickWins.slice(0, 5).map((win, index) => (
+                          <div key={index} className="flex items-center justify-between">
+                            <span className="text-sm text-green-700 dark:text-green-300">
+                              {win.title}
+                            </span>
+                            <span className="text-blue-600 dark:text-blue-400 font-medium text-sm">
+                              +{formatMs(win.savings)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Overall Summary */}
+                  <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg p-4">
+                    <h4 className="font-medium text-blue-800 dark:text-blue-200 mb-3">📊 Overall Performance Summary</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                      {Object.entries(scores).map(([category, scoreData]) => (
+                        <div key={category}>
+                          <p className="text-2xl font-bold" style={{
+                            color: scoreData.score >= 90 ? '#059669' : scoreData.score >= 50 ? '#d97706' : '#dc2626'
+                          }}>
+                            {scoreData.score}
+                          </p>
+                          <p className="text-xs text-blue-700 dark:text-blue-300">{scoreData.title}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {/* Next Steps */}
+                  <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg p-4">
+                    <h4 className="font-medium text-gray-900 dark:text-white mb-3">🎯 Recommended Next Steps</h4>
+                    <ol className="text-sm text-gray-700 dark:text-gray-300 space-y-2 list-decimal list-inside">
+                      <li>Address critical issues first - focus on scores below 50</li>
+                      <li>Implement high-impact improvements that save over 1 second</li>
+                      <li>Optimize images and enable compression for quick wins</li>
+                      <li>Review third-party scripts and consider lazy loading</li>
+                      <li>Implement proper caching strategies</li>
+                      <li>Monitor Core Web Vitals regularly</li>
+                    </ol>
+                  </div>
                 </div>
+              )
+            })()}
+          </Card>
+        )}
+
+        {/* Analysis Information */}
+        <Card>
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+            📋 Analysis Information
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
+            {(pagespeedData?.url || rawData?.url) && (
+              <div>
+                <p className="font-medium text-gray-900 dark:text-white">Analyzed URL</p>
+                <p className="text-gray-600 dark:text-gray-400 break-all">{pagespeedData?.url || rawData?.url}</p>
               </div>
-            ))}
+            )}
+            {(pagespeedData?.strategy || rawData?.strategy) && (
+              <div>
+                <p className="font-medium text-gray-900 dark:text-white">Strategy</p>
+                <Badge color={(pagespeedData?.strategy || rawData?.strategy) === 'mobile' ? 'info' : 'purple'} className="justify-self-start">
+                  {pagespeedData?.strategy || rawData?.strategy}
+                </Badge>
+              </div>
+            )}
+            {(pagespeedData?.lastUpdated || rawData?.lastUpdated) && (
+              <div>
+                <p className="font-medium text-gray-900 dark:text-white">Last Updated</p>
+                <p className="text-gray-600 dark:text-gray-400">{new Date(pagespeedData?.lastUpdated || rawData?.lastUpdated).toLocaleString()}</p>
+              </div>
+            )}
+            {(lighthouseData?.lighthouseVersion || rawData?.lighthouse?.lighthouseVersion) && (
+              <div>
+                <p className="font-medium text-gray-900 dark:text-white">Lighthouse Version</p>
+                <p className="text-gray-600 dark:text-gray-400">{lighthouseData?.lighthouseVersion || rawData?.lighthouse?.lighthouseVersion}</p>
+              </div>
+            )}
+            {(lighthouseData?.fetchTime || rawData?.lighthouse?.fetchTime) && (
+              <div>
+                <p className="font-medium text-gray-900 dark:text-white">Analysis Time</p>
+                <p className="text-gray-600 dark:text-gray-400">{new Date(lighthouseData?.fetchTime || rawData?.lighthouse?.fetchTime).toLocaleString()}</p>
+              </div>
+            )}
+            {(lighthouseData?.environment?.networkUserAgent || rawData?.lighthouse?.environment?.networkUserAgent) && (
+              <div>
+                <p className="font-medium text-gray-900 dark:text-white">Test Environment</p>
+                <p className="text-gray-600 dark:text-gray-400">Mobile Chrome Simulation</p>
+              </div>
+            )}
+          </div>
+          
+          {/* Run Warnings */}
+          {(lighthouseData?.runWarnings || rawData?.lighthouse?.runWarnings) && (lighthouseData?.runWarnings || rawData?.lighthouse?.runWarnings).length > 0 && (
+            <div className="mt-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded">
+              <h4 className="font-medium text-yellow-800 dark:text-yellow-200 mb-2">⚠️ Analysis Warnings</h4>
+              <ul className="text-sm text-yellow-700 dark:text-yellow-300 space-y-1">
+                {(lighthouseData?.runWarnings || rawData?.lighthouse?.runWarnings || []).map((warning, index) => (
+                  <li key={index}>• {warning}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </Card>
+
+        {/* Action Buttons */}
+        <Card>
+          <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                Need Fresh PageSpeed Analysis?
+              </h3>
+              <p className="text-gray-600 dark:text-gray-300">
+                Get the latest performance insights and Core Web Vitals from your AI assistant.
+              </p>
+            </div>
+            <Button 
+              onClick={requestPagespeedAnalysis}
+              disabled={isGeneratingData}
+              className="bg-green-600 hover:bg-green-700 focus:ring-green-500"
+            >
+              {isGeneratingData ? (
+                <>
+                  <Spinner size="sm" className="mr-2" />
+                  Updating...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  Update PageSpeed Analysis
+                </>
+              )}
+            </Button>
           </div>
         </Card>
-      )}
 
-      {/* Action Buttons */}
-      <Card>
-        <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-              Need Fresh Performance Insights?
-            </h3>
-            <p className="text-gray-600 dark:text-gray-300">
-              Get the latest PageSpeed analysis and performance recommendations from your AI assistant.
-            </p>
-          </div>
-          <Button 
-            onClick={requestPagespeedAnalysis}
-            disabled={isGeneratingData}
-            className="bg-green-600 hover:bg-green-700 focus:ring-green-500"
-          >
-            {isGeneratingData ? (
-              <>
-                <Spinner size="sm" className="mr-2" />
-                Updating...
-              </>
-            ) : (
-              <>
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                Update PageSpeed Analysis
-              </>
-            )}
-          </Button>
-        </div>
-      </Card>
-    </div>
-  )
+      </div>
+    )
+  }
 
   const SiteAnalysisDataView = () => {
     // Get scores with proper fallbacks
@@ -1527,66 +3107,58 @@ Use both mobile and desktop strategies for a complete analysis.`
         {/* Site Analysis Overview Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <Card>
-            <div className="flex items-center">
-              <div className={`p-3 rounded-full ${getScoreBgColor(metaScore)}`}>
-                <svg className={`w-6 h-6 ${getScoreColor(metaScore)}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-              </div>
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Meta Score</p>
-                <p className={`text-2xl font-bold ${getScoreColor(metaScore)}`}>
-                  {metaScore}
-                </p>
-              </div>
+            <div className={`p-3 rounded-full ${getScoreBgColor(metaScore)}`}>
+              <svg className={`w-6 h-6 ${getScoreColor(metaScore)}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Meta Score</p>
+              <p className={`text-2xl font-bold ${getScoreColor(metaScore)}`}>
+                {metaScore}
+              </p>
             </div>
           </Card>
 
           <Card>
-            <div className="flex items-center">
-              <div className={`p-3 rounded-full ${getScoreBgColor(schemaScore)}`}>
-                <svg className={`w-6 h-6 ${getScoreColor(schemaScore)}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-                </svg>
-              </div>
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Schema Score</p>
-                <p className={`text-2xl font-bold ${getScoreColor(schemaScore)}`}>
-                  {schemaScore}
-                </p>
-              </div>
+            <div className={`p-3 rounded-full ${getScoreBgColor(schemaScore)}`}>
+              <svg className={`w-6 h-6 ${getScoreColor(schemaScore)}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+              </svg>
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Schema Score</p>
+              <p className={`text-2xl font-bold ${getScoreColor(schemaScore)}`}>
+                {schemaScore}
+              </p>
             </div>
           </Card>
 
           <Card>
-            <div className="flex items-center">
-              <div className={`p-3 rounded-full ${getScoreBgColor(openGraphScore)}`}>
-                <svg className={`w-6 h-6 ${getScoreColor(openGraphScore)}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
-                </svg>
-              </div>
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600 dark:text-gray-300">OpenGraph Score</p>
-                <p className={`text-2xl font-bold ${getScoreColor(openGraphScore)}`}>
-                  {openGraphScore}
-                </p>
-              </div>
+            <div className={`p-3 rounded-full ${getScoreBgColor(openGraphScore)}`}>
+              <svg className={`w-6 h-6 ${getScoreColor(openGraphScore)}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
+              </svg>
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600 dark:text-gray-300">OpenGraph Score</p>
+              <p className={`text-2xl font-bold ${getScoreColor(openGraphScore)}`}>
+                {openGraphScore}
+              </p>
             </div>
           </Card>
 
           <Card>
-            <div className="flex items-center">
-              <div className={`p-3 rounded-full ${getScoreBgColor(overallScore)}`}>
-                <svg className={`w-6 h-6 ${getScoreColor(overallScore)}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Overall Score</p>
-                <p className={`text-2xl font-bold ${getScoreColor(overallScore)}`}>
-                  {overallScore}
-                </p>
-              </div>
+            <div className={`p-3 rounded-full ${getScoreBgColor(overallScore)}`}>
+              <svg className={`w-6 h-6 ${getScoreColor(overallScore)}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Overall Score</p>
+              <p className={`text-2xl font-bold ${getScoreColor(overallScore)}`}>
+                {overallScore}
+              </p>
             </div>
           </Card>
         </div>
@@ -1623,15 +3195,192 @@ Use both mobile and desktop strategies for a complete analysis.`
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
               Priority Recommendations
             </h3>
-            <div className="space-y-3">
-              {siteAnalysisData.summary.recommendations.map((recommendation, index) => (
-                <div key={index} className="flex items-start p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-700">
-                  <svg className="w-5 h-5 text-blue-600 dark:text-blue-400 mr-3 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <p className="text-sm text-blue-800 dark:text-blue-200 font-medium">{recommendation}</p>
-                </div>
-              ))}
+            <div className="space-y-4">
+              {siteAnalysisData.summary.recommendations.map((recommendation, index) => {
+                // Handle both old string format and new object format for backward compatibility
+                const isNewFormat = typeof recommendation === 'object' && recommendation.title;
+                const title = isNewFormat ? recommendation.title : recommendation;
+                const description = isNewFormat ? recommendation.description : recommendation;
+                const severity = isNewFormat ? recommendation.severity : 'medium';
+                const affectedPages = isNewFormat ? recommendation.affected_pages : [];
+                const affectedCount = isNewFormat ? recommendation.affected_count : 0;
+                const showingCount = isNewFormat ? recommendation.showing_count : 0;
+                
+                // Severity colors and icons
+                const severityConfig = {
+                  high: {
+                    bgColor: 'bg-red-50 dark:bg-red-900/20',
+                    borderColor: 'border-red-200 dark:border-red-700',
+                    iconColor: 'text-red-600 dark:text-red-400',
+                    textColor: 'text-red-800 dark:text-red-200',
+                    descColor: 'text-red-700 dark:text-red-300',
+                    icon: (
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                    )
+                  },
+                  medium: {
+                    bgColor: 'bg-yellow-50 dark:bg-yellow-900/20',
+                    borderColor: 'border-yellow-200 dark:border-yellow-700',
+                    iconColor: 'text-yellow-600 dark:text-yellow-400',
+                    textColor: 'text-yellow-800 dark:text-yellow-200',
+                    descColor: 'text-yellow-700 dark:text-yellow-300',
+                    icon: (
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    )
+                  },
+                  low: {
+                    bgColor: 'bg-blue-50 dark:bg-blue-900/20',
+                    borderColor: 'border-blue-200 dark:border-blue-700',
+                    iconColor: 'text-blue-600 dark:text-blue-400',
+                    textColor: 'text-blue-800 dark:text-blue-200',
+                    descColor: 'text-blue-700 dark:text-blue-300',
+                    icon: (
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    )
+                  }
+                };
+                
+                const config = severityConfig[severity] || severityConfig.medium;
+                
+                return (
+                  <div key={index} className={`p-4 ${config.bgColor} rounded-lg border ${config.borderColor}`}>
+                    <div className="flex items-start">
+                      <svg className={`w-5 h-5 ${config.iconColor} mr-3 mt-0.5 flex-shrink-0`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        {config.icon}
+                      </svg>
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between mb-1">
+                          <h4 className={`text-sm font-semibold ${config.textColor}`}>
+                            {title}
+                          </h4>
+                          {isNewFormat && (
+                            <Badge 
+                              color={severity === 'high' ? 'failure' : severity === 'medium' ? 'warning' : 'info'} 
+                              size="sm"
+                            >
+                              {severity.toUpperCase()}
+                            </Badge>
+                          )}
+                        </div>
+                        <p className={`text-sm ${config.descColor} mb-3`}>
+                          {description}
+                        </p>
+                        
+                        {/* Quick Fix Suggestions */}
+                        {isNewFormat && settings?.show_tips !== false && (
+                          <div className={`text-xs ${config.descColor} mb-3 p-2 bg-white dark:bg-gray-800 rounded border border-dashed ${config.borderColor}`}>
+                            <strong>Quick Fix:</strong>{' '}
+                            {(() => {
+                              switch(recommendation.type) {
+                                case 'meta_description':
+                                  return 'Use an SEO plugin like Yoast or Rank Math, or edit each page directly and add unique meta descriptions 120-160 characters long.';
+                                case 'meta_title':
+                                  return 'Edit each page and ensure the title tag is 30-60 characters and includes your target keyword.';
+                                case 'structured_data':
+                                  return 'Install a schema plugin like Schema Pro or add JSON-LD markup manually to help search engines understand your content.';
+                                case 'opengraph_image':
+                                  return 'Set featured images for your posts/pages or use an SEO plugin to automatically generate OpenGraph images.';
+                                case 'canonical_url':
+                                  return 'Most SEO plugins handle this automatically. Check your plugin settings or add rel="canonical" tags manually.';
+                                case 'title_length':
+                                  return 'Edit titles to be 30-60 characters long. Too short titles waste space, too long titles get cut off in search results.';
+                                case 'description_length':
+                                  return 'Edit meta descriptions to be 120-160 characters. This is the optimal length for search result snippets.';
+                                                                 default:
+                                   return 'Use an SEO plugin or edit pages directly to address these issues.';
+                               }
+                             })()}
+                             {affectedCount > 5 && (
+                               <>
+                                 <br />
+                                 <strong>Bulk Fix:</strong> For {affectedCount} pages, consider using WordPress bulk edit or an SEO plugin's bulk optimization features.
+                               </>
+                             )}
+                           </div>
+                         )}
+                        
+                        {/* Affected Pages */}
+                        {isNewFormat && affectedPages && affectedPages.length > 0 && (
+                          <div className="mt-3">
+                            <h5 className={`text-xs font-medium ${config.textColor} mb-2 uppercase tracking-wide`}>
+                              Affected Pages:
+                            </h5>
+                            <div className="space-y-2">
+                              {affectedPages.map((page, pageIndex) => (
+                                <div key={pageIndex} className="flex items-center justify-between p-2 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-600">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <p className="text-xs font-medium text-gray-900 dark:text-white truncate">
+                                        {page.title}
+                                      </p>
+                                      {page.post_type && (
+                                        <Badge 
+                                          color={page.post_type === 'page' ? 'purple' : page.post_type === 'post' ? 'blue' : 'gray'} 
+                                          size="sm"
+                                        >
+                                          {page.post_type}
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                                      {page.url ? page.url.replace(/^https?:\/\/[^\/]+/, '') : 'N/A'}
+                                    </p>
+                                    {page.issues && page.issues.length > 0 && (
+                                      <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+                                        Issues: {page.issues.join(', ')}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center space-x-2 ml-3">
+                                    {page.url && (
+                                      <a 
+                                        href={page.url} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer"
+                                        className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300"
+                                        title="View page"
+                                      >
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                        </svg>
+                                      </a>
+                                    )}
+                                    {page.post_id && (
+                                      <a 
+                                        href={`${adminData?.adminUrl || '/wp-admin/'}post.php?post=${page.post_id}&action=edit`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300"
+                                        title="Edit page"
+                                      >
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                        </svg>
+                                      </a>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                              
+                              {/* Show count if there are more pages */}
+                              {affectedCount > showingCount && (
+                                <div className={`p-2 ${config.bgColor} rounded border border-dashed ${config.borderColor} text-center`}>
+                                  <p className={`text-xs ${config.textColor} font-medium`}>
+                                    + {affectedCount - showingCount} more pages with this issue
+                                  </p>
+                                  <p className={`text-xs ${config.descColor} mt-1`}>
+                                    Run a fresh analysis to see all affected pages
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </Card>
         )}
@@ -2282,29 +4031,6 @@ Use both mobile and desktop strategies for a complete analysis.`
           </div>
         </Card>
       )}
-
-      {/* Comprehensive Analysis Summary */}
-      {siteAnalysisData?.structured_data && (
-        <Card>
-          <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 rounded-lg p-4">
-            <div className="flex items-start">
-              <svg className="w-5 h-5 text-green-600 dark:text-green-400 mr-3 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <div>
-                <h3 className="text-sm font-medium text-green-800 dark:text-green-200 mb-1">
-                  Comprehensive SEO Analysis Complete
-                </h3>
-                <p className="text-sm text-green-700 dark:text-green-300">
-                  Your site has been analyzed for meta tags, structured data, OpenGraph, sitemap, canonical URLs, and more. Check each section above for detailed insights and recommendations.
-                </p>
-              </div>
-            </div>
-          </div>
-        </Card>
-      )}
-
-
 
       {/* Action Buttons */}
       <Card>

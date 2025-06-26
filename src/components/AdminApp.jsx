@@ -4,6 +4,7 @@ import ChatInterface from './ChatInterface'
 import Settings from './Settings'
 import Analytics from './Analytics'
 import SEO from './SEO'
+import License from './License'
 import { ToastProvider } from './Toast'
 
 const navigationItems = [
@@ -232,9 +233,11 @@ const AdminApp = () => {
         )
 
       case 'seo':
-        return <SEO adminData={adminData} />
+        return <SEO adminData={adminData} settings={settings} />
       case 'analytics':
         return <Analytics adminData={adminData} />
+      case 'license':
+        return <License adminData={adminData} />
       case 'settings':
         return (
           <Settings 
@@ -422,6 +425,37 @@ const AdminApp = () => {
               <ul className="space-y-2">
                 <li>
                   <button
+                    onClick={() => {
+                      setActiveTab('license')
+                      // Close mobile sidebar when navigating
+                      if (window.innerWidth < 1024) {
+                        setSidebarOpen(false)
+                      }
+                      // Update URL to reflect the current tab
+                      const url = new URL(window.location)
+                      url.searchParams.set('tab', 'license')
+                      window.history.pushState({}, '', url)
+                    }}
+                    className={`flex items-center w-full ${sidebarCollapsed ? 'justify-center p-2' : 'p-3'} text-sm font-medium rounded-lg transition-colors duration-150 ${
+                      activeTab === 'license'
+                        ? 'bg-brand-accent text-brand-dark dark:bg-brand-accent dark:text-brand-dark font-bold'
+                        : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+                    }`}
+                    title={sidebarCollapsed ? 'License' : undefined}
+                  >
+                    <svg
+                      className={`w-6 h-6 ${sidebarCollapsed ? '' : 'mr-3'} text-gray-500 dark:text-gray-400`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 13v3h3v3h3v2l2 2h5v-4L12.74 8.74C12.91 8.19 13 7.6 13 7c0-3.31-2.69-6-6-6S1 3.69 1 7a6.005 6.005 0 0 0 8.47 5.47L10 13ZM6 7a1 1 0 1 1 0-2a1 1 0 0 1 0 2Z" />
+                    </svg>
+                    {!sidebarCollapsed && 'License'}
+                  </button>
+                </li>
+                <li>
+                  <button
                     onClick={toggleDarkMode}
                     className={`flex items-center w-full ${sidebarCollapsed ? 'justify-center p-2' : 'p-3'} text-sm font-medium text-gray-700 dark:text-gray-300 rounded-lg transition-colors duration-150 hover:bg-gray-100 dark:hover:bg-gray-700`}
                     title={sidebarCollapsed ? (darkMode ? 'Switch to light mode' : 'Switch to dark mode') : undefined}
@@ -470,6 +504,7 @@ const AdminApp = () => {
                   {activeTab === 'chat' && 'Interact with your AI assistant for content creation and optimization.'}
                   {activeTab === 'seo' && 'Monitor your website\'s SEO performance and keyword rankings.'}
                   {activeTab === 'analytics' && 'View insights about your AI assistant usage and performance.'}
+                  {activeTab === 'license' && 'Manage your MagicAssistant license activation and status.'}
                   {activeTab === 'settings' && 'Configure your MagicAssistant preferences and settings.'}
                 </p>
               </div>

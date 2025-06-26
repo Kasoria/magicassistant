@@ -409,14 +409,28 @@ class SEO_Data_Extractor {
      * Extract structured data with plugin integration
      */
     public function extract_structured_data($url, $post_id = null) {
+        error_log("DEBUG Extract Structured Data - URL: $url, Post ID: $post_id, Primary Plugin: " . $this->primary_seo_plugin);
+        
         // First try plugin-specific extraction
         if ($this->primary_seo_plugin && $post_id) {
+            error_log("DEBUG Extract Structured Data - Trying plugin extraction");
             $plugin_data = $this->extract_schema_from_plugin($post_id);
-            if ($plugin_data) {
+            
+            // Check if plugin data has actual structured data content
+            $has_structured_data = $plugin_data && 
+                                   isset($plugin_data['structured_data_count']) && 
+                                   $plugin_data['structured_data_count'] > 0;
+            
+            if ($has_structured_data) {
+                error_log("DEBUG Extract Structured Data - Plugin extraction successful with data");
                 $plugin_data['data_source'] = 'plugin';
                 $plugin_data['plugin'] = $this->active_seo_plugins[$this->primary_seo_plugin]['name'];
                 return $plugin_data;
+            } else {
+                error_log("DEBUG Extract Structured Data - Plugin extraction returned empty data, trying HTML fallback");
             }
+        } else {
+            error_log("DEBUG Extract Structured Data - No plugin or post ID, using HTML fallback");
         }
         
         // Fallback to HTML parsing
@@ -447,15 +461,28 @@ class SEO_Data_Extractor {
             return null;
         }
         
-        $schema_types = \RankMath\Helper::get_post_meta('rich_snippet', $post_id);
-        $schema_data = \RankMath\Helper::get_post_meta('snippet_' . $schema_types, $post_id);
+        $schema_type = \RankMath\Helper::get_post_meta('rich_snippet', $post_id);
+        $schema_data = array();
+        
+        if ($schema_type) {
+            $schema_details = \RankMath\Helper::get_post_meta('snippet_' . $schema_type, $post_id);
+            $schema_data[] = array(
+                'type' => 'JSON-LD',
+                'schema_type' => ucfirst($schema_type),
+                'data' => $schema_details
+            );
+        }
         
         return array(
-            'schema_types' => $schema_types ? array($schema_types) : array(),
-            'structured_data_count' => $schema_types ? 1 : 0,
-            'has_json_ld' => !empty($schema_types),
+            'structured_data_count' => $schema_type ? 1 : 0,
+            'structured_data' => $schema_data,
+            'has_json_ld' => !empty($schema_type),
             'has_microdata' => false,
             'has_rdfa' => false,
+            'has_organization' => ($schema_type === 'organization'),
+            'has_website' => ($schema_type === 'website'),
+            'has_breadcrumbs' => false,
+            'has_article' => ($schema_type === 'article'),
             'schema_details' => $schema_data
         );
     }
@@ -468,16 +495,44 @@ class SEO_Data_Extractor {
         $schema_article_type = get_post_meta($post_id, '_yoast_wpseo_schema_article_type', true);
         $schema_page_type = get_post_meta($post_id, '_yoast_wpseo_schema_page_type', true);
         
-        $schemas = array();
-        if ($schema_article_type) $schemas[] = $schema_article_type;
-        if ($schema_page_type) $schemas[] = $schema_page_type;
+        $structured_data = array();
+        if ($schema_article_type) {
+            $structured_data[] = array(
+                'type' => 'JSON-LD',
+                'schema_type' => ucfirst($schema_article_type),
+                'data' => array('article_type' => $schema_article_type)
+            );
+        }
+        if ($schema_page_type) {
+            $structured_data[] = array(
+                'type' => 'JSON-LD', 
+                'schema_type' => ucfirst($schema_page_type),
+                'data' => array('page_type' => $schema_page_type)
+            );
+        }
+        
+        // Yoast automatically generates some schemas
+        if (empty($structured_data)) {
+            $post_type = get_post_type($post_id);
+            if ($post_type === 'post') {
+                $structured_data[] = array(
+                    'type' => 'JSON-LD',
+                    'schema_type' => 'Article',
+                    'data' => array('auto_generated' => true)
+                );
+            }
+        }
         
         return array(
-            'schema_types' => $schemas,
-            'structured_data_count' => count($schemas),
-            'has_json_ld' => !empty($schemas),
+            'structured_data_count' => count($structured_data),
+            'structured_data' => $structured_data,
+            'has_json_ld' => !empty($structured_data),
             'has_microdata' => false,
-            'has_rdfa' => false
+            'has_rdfa' => false,
+            'has_organization' => false,
+            'has_website' => false,
+            'has_breadcrumbs' => false,
+            'has_article' => !empty($schema_article_type) || get_post_type($post_id) === 'post'
         );
     }
     
@@ -485,48 +540,165 @@ class SEO_Data_Extractor {
      * Extract schema from SEOPress
      */
     private function extract_seopress_schema($post_id) {
-        $schema_data = get_post_meta($post_id, '_seopress_pro_rich_snippets_type', true);
         
-        return array(
-            'schema_types' => $schema_data ? array($schema_data) : array(),
-            'structured_data_count' => $schema_data ? 1 : 0,
-            'has_json_ld' => !empty($schema_data),
+        // Try different SEOPress schema meta keys
+        $schema_type = get_post_meta($post_id, '_seopress_pro_rich_snippets_type', true);
+        
+        // Try alternative keys
+        $alt_schema_type = get_post_meta($post_id, '_seopress_rich_snippets_type', true);
+        
+        // Check if SEOPress Pro is active
+        $seopress_pro_active = is_plugin_active('wp-seopress-pro/seopress-pro.php');
+        
+        // Get all meta keys for this post to see what SEOPress is actually storing
+        $all_meta = get_post_meta($post_id);
+        $seopress_meta = array();
+        foreach ($all_meta as $key => $value) {
+            if (strpos($key, 'seopress') !== false) {
+                $seopress_meta[$key] = $value;
+            }
+        }
+        
+        $structured_data = array();
+        $final_schema_type = $schema_type ?: $alt_schema_type;
+        
+        if ($final_schema_type) {
+            $schema_details = get_post_meta($post_id, '_seopress_pro_rich_snippets_' . $final_schema_type, true);
+            if (!$schema_details) {
+                $schema_details = get_post_meta($post_id, '_seopress_rich_snippets_' . $final_schema_type, true);
+            }
+            
+            
+            $structured_data[] = array(
+                'type' => 'JSON-LD',
+                'schema_type' => ucfirst($final_schema_type),
+                'data' => $schema_details
+            );
+        }
+        
+        $result = array(
+            'structured_data_count' => $final_schema_type ? 1 : 0,
+            'structured_data' => $structured_data,
+            'has_json_ld' => !empty($final_schema_type),
             'has_microdata' => false,
-            'has_rdfa' => false
+            'has_rdfa' => false,
+            'has_organization' => ($final_schema_type === 'organization'),
+            'has_website' => ($final_schema_type === 'website'),
+            'has_breadcrumbs' => false,
+            'has_article' => ($final_schema_type === 'article')
         );
+        
+        return $result;
     }
     
     /**
      * Extract structured data from HTML (fallback)
      */
     private function extract_schema_from_html($url) {
+        
         $response = wp_remote_get($url, array('timeout' => 10));
         
         if (is_wp_error($response)) {
             return array(
                 'error' => 'Failed to fetch page: ' . $response->get_error_message(),
+                'structured_data_count' => 0,
+                'structured_data' => array(),
+                'has_json_ld' => false,
+                'has_microdata' => false,
+                'has_rdfa' => false,
+                'has_organization' => false,
+                'has_website' => false,
+                'has_breadcrumbs' => false,
+                'has_article' => false,
                 'data_source' => 'html_fallback'
             );
         }
         
         $html = wp_remote_retrieve_body($response);
+        $doc = new \DOMDocument();
+        @$doc->loadHTML($html);
+        $xpath = new \DOMXPath($doc);
+
+        $structured_data = array();
+
+        // Look for JSON-LD scripts
+        $json_ld_scripts = $xpath->query('//script[@type="application/ld+json"]');
+        foreach ($json_ld_scripts as $script) {
+            $json_content = $script->textContent;
+            $data = json_decode($json_content, true);
+            if ($data && json_last_error() === JSON_ERROR_NONE) {
+                $type = 'Unknown';
+                if (isset($data['@type'])) {
+                    $type = $data['@type'];
+                } elseif (isset($data[0]['@type'])) {
+                    $type = $data[0]['@type'];
+                }
+                
+                $structured_data[] = array(
+                    'type' => 'JSON-LD',
+                    'schema_type' => $type,
+                    'data' => $data
+                );
+            }
+        }
+
+        // Look for microdata
+        $microdata_items = $xpath->query('//*[@itemscope]');
+        foreach ($microdata_items as $item) {
+            $itemtype = $item->getAttribute('itemtype');
+            if ($itemtype) {
+                $structured_data[] = array(
+                    'type' => 'Microdata',
+                    'schema_type' => basename($itemtype),
+                    'itemtype' => $itemtype
+                );
+            }
+        }
+
+        // Look for RDFa
+        $rdfa_items = $xpath->query('//*[@typeof]');
+        foreach ($rdfa_items as $item) {
+            $typeof = $item->getAttribute('typeof');
+            if ($typeof) {
+                $structured_data[] = array(
+                    'type' => 'RDFa',
+                    'schema_type' => $typeof
+                );
+            }
+        }
+
+        // Check for specific schema types
+        $has_organization = $this->has_schema_type($structured_data, 'Organization');
+        $has_website = $this->has_schema_type($structured_data, 'WebSite');
+        $has_breadcrumbs = $this->has_schema_type($structured_data, 'BreadcrumbList');
+        $has_article = $this->has_schema_type($structured_data, 'Article');
         
-        // Count JSON-LD scripts
-        $json_ld_count = preg_match_all('/<script[^>]*type=["\']application\/ld\+json["\'][^>]*>/i', $html);
-        
-        // Count microdata
-        $microdata_count = preg_match_all('/itemscope|itemtype|itemprop/i', $html);
-        
-        // Count RDFa
-        $rdfa_count = preg_match_all('/property=|typeof=|vocab=/i', $html);
-        
-        return array(
-            'structured_data_count' => $json_ld_count + ($microdata_count > 0 ? 1 : 0) + ($rdfa_count > 0 ? 1 : 0),
-            'has_json_ld' => $json_ld_count > 0,
-            'has_microdata' => $microdata_count > 0,
-            'has_rdfa' => $rdfa_count > 0,
+        $result = array(
+            'structured_data_count' => count($structured_data),
+            'structured_data' => $structured_data,
+            'has_json_ld' => $json_ld_scripts->length > 0,
+            'has_microdata' => $microdata_items->length > 0,
+            'has_rdfa' => $rdfa_items->length > 0,
+            'has_organization' => $has_organization,
+            'has_website' => $has_website,
+            'has_breadcrumbs' => $has_breadcrumbs,
+            'has_article' => $has_article,
             'data_source' => 'html_fallback'
         );
+        
+        return $result;
+    }
+
+    /**
+     * Check if structured data contains a specific schema type
+     */
+    private function has_schema_type($structured_data, $type) {
+        foreach ($structured_data as $data) {
+            if (strpos($data['schema_type'], $type) !== false) {
+                return true;
+            }
+        }
+        return false;
     }
     
     /**
@@ -656,10 +828,20 @@ class SEO_Data_Extractor {
      * Extract OpenGraph data with plugin integration
      */
     public function extract_opengraph_data($url, $post_id = null) {
+        
         // First try plugin-specific extraction
         if ($this->primary_seo_plugin && $post_id) {
             $plugin_data = $this->extract_opengraph_from_plugin($post_id);
-            if ($plugin_data) {
+            
+            // Check if plugin data has meaningful OpenGraph content
+            $has_og_data = $plugin_data && 
+                          isset($plugin_data['opengraph_tags']) && 
+                          !empty($plugin_data['opengraph_tags']) &&
+                          (isset($plugin_data['opengraph_tags']['og:title']) || 
+                           isset($plugin_data['opengraph_tags']['og:description']) || 
+                           isset($plugin_data['opengraph_tags']['og:image']));
+            
+            if ($has_og_data) {
                 $plugin_data['data_source'] = 'plugin';
                 $plugin_data['plugin'] = $this->active_seo_plugins[$this->primary_seo_plugin]['name'];
                 return $plugin_data;
@@ -705,12 +887,19 @@ class SEO_Data_Extractor {
         $twitter_image = \RankMath\Helper::get_post_meta('twitter_image', $post_id);
         $twitter_card = \RankMath\Helper::get_post_meta('twitter_card_type', $post_id);
         
+        // Check for issues
+        $issues = array();
+        if (empty($og_title)) $issues[] = 'Missing og:title';
+        if (empty($og_description)) $issues[] = 'Missing og:description';
+        if (empty($og_image)) $issues[] = 'Missing og:image';
+        
         return array(
             'opengraph_tags' => array_filter(array(
                 'og:title' => $og_title,
                 'og:description' => $og_description,
                 'og:image' => $og_image,
-                'og:type' => 'article'
+                'og:type' => 'article',
+                'og:url' => get_permalink($post_id)
             )),
             'twitter_tags' => array_filter(array(
                 'twitter:title' => $twitter_title,
@@ -718,8 +907,9 @@ class SEO_Data_Extractor {
                 'twitter:image' => $twitter_image,
                 'twitter:card' => $twitter_card ?: 'summary'
             )),
-            'opengraph_complete' => !empty($og_title) && !empty($og_description) && !empty($og_image),
-            'has_twitter_cards' => !empty($twitter_title) || !empty($twitter_description)
+            'issues' => $issues,
+            'opengraph_complete' => count($issues) === 0,
+            'has_twitter_cards' => !empty($twitter_title) || !empty($twitter_description) || !empty($twitter_image)
         );
     }
     
@@ -735,12 +925,19 @@ class SEO_Data_Extractor {
         $twitter_description = get_post_meta($post_id, '_yoast_wpseo_twitter-description', true);
         $twitter_image = get_post_meta($post_id, '_yoast_wpseo_twitter-image', true);
         
+        // Check for issues
+        $issues = array();
+        if (empty($og_title)) $issues[] = 'Missing og:title';
+        if (empty($og_description)) $issues[] = 'Missing og:description';
+        if (empty($og_image)) $issues[] = 'Missing og:image';
+        
         return array(
             'opengraph_tags' => array_filter(array(
                 'og:title' => $og_title,
                 'og:description' => $og_description,
                 'og:image' => $og_image,
-                'og:type' => 'article'
+                'og:type' => 'article',
+                'og:url' => get_permalink($post_id)
             )),
             'twitter_tags' => array_filter(array(
                 'twitter:title' => $twitter_title,
@@ -748,8 +945,9 @@ class SEO_Data_Extractor {
                 'twitter:image' => $twitter_image,
                 'twitter:card' => 'summary_large_image'
             )),
-            'opengraph_complete' => !empty($og_title) && !empty($og_description) && !empty($og_image),
-            'has_twitter_cards' => !empty($twitter_title) || !empty($twitter_description)
+            'issues' => $issues,
+            'opengraph_complete' => count($issues) === 0,
+            'has_twitter_cards' => !empty($twitter_title) || !empty($twitter_description) || !empty($twitter_image)
         );
     }
     
@@ -757,20 +955,38 @@ class SEO_Data_Extractor {
      * Extract OpenGraph data from SEOPress
      */
     private function extract_seopress_opengraph($post_id) {
+        
         $og_title = get_post_meta($post_id, '_seopress_social_fb_title', true);
         $og_description = get_post_meta($post_id, '_seopress_social_fb_desc', true);
         $og_image = get_post_meta($post_id, '_seopress_social_fb_img', true);
+        
         
         $twitter_title = get_post_meta($post_id, '_seopress_social_twitter_title', true);
         $twitter_description = get_post_meta($post_id, '_seopress_social_twitter_desc', true);
         $twitter_image = get_post_meta($post_id, '_seopress_social_twitter_img', true);
         
-        return array(
+        // Get all social meta keys for this post to see what SEOPress is actually storing
+        $all_meta = get_post_meta($post_id);
+        $social_meta = array();
+        foreach ($all_meta as $key => $value) {
+            if (strpos($key, 'social') !== false || strpos($key, 'fb') !== false || strpos($key, 'twitter') !== false) {
+                $social_meta[$key] = $value;
+            }
+        }
+        
+        // Check for issues
+        $issues = array();
+        if (empty($og_title)) $issues[] = 'Missing og:title';
+        if (empty($og_description)) $issues[] = 'Missing og:description';
+        if (empty($og_image)) $issues[] = 'Missing og:image';
+        
+        $result = array(
             'opengraph_tags' => array_filter(array(
                 'og:title' => $og_title,
                 'og:description' => $og_description,
                 'og:image' => $og_image,
-                'og:type' => 'article'
+                'og:type' => 'article',
+                'og:url' => get_permalink($post_id)
             )),
             'twitter_tags' => array_filter(array(
                 'twitter:title' => $twitter_title,
@@ -778,9 +994,12 @@ class SEO_Data_Extractor {
                 'twitter:image' => $twitter_image,
                 'twitter:card' => 'summary_large_image'
             )),
-            'opengraph_complete' => !empty($og_title) && !empty($og_description) && !empty($og_image),
-            'has_twitter_cards' => !empty($twitter_title) || !empty($twitter_description)
+            'issues' => $issues,
+            'opengraph_complete' => count($issues) === 0,
+            'has_twitter_cards' => !empty($twitter_title) || !empty($twitter_description) || !empty($twitter_image)
         );
+        
+        return $result;
     }
     
     /**
@@ -796,12 +1015,19 @@ class SEO_Data_Extractor {
             return null;
         }
         
+        // Check for issues
+        $issues = array();
+        if (empty($post->og_title)) $issues[] = 'Missing og:title';
+        if (empty($post->og_description)) $issues[] = 'Missing og:description';
+        if (empty($post->og_image)) $issues[] = 'Missing og:image';
+        
         return array(
             'opengraph_tags' => array_filter(array(
                 'og:title' => $post->og_title,
                 'og:description' => $post->og_description,
                 'og:image' => $post->og_image,
-                'og:type' => $post->og_article_section ? 'article' : 'website'
+                'og:type' => $post->og_article_section ? 'article' : 'website',
+                'og:url' => get_permalink($post_id)
             )),
             'twitter_tags' => array_filter(array(
                 'twitter:title' => $post->twitter_title,
@@ -809,8 +1035,9 @@ class SEO_Data_Extractor {
                 'twitter:image' => $post->twitter_image,
                 'twitter:card' => $post->twitter_card ?: 'summary'
             )),
-            'opengraph_complete' => !empty($post->og_title) && !empty($post->og_description) && !empty($post->og_image),
-            'has_twitter_cards' => !empty($post->twitter_title) || !empty($post->twitter_description)
+            'issues' => $issues,
+            'opengraph_complete' => count($issues) === 0,
+            'has_twitter_cards' => !empty($post->twitter_title) || !empty($post->twitter_description) || !empty($post->twitter_image)
         );
     }
     
@@ -818,11 +1045,19 @@ class SEO_Data_Extractor {
      * Extract OpenGraph data from HTML (fallback)
      */
     private function extract_opengraph_from_html($url) {
+        error_log("DEBUG HTML OpenGraph Extraction - URL: $url");
+        
         $response = wp_remote_get($url, array('timeout' => 10));
         
         if (is_wp_error($response)) {
+            error_log("DEBUG HTML OpenGraph Extraction - Error: " . $response->get_error_message());
             return array(
                 'error' => 'Failed to fetch page: ' . $response->get_error_message(),
+                'opengraph_tags' => array(),
+                'twitter_tags' => array(),
+                'issues' => array('Failed to fetch page'),
+                'opengraph_complete' => false,
+                'has_twitter_cards' => false,
                 'data_source' => 'html_fallback'
             );
         }
@@ -842,7 +1077,9 @@ class SEO_Data_Extractor {
         foreach ($og_metas as $meta) {
             $property = $meta->getAttribute('property');
             $content = $meta->getAttribute('content');
-            $og_tags[$property] = $content;
+            if ($content) {
+                $og_tags[$property] = $content;
+            }
         }
         
         // Extract Twitter Card tags
@@ -850,23 +1087,35 @@ class SEO_Data_Extractor {
         foreach ($twitter_metas as $meta) {
             $name = $meta->getAttribute('name');
             $content = $meta->getAttribute('content');
-            $twitter_tags[$name] = $content;
+            if ($content) {
+                $twitter_tags[$name] = $content;
+            }
         }
         
         $issues = array();
         
         // Check for required OpenGraph tags
-        if (!isset($og_tags['og:title'])) {
+        if (!isset($og_tags['og:title']) || empty($og_tags['og:title'])) {
             $issues[] = 'Missing og:title';
         }
-        if (!isset($og_tags['og:description'])) {
+        if (!isset($og_tags['og:description']) || empty($og_tags['og:description'])) {
             $issues[] = 'Missing og:description';
         }
-        if (!isset($og_tags['og:image'])) {
+        if (!isset($og_tags['og:image']) || empty($og_tags['og:image'])) {
             $issues[] = 'Missing og:image';
         }
+        if (!isset($og_tags['og:url']) || empty($og_tags['og:url'])) {
+            $issues[] = 'Missing og:url';
+        }
+        if (!isset($og_tags['og:type']) || empty($og_tags['og:type'])) {
+            $issues[] = 'Missing og:type';
+        }
         
-        return array(
+        error_log("DEBUG HTML OpenGraph Extraction - Found OG tags: " . var_export(array_keys($og_tags), true));
+        error_log("DEBUG HTML OpenGraph Extraction - Found Twitter tags: " . var_export(array_keys($twitter_tags), true));
+        error_log("DEBUG HTML OpenGraph Extraction - Issues: " . var_export($issues, true));
+        
+        $result = array(
             'opengraph_tags' => $og_tags,
             'twitter_tags' => $twitter_tags,
             'issues' => $issues,
@@ -874,5 +1123,8 @@ class SEO_Data_Extractor {
             'has_twitter_cards' => !empty($twitter_tags),
             'data_source' => 'html_fallback'
         );
+        
+        error_log("DEBUG HTML OpenGraph Extraction - Final result: " . var_export($result, true));
+        return $result;
     }
 } 

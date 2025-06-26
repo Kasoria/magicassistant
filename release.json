@@ -1,0 +1,21 @@
+{
+  "name": "MagicAssistant",
+  "slug": "magicassistant",
+  "author": "<a href='https://magicplugins.io'>Christian Wenterodt</a>",
+  "author_profile": "https://magicplugins.io",
+  "version": "1.0.0",
+  "requires": "6.5",
+  "tested": "6.7.1",
+  "requires_php": "7.4",
+  "banners": {
+    "high": "https://magicplugins.io/wp-content/uploads/banner-1544x500-1.jpg",
+    "low": "https://magicplugins.io/wp-content/uploads/banner-772x250-1.jpg"
+  },
+  "icons": [
+    "https://magicplugins.io/wp-content/uploads/icon-128x128-1.png",
+    "https://magicplugins.io/wp-content/uploads/icon-256x256-1.png"
+  ],
+  "sections": {
+    "changelog": "<h4>Release 0.1.0 - June 24, 2025</h4><ul><li>🎉 Official Release! - We have developed a new AI assistant for WordPress. It's a tool that helps you with managing your WordPress site, SEO, content creation and more.</li><li>🎉 Packed with awesome features! - Chat with your site through AI, get SEO insights, let AI directly apply changes to your site, get performance reports, let AI create a detailed report of your site's content, and more! Many SEO features are directly built into the assistant so you can stay right on your site and get all necessary insights to climb the ranks (goodbye, 3rd party SEO tools!). Though it does not replace dedicated SEO plugins (yet).</li></ul>"
+  }
+}

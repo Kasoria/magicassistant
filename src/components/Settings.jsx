@@ -4,6 +4,8 @@ import CustomSelect from './CustomSelect'
 import ConfirmationModal from './ConfirmationModal'
 import { useToast } from './Toast'
 import SharedConversations from './SharedConversations'
+import { countries } from 'countries-list'
+import ISO6391 from 'iso-639-1'
 
 const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onToggleDarkMode }) => {
   const [apiKey, setApiKey] = useState('')
@@ -34,14 +36,18 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         enable_delete_tools: settings.enable_delete_tools === true,
         debug_log_raw_responses: settings.debug_log_raw_responses === true,
         max_response_tokens: parseInt(settings.max_response_tokens) || 1500,
-        conversation_history_limit: parseInt(settings.conversation_history_limit) || 20
+        conversation_history_limit: parseInt(settings.conversation_history_limit) || 20,
+        manual_competitors: settings.manual_competitors || '',
+        show_tips: settings.show_tips === undefined ? true : settings.show_tips,
+        seo_target_location: settings.seo_target_location || '',
+        seo_target_language: settings.seo_target_language || 'en',
+        seo_target_keywords: settings.seo_target_keywords || ''
       })
       setHasUnsavedChanges(false)
     }
   }, [settings])
 
   const handleLocalChange = (key, value) => {
-    console.log('Local change:', key, value) // Debug log
     setLocalSettings(prev => ({
       ...prev,
       [key]: value
@@ -64,7 +70,10 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
 
   const handleApiKeySubmit = (provider) => {
     if (apiKey.trim()) {
-      const settingsKey = provider === 'openai' ? 'openai_api_key' : 'anthropic_api_key'
+      let settingsKey = ''
+      if (provider === 'openai') settingsKey = 'openai_api_key'
+      else if (provider === 'anthropic') settingsKey = 'anthropic_api_key'
+      else if (provider === 'dataforseo') settingsKey = 'dataforseo_api_key'
       onSaveSettings({ [settingsKey]: apiKey.trim() })
       setApiKey('')
     }
@@ -103,9 +112,9 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     setPendingApiKeyDelete(null)
   }
 
-  const handleSaveTab = () => {
+  const handleSaveTab = async () => {
     const tabSettings = getTabSettings()
-    onSaveSettings(tabSettings)
+    await onSaveSettings(tabSettings)
     setHasUnsavedChanges(false)
     showSuccess('Settings saved successfully!')
   }
@@ -210,7 +219,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     switch (activeTab) {
       case 'general':
         return {
-          complete_data_removal: localSettings.complete_data_removal
+          complete_data_removal: localSettings.complete_data_removal,
+          show_tips: localSettings.show_tips
         }
       case 'ai':
         return {
@@ -226,6 +236,13 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           debug_log_raw_responses: localSettings.debug_log_raw_responses,
           max_response_tokens: parseInt(localSettings.max_response_tokens),
           conversation_history_limit: parseInt(localSettings.conversation_history_limit)
+        }
+      case 'seo':
+        return {
+          seo_target_location: localSettings.seo_target_location,
+          seo_target_language: localSettings.seo_target_language,
+          seo_target_keywords: localSettings.seo_target_keywords,
+          manual_competitors: localSettings.manual_competitors
         }
       default:
         return {}
@@ -266,9 +283,25 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     { value: 25, label: '25 iterations (Advanced)' }
   ]
 
+  // Generate comprehensive language options from ISO 639-1
+  const languageOptions = ISO6391.getAllCodes().map(code => ({
+    value: code,
+    label: `${ISO6391.getName(code)} (${code})`
+  })).sort((a, b) => a.label.localeCompare(b.label))
+
+  // Generate comprehensive location options from countries-list
+  const locationOptions = [
+    { value: '', label: 'Global (No specific location)' },
+    ...Object.entries(countries).map(([code, country]) => ({
+      value: code,
+      label: `${country.name} (${code})`
+    })).sort((a, b) => a.label.localeCompare(b.label))
+  ]
+
   const tabs = [
     { id: 'general', label: 'General', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
     { id: 'ai', label: 'AI Configuration', icon: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z' },
+    { id: 'seo', label: 'SEO Configuration', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' },
     { id: 'sharing', label: 'Shared Conversations', icon: 'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z' }
   ]
 
@@ -285,6 +318,26 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
               <Button size="sm" onClick={onToggleDarkMode}>
                 {darkMode ? '☀️ Light' : '🌙 Dark'}
               </Button>
+            </div>
+
+            <div className="flex items-center justify-between p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
+              <div>
+                <h4 className="font-medium text-brand-dark dark:text-white">Show Tips</h4>
+                <p className="text-sm text-gray-600 dark:text-gray-300">Display helpful tips and explanations throughout the interface</p>
+              </div>
+              <label className="inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={localSettings.show_tips === true}
+                  onChange={(e) => handleLocalChange('show_tips', e.target.checked)}
+                  disabled={isSavingSettings}
+                  className="sr-only peer"
+                />
+                <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-accent/20 dark:peer-focus:ring-brand-accent/30 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-brand-accent dark:peer-checked:bg-brand-accent peer-disabled:opacity-50 peer-disabled:cursor-not-allowed"></div>
+                <span className="ms-3 text-sm font-medium text-gray-900 dark:text-gray-300">
+                  Show tips
+                </span>
+              </label>
             </div>
             
             <div className="p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
@@ -480,17 +533,58 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                   </div>
                 </div>
               )}
+
+              {/* DataForSEO API Key */}
+              <div className="space-y-4 border-t border-gray-200 dark:border-gray-600 pt-4">
+                <h5 className="font-medium text-brand-dark dark:text-white">DataForSEO API Key (Optional)</h5>
+                <p className="text-sm text-gray-600 dark:text-gray-300">
+                  Enter your own DataForSEO key to allow requests to continue after your MagicAssistant license quota is reached.
+                </p>
+                <div className="flex gap-2">
+                  <TextInput
+                    id="dataforseo-api-key"
+                    type="password"
+                    placeholder="Enter DataForSEO API key"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    className="flex-1"
+                    disabled={isSavingSettings}
+                  />
+                  <Button
+                    onClick={() => handleApiKeySubmit('dataforseo')}
+                    disabled={!apiKey.trim() || isSavingSettings}
+                    size="sm"
+                  >
+                    {isSavingSettings ? 'Saving...' : 'Save'}
+                  </Button>
+                </div>
+                {settings?.dataforseo_api_key && (
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-green-600 dark:text-green-400">✓ API key configured</p>
+                    <Button
+                      size="xs"
+                      color="failure"
+                      onClick={() => handleDeleteApiKeyClick('dataforseo')}
+                      disabled={isSavingSettings}
+                    >
+                      Delete Key
+                    </Button>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Agent Mode Section */}
             <div className="p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
               <h4 className="font-medium text-brand-dark dark:text-white mb-3">Agent Mode Configuration</h4>
-              <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                <p className="text-sm text-blue-800 dark:text-blue-200">
-                  <strong>🤖 Agent Mode:</strong> When enabled, the AI can perform multiple tool calls in sequence to complete complex multi-step tasks. 
-                  This allows handling requests like "create 3 blog posts and add them to a category" in a single conversation.
-                </p>
-              </div>
+              {localSettings.show_tips === true && (
+                <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                  <p className="text-sm text-blue-800 dark:text-blue-200">
+                    <strong>🤖 Agent Mode:</strong> When enabled, the AI can perform multiple tool calls in sequence to complete complex multi-step tasks. 
+                    This allows handling requests like "create 3 blog posts and add them to a category" in a single conversation.
+                  </p>
+                </div>
+              )}
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <div>
@@ -524,31 +618,33 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                 </div>
               </div>
               
-              <div className="border border-gray-200 dark:border-gray-600 rounded-lg p-4">
-                <h5 className="font-medium text-brand-dark dark:text-white mb-3">How Agent Mode Works</h5>
-                <div className="space-y-3 text-sm text-gray-600 dark:text-gray-300">
-                  <div className="flex items-start space-x-2">
-                    <span className="text-blue-500 font-bold">1.</span>
-                    <span>AI analyzes your request and determines if multiple steps are needed</span>
-                  </div>
-                  <div className="flex items-start space-x-2">
-                    <span className="text-blue-500 font-bold">2.</span>
-                    <span>Executes first set of tools (e.g., create posts)</span>
-                  </div>
-                  <div className="flex items-start space-x-2">
-                    <span className="text-blue-500 font-bold">3.</span>
-                    <span>Reviews results and determines if more actions are needed</span>
-                  </div>
-                  <div className="flex items-start space-x-2">
-                    <span className="text-blue-500 font-bold">4.</span>
-                    <span>Continues with additional tools until request is complete</span>
-                  </div>
-                  <div className="flex items-start space-x-2">
-                    <span className="text-blue-500 font-bold">5.</span>
-                    <span>Provides comprehensive summary of all actions taken</span>
+              {localSettings.show_tips === true && (
+                <div className="border border-gray-200 dark:border-gray-600 rounded-lg p-4">
+                  <h5 className="font-medium text-brand-dark dark:text-white mb-3">How Agent Mode Works</h5>
+                  <div className="space-y-3 text-sm text-gray-600 dark:text-gray-300">
+                    <div className="flex items-start space-x-2">
+                      <span className="text-blue-500 font-bold">1.</span>
+                      <span>AI analyzes your request and determines if multiple steps are needed</span>
+                    </div>
+                    <div className="flex items-start space-x-2">
+                      <span className="text-blue-500 font-bold">2.</span>
+                      <span>Executes first set of tools (e.g., create posts)</span>
+                    </div>
+                    <div className="flex items-start space-x-2">
+                      <span className="text-blue-500 font-bold">3.</span>
+                      <span>Reviews results and determines if more actions are needed</span>
+                    </div>
+                    <div className="flex items-start space-x-2">
+                      <span className="text-blue-500 font-bold">4.</span>
+                      <span>Continues with additional tools until request is complete</span>
+                    </div>
+                    <div className="flex items-start space-x-2">
+                      <span className="text-blue-500 font-bold">5.</span>
+                      <span>Provides comprehensive summary of all actions taken</span>
+                    </div>
                   </div>
                 </div>
-              </div> 
+              )} 
             </div>
 
             {/* MCP Settings Section */}
@@ -636,9 +732,9 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                   <TextInput
                     id="max-response-tokens"
                     type="number"
-                    min="256"
-                    max="4096"
-                    step="64"
+                    min="100"
+                    max="10000"
+                    step="10"
                     value={localSettings.max_response_tokens}
                     onChange={(e) => handleLocalChange('max_response_tokens', e.target.value)}
                     disabled={isSavingSettings}
@@ -802,6 +898,118 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                   className="ml-auto"
                 >
                   {isSavingSettings ? 'Saving...' : 'Save AI Settings'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )
+
+      case 'seo':
+        return (
+          <div className="space-y-6">
+            {/* Target Location and Language */}
+            <div className="p-4 border border-green-200 dark:border-green-600 rounded-lg">
+              <h4 className="font-medium text-brand-dark dark:text-white mb-3">Target Audience</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="seo-target-location" value="Target Location" className="mb-2" />
+                  <CustomSelect
+                    id="seo-target-location"
+                    value={locationOptions.find(option => option.value === localSettings.seo_target_location)}
+                    onChange={(selectedOption) => handleLocalChange('seo_target_location', selectedOption.value)}
+                    isDisabled={isSavingSettings}
+                    options={locationOptions}
+                    darkMode={darkMode}
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Target geographic location for SEO analysis and keyword research
+                  </p>
+                </div>
+                <div>
+                  <Label htmlFor="seo-target-language" value="Target Language" className="mb-2" />
+                  <CustomSelect
+                    id="seo-target-language"
+                    value={languageOptions.find(option => option.value === (localSettings.seo_target_language || 'en'))}
+                    onChange={(selectedOption) => handleLocalChange('seo_target_language', selectedOption.value)}
+                    isDisabled={isSavingSettings}
+                    options={languageOptions}
+                    darkMode={darkMode}
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Primary language for SEO content analysis and recommendations
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Target Keywords */}
+            <div className="p-4 border border-blue-200 dark:border-blue-600 rounded-lg">
+              <h4 className="font-medium text-brand-dark dark:text-white mb-3">Target Keywords</h4>
+              <div>
+                <Label htmlFor="seo-target-keywords" value="Primary Keywords" className="mb-2" />
+                <textarea
+                  id="seo-target-keywords"
+                  rows="6"
+                  placeholder="Enter your primary target keywords, one per line (e.g., web development, SEO services, digital marketing, etc.)"
+                  value={localSettings.seo_target_keywords}
+                  onChange={(e) => handleLocalChange('seo_target_keywords', e.target.value)}
+                  disabled={isSavingSettings}
+                  className="block w-full p-2.5 text-sm text-gray-900 bg-gray-50 rounded-lg border border-gray-300 focus:ring-brand-accent focus:border-brand-accent dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-brand-accent dark:focus:border-brand-accent"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  These keywords will be used for SEO analysis, competitor research, and content optimization suggestions. Enter one keyword or key phrase per line.
+                </p>
+              </div>
+              {localSettings.show_tips === true && (
+                <div className="mt-3 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg">
+                  <p className="text-sm text-blue-800 dark:text-blue-200">
+                    <strong>💡 Tip:</strong> Focus on 5-10 primary keywords that best represent your business or content. Include both short keywords ("SEO") and long-tail phrases ("local SEO services for small businesses").
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Competitor URLs */}
+            <div className="p-4 border border-purple-200 dark:border-purple-600 rounded-lg">
+              <h4 className="font-medium text-brand-dark dark:text-white mb-3">Competitor Analysis</h4>
+              <div>
+                <Label htmlFor="manual-competitors" value="Competitor URLs" className="mb-2" />
+                <textarea
+                  id="manual-competitors"
+                  rows="5"
+                  placeholder="Enter competitor domains, one per line (e.g., competitor1.com, competitor2.com, etc.)"
+                  value={localSettings.manual_competitors}
+                  onChange={(e) => handleLocalChange('manual_competitors', e.target.value)}
+                  disabled={isSavingSettings}
+                  className="block w-full p-2.5 text-sm text-gray-900 bg-gray-50 rounded-lg border border-gray-300 focus:ring-brand-accent focus:border-brand-accent dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-brand-accent dark:focus:border-brand-accent"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  When automatic competitor discovery fails, these manually specified competitors will be used for SEO analysis and benchmarking. Enter one domain per line without http:// or www.
+                </p>
+              </div>
+              {localSettings.show_tips === true && (
+                <div className="mt-3 bg-purple-50 dark:bg-purple-900/20 p-3 rounded-lg">
+                  <p className="text-sm text-purple-800 dark:text-purple-200">
+                    <strong>💡 Tip:</strong> Research your top 3-5 industry competitors who rank well for your target keywords. This ensures SEO analysis always has competitor data to work with for benchmarking and opportunity identification.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Save Button */}
+            <div className="pt-4 border-t border-gray-200 dark:border-gray-600">
+              <div className="flex items-center justify-between">
+                {hasUnsavedChanges && (
+                  <p className="text-sm text-amber-600 dark:text-amber-400">
+                    ⚠️ You have unsaved changes
+                  </p>
+                )}
+                <Button
+                  onClick={handleSaveTab}
+                  disabled={isSavingSettings || !hasUnsavedChanges}
+                  className="ml-auto"
+                >
+                  {isSavingSettings ? 'Saving...' : 'Save SEO Settings'}
                 </Button>
               </div>
             </div>

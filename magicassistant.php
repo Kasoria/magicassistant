@@ -42,12 +42,25 @@ class MagicAssistant {
   private $db;
   private $public_share;
   private $dataforseo;
+  private $pagespeed_service;
+  private $licensing_client;
   
   public function __construct() {
     add_action('plugins_loaded', array($this, 'init'));
   }
   
   public function init() {
+    // Include SureCart Licensing (third-party, not using our autoloader)
+    if (!class_exists('SureCart\Licensing\Client')) {
+      // Include the autoloader if SureCart uses Composer
+      if (file_exists(MAGIC_ASSISTANT_PLUGIN_PATH . 'licensing/vendor/autoload.php')) {
+        require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'licensing/vendor/autoload.php';
+      } else {
+        // Fallback to direct inclusion if autoloader is not present
+        require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'licensing/src/Client.php';
+      }
+    }
+    
     // Initialize database
     $this->db = new MagicAssistant\DB();
     
@@ -74,6 +87,9 @@ class MagicAssistant {
     $this->dataforseo->set_mcp_server($this->mcp_server);
     $this->dataforseo->set_ai_provider($this->ai_provider);
     
+    // Initialize PageSpeed service
+    $this->pagespeed_service = new MagicAssistant\PageSpeed_Service($this->ai_provider);
+    
     // Initialize admin functionality
     if (is_admin()) {
       $this->admin = new MagicAssistant\Admin();
@@ -85,6 +101,24 @@ class MagicAssistant {
   
   public function setup() {
     load_plugin_textdomain('magic-assistant', false, dirname(plugin_basename(__FILE__)) . '/languages');
+    
+    // Initialize licensing after textdomains are loaded
+    $this->init_licensing();
+  }
+  
+  /**
+   * Initialize SureCart Licensing
+   */
+  private function init_licensing() {
+    // Initialize with your public token from SureCart
+    $this->licensing_client = new \SureCart\Licensing\Client('MagicAssistant', 'pt_cBheuHynZ9Ft9mhGLuoWM1LA', MAGIC_ASSISTANT_PLUGIN_FILE);
+
+    // Set text domain
+    $this->licensing_client->set_textdomain('magic-assistant');
+
+    // Store the client globally for access by other classes
+    global $mat_licensing_client;
+    $mat_licensing_client = $this->licensing_client;
   }
   
   /**
@@ -106,6 +140,20 @@ class MagicAssistant {
    */
   public function get_dataforseo() {
     return $this->dataforseo;
+  }
+  
+  /**
+   * Get the PageSpeed service instance
+   */
+  public function get_pagespeed_service() {
+    return $this->pagespeed_service;
+  }
+  
+  /**
+   * Get the licensing client instance
+   */
+  public function get_licensing_client() {
+    return $this->licensing_client;
   }
   
   /**
@@ -149,4 +197,18 @@ function MATDB() {
  */
 function MATDFS() {
   return $GLOBALS['magic_assistant']->get_dataforseo();
+}
+
+/**
+ * Global function to access MagicAssistant PageSpeed service
+ */
+function MATPS() {
+  return $GLOBALS['magic_assistant']->get_pagespeed_service();
+}
+
+/**
+ * Global function to access MagicAssistant licensing client
+ */
+function MATLIC() {
+  return $GLOBALS['magic_assistant']->get_licensing_client();
 }

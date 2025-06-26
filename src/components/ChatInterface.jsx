@@ -146,11 +146,6 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
   const sendMessage = async () => {
     if (!inputMessage.trim()) return
     
-    if (!settings?.has_api_key) {
-      showError('Please configure your AI API key in Settings first.')
-      return
-    }
-
     const userMessage = {
       role: 'user',
       content: inputMessage,
@@ -836,7 +831,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
                 value={agentModeOptions.find(option => option.value === forceAgentMode.toString())}
                 onChange={(option) => setForceAgentMode(option.value === 'true')}
                 options={agentModeOptions}
-                isDisabled={!settings?.has_api_key}
+                isDisabled={false}
                 darkMode={isDarkMode}
                 size="compact"
               />
@@ -896,7 +891,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
               value={agentModeOptions.find(option => option.value === forceAgentMode.toString())}
               onChange={(option) => setForceAgentMode(option.value === 'true')}
               options={agentModeOptions}
-              isDisabled={!settings?.has_api_key}
+              isDisabled={false}
               darkMode={isDarkMode}
               size="compact"
             />
@@ -1121,13 +1116,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
       <div className={`border-t border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 ${
         isDrawerMode ? 'p-3' : 'p-4'
       }`}>
-        {!settings.has_api_key ? (
-          <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
-            <p className="text-yellow-800 dark:text-yellow-200 text-sm">
-              Please configure your AI API key in Settings to start chatting with your assistant.
-            </p>
-          </div>
-        ) : !settings.mcp_enabled ? (
+        {!settings?.mcp_enabled ? (
           <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
             <p className="text-blue-800 dark:text-blue-200 text-sm">
               Enable MCP in Settings to allow the AI to perform WordPress actions for you.

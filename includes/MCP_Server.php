@@ -7049,6 +7049,17 @@ class MCP_Server {
                 ),
                 'callback' => array($dataforseo, 'handle_technical_audit')
             ));
+            
+            // Register manual competitors tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_get_manual_competitors',
+                'description' => 'Get manually configured competitors from settings as a fallback when automated competitor analysis fails or returns insufficient data',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => new \stdClass()
+                ),
+                'callback' => array($dataforseo, 'get_manual_competitors')
+            ));
         }
     }
     
@@ -7056,52 +7067,50 @@ class MCP_Server {
      * Register PageSpeed Insights tools
      */
     private function register_pagespeed_tools() {
-        // Get the DataForSEO instance from the main plugin (which handles PageSpeed too)
-        if (function_exists('MATDFS') && MATDFS()) {
-            $dataforseo = MATDFS();
-            
-            // Check if service is available
-            if (!$dataforseo->is_available()) {
-                return;
-            }
-            
-            // Register PageSpeed Insights analysis tool
-            $this->register_tool(array(
-                'name' => 'pagespeed_analyze',
-                'description' => 'Analyze website performance using Google PageSpeed Insights. Provides detailed performance metrics including Core Web Vitals, accessibility, best practices, and SEO scores.',
-                'inputSchema' => array(
-                    'type' => 'object',
-                    'properties' => array(
-                        'url' => array(
-                            'type' => 'string',
-                            'description' => 'The URL to analyze (must include https:// or http://)'
-                        ),
-                        'strategy' => array(
-                            'type' => 'string',
-                            'description' => 'Analysis strategy: mobile or desktop',
-                            'enum' => array('mobile', 'desktop'),
-                            'default' => 'mobile'
-                        ),
-                        'category' => array(
-                            'type' => 'array',
-                            'items' => array(
-                                'type' => 'string',
-                                'enum' => array('performance', 'accessibility', 'best-practices', 'seo')
-                            ),
-                            'description' => 'Categories to analyze. If not specified, all categories will be analyzed.',
-                            'default' => array('performance', 'accessibility', 'best-practices', 'seo')
-                        ),
-                        'locale' => array(
-                            'type' => 'string',
-                            'description' => 'Locale for the analysis (e.g., en, de, fr, es)',
-                            'default' => 'en'
-                        )
-                    ),
-                    'required' => array('url')
-                ),
-                'callback' => array($dataforseo, 'handle_pagespeed_analysis')
-            ));
+        // Get the PageSpeed service from the main plugin instance
+        $pagespeed_service = magic_assistant()->get_pagespeed_service();
+        
+        // Check if service is available
+        if (!$pagespeed_service || !$pagespeed_service->is_available()) {
+            return;
         }
+        
+        // Register PageSpeed Insights analysis tool
+        $this->register_tool(array(
+            'name' => 'pagespeed_analyze',
+            'description' => 'Analyze website performance using Google PageSpeed Insights through MagicProxy. Provides detailed performance metrics including Core Web Vitals, accessibility, best practices, and SEO scores. Data is saved ONLY to pagespeed_data (never to seo_data) with base64 image filtering.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'url' => array(
+                        'type' => 'string',
+                        'description' => 'The URL to analyze (must include https:// or http://)'
+                    ),
+                    'strategy' => array(
+                        'type' => 'string',
+                        'description' => 'Analysis strategy: mobile or desktop',
+                        'enum' => array('mobile', 'desktop'),
+                        'default' => 'mobile'
+                    ),
+                    'category' => array(
+                        'type' => 'array',
+                        'items' => array(
+                            'type' => 'string',
+                            'enum' => array('performance', 'accessibility', 'best-practices', 'seo')
+                        ),
+                        'description' => 'Categories to analyze. If not specified, all categories will be analyzed.',
+                        'default' => array('performance', 'accessibility', 'best-practices', 'seo')
+                    ),
+                    'locale' => array(
+                        'type' => 'string',
+                        'description' => 'Locale for the analysis (e.g., en, de, fr, es)',
+                        'default' => 'en'
+                    )
+                ),
+                'required' => array('url')
+            ),
+            'callback' => array($pagespeed_service, 'handle_pagespeed_analysis')
+        ));
     }
 
     /**
@@ -7306,6 +7315,17 @@ class MCP_Server {
             ),
             'callback' => array($this, 'seo_comprehensive_audit')
         ));
+
+        // Get SEO settings for targeted analysis
+        $this->register_tool(array(
+            'name' => 'get_seo_settings',
+            'description' => 'Get the user-configured SEO settings including target keywords, location, language, and competitors. This provides context for SEO analysis and keyword research.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => (object)array()
+            ),
+            'callback' => array($this, 'get_seo_settings')
+        ));
     }
 
     /**
@@ -7338,6 +7358,8 @@ class MCP_Server {
                 if ($plugin_data && !isset($plugin_data['error'])) {
                     $plugin_data['post_title'] = $post->post_title;
                     $plugin_data['url'] = $page_url;
+                    $plugin_data['post_id'] = $post->ID;
+                    $plugin_data['post_type'] = $post->post_type;
                     $results[] = $plugin_data;
                 } else {
                     // Fallback to HTML parsing
@@ -7354,6 +7376,8 @@ class MCP_Server {
             if ($plugin_data && !isset($plugin_data['error'])) {
                 if ($post) {
                     $plugin_data['post_title'] = $post->post_title;
+                    $plugin_data['post_id'] = $post->ID;
+                    $plugin_data['post_type'] = $post->post_type;
                 }
                 $plugin_data['url'] = $url;
                 $results[] = $plugin_data;
@@ -7419,7 +7443,8 @@ class MCP_Server {
             'meta_robots' => $meta_robots ? $meta_robots->getAttribute('content') : null,
             'meta_viewport' => $meta_viewport ? $meta_viewport->getAttribute('content') : null,
             'post_id' => $post ? $post->ID : null,
-            'post_title' => $post ? $post->post_title : null
+            'post_title' => $post ? $post->post_title : null,
+            'post_type' => $post ? $post->post_type : null
         );
 
         // Check for issues
@@ -7521,6 +7546,8 @@ class MCP_Server {
                 if ($plugin_data && !isset($plugin_data['error'])) {
                     $plugin_data['post_title'] = $post->post_title;
                     $plugin_data['url'] = $page_url;
+                    $plugin_data['post_id'] = $post->ID;
+                    $plugin_data['post_type'] = $post->post_type;
                     $results[] = $plugin_data;
                 } else {
                     // Fallback to HTML parsing
@@ -7536,6 +7563,8 @@ class MCP_Server {
             if ($plugin_data && !isset($plugin_data['error'])) {
                 if ($post) {
                     $plugin_data['post_title'] = $post->post_title;
+                    $plugin_data['post_id'] = $post->ID;
+                    $plugin_data['post_type'] = $post->post_type;
                 }
                 $plugin_data['url'] = $url;
                 $results[] = $plugin_data;
@@ -7614,6 +7643,7 @@ class MCP_Server {
             'url' => $url,
             'post_id' => $post ? $post->ID : null,
             'post_title' => $post ? $post->post_title : null,
+            'post_type' => $post ? $post->post_type : null,
             'structured_data_count' => count($structured_data),
             'structured_data' => $structured_data,
             'has_organization' => $this->has_schema_type($structured_data, 'Organization'),
@@ -7696,6 +7726,7 @@ class MCP_Server {
                     $plugin_data['post_title'] = $post->post_title;
                     $plugin_data['url'] = $page_url;
                     $plugin_data['post_id'] = $post->ID;
+                    $plugin_data['post_type'] = $post->post_type;
                     $results[] = $plugin_data;
                 } else {
                     // Fallback to HTML parsing
@@ -7714,6 +7745,7 @@ class MCP_Server {
                 if ($post) {
                     $plugin_data['post_title'] = $post->post_title;
                     $plugin_data['post_id'] = $post->ID;
+                    $plugin_data['post_type'] = $post->post_type;
                 }
                 $plugin_data['url'] = $url;
                 $results[] = $plugin_data;
@@ -7795,6 +7827,7 @@ class MCP_Server {
             'url' => $url,
             'post_id' => $post ? $post->ID : null,
             'post_title' => $post ? $post->post_title : null,
+            'post_type' => $post ? $post->post_type : null,
             'opengraph_tags' => $og_tags,
             'twitter_tags' => $twitter_tags,
             'issues' => $issues,
@@ -8000,6 +8033,7 @@ class MCP_Server {
                 'canonical' => $canonical,
                 'post_id' => $post->ID,
                 'post_title' => $post->post_title,
+                'post_type' => $post->post_type,
                 'issues' => array()
             );
 
@@ -8101,11 +8135,11 @@ class MCP_Server {
             ),
             'opengraph' => array(
                 'total_pages' => $opengraph_results['analyzed_pages'],
-                'complete_opengraph' => $opengraph_results['summary']['complete_pages'] ?? 0,
-                'has_twitter_cards' => $opengraph_results['summary']['pages_with_twitter'] ?? 0,
-                'opengraph_completion_rate' => $opengraph_results['summary']['completion_rate'] ?? 0,
+                'complete_opengraph' => $opengraph_results['summary']['complete_opengraph'] ?? 0,
+                'has_twitter_cards' => $opengraph_results['summary']['has_twitter_cards'] ?? 0,
+                'opengraph_completion_rate' => $opengraph_results['summary']['opengraph_completion_rate'] ?? 0,
                 'twitter_adoption_rate' => $opengraph_results['summary']['twitter_adoption_rate'] ?? 0,
-                'most_common_issues' => $opengraph_results['summary']['common_issues'] ?? array(),
+                'most_common_issues' => $opengraph_results['summary']['most_common_issues'] ?? array(),
                 'pages' => array_slice($opengraph_results['pages'], 0, 5)
             ),
             'sitemap' => $sitemap_results,
@@ -8213,46 +8247,345 @@ class MCP_Server {
      * Calculate OpenGraph score
      */
     private function calculate_opengraph_score($results) {
-        return round($results['summary']['completion_rate'] ?? 0, 0);
+        return round($results['summary']['opengraph_completion_rate'] ?? 0, 0);
     }
     
     /**
-     * Generate comprehensive recommendations
+     * Generate comprehensive recommendations with affected pages
      */
     private function generate_comprehensive_recommendations($meta_results, $structured_results, $opengraph_results, $sitemap_results, $canonical_results) {
         $recommendations = array();
         
-        // Meta tag recommendations
-        $meta_summary = $meta_results['summary'];
-        if ($meta_summary['missing_descriptions'] > 0) {
-            $recommendations[] = "Add missing meta descriptions to {$meta_summary['missing_descriptions']} pages";
+        // Meta tag recommendations - missing descriptions
+        $pages_missing_descriptions = array_filter($meta_results['pages'], function($page) {
+            return isset($page['error']) ? false : empty($page['meta_description']['content']);
+        });
+        if (count($pages_missing_descriptions) > 0) {
+            $affected_pages = array_map(function($page) {
+                return array(
+                    'title' => $page['post_title'] ?? 'Unknown',
+                    'url' => $page['url'] ?? '',
+                    'post_id' => $page['post_id'] ?? null,
+                    'post_type' => $page['post_type'] ?? 'post'
+                );
+            }, array_slice($pages_missing_descriptions, 0, 10)); // Limit to 10 for display
+            
+            $recommendations[] = array(
+                'type' => 'meta_description',
+                'title' => 'Add missing meta descriptions',
+                'description' => 'Add missing meta descriptions to ' . count($pages_missing_descriptions) . ' pages',
+                'severity' => 'high',
+                'affected_count' => count($pages_missing_descriptions),
+                'affected_pages' => $affected_pages,
+                'showing_count' => count($affected_pages)
+            );
         }
-        if ($meta_summary['missing_titles'] > 0) {
-            $recommendations[] = "Add missing title tags to {$meta_summary['missing_titles']} pages";
+        
+        // Meta tag recommendations - missing titles
+        $pages_missing_titles = array_filter($meta_results['pages'], function($page) {
+            return isset($page['error']) ? false : empty($page['title']['content']);
+        });
+        if (count($pages_missing_titles) > 0) {
+            $affected_pages = array_map(function($page) {
+                return array(
+                    'title' => $page['post_title'] ?? 'Unknown',
+                    'url' => $page['url'] ?? '',
+                    'post_id' => $page['post_id'] ?? null,
+                    'post_type' => $page['post_type'] ?? 'post'
+                );
+            }, array_slice($pages_missing_titles, 0, 10));
+            
+            $recommendations[] = array(
+                'type' => 'meta_title',
+                'title' => 'Add missing title tags',
+                'description' => 'Add missing title tags to ' . count($pages_missing_titles) . ' pages',
+                'severity' => 'high',
+                'affected_count' => count($pages_missing_titles),
+                'affected_pages' => $affected_pages,
+                'showing_count' => count($affected_pages)
+            );
         }
         
         // Structured data recommendations
-        $pages_without_schema = $structured_results['analyzed_pages'] - count(array_filter($structured_results['pages'], function($p) {
-            return isset($p['structured_data_count']) && $p['structured_data_count'] > 0;
-        }));
-        if ($pages_without_schema > 0) {
-            $recommendations[] = "Implement schema markup on {$pages_without_schema} additional pages";
+        $pages_without_schema = array_filter($structured_results['pages'], function($p) {
+            return isset($p['error']) ? false : (!isset($p['structured_data_count']) || $p['structured_data_count'] == 0);
+        });
+        if (count($pages_without_schema) > 0) {
+            $affected_pages = array_map(function($page) {
+                return array(
+                    'title' => $page['post_title'] ?? 'Unknown',
+                    'url' => $page['url'] ?? '',
+                    'post_id' => $page['post_id'] ?? null,
+                    'post_type' => $page['post_type'] ?? 'post'
+                );
+            }, array_slice($pages_without_schema, 0, 10));
+            
+            $recommendations[] = array(
+                'type' => 'structured_data',
+                'title' => 'Implement schema markup',
+                'description' => 'Implement schema markup on ' . count($pages_without_schema) . ' additional pages',
+                'severity' => 'medium',
+                'affected_count' => count($pages_without_schema),
+                'affected_pages' => $affected_pages,
+                'showing_count' => count($affected_pages)
+            );
         }
         
-        // OpenGraph recommendations
-        $opengraph_summary = $opengraph_results['summary'];
-        if (isset($opengraph_summary['common_issues']['Missing og:image']) && $opengraph_summary['common_issues']['Missing og:image'] > 0) {
-            $recommendations[] = "Add OpenGraph images to {$opengraph_summary['common_issues']['Missing og:image']} pages missing og:image";
+        // OpenGraph recommendations - missing images
+        $pages_missing_og_image = array_filter($opengraph_results['pages'], function($page) {
+            return isset($page['error']) ? false : in_array('Missing og:image', $page['issues'] ?? array());
+        });
+        if (count($pages_missing_og_image) > 0) {
+            $affected_pages = array_map(function($page) {
+                return array(
+                    'title' => $page['post_title'] ?? 'Unknown',
+                    'url' => $page['url'] ?? '',
+                    'post_id' => $page['post_id'] ?? null,
+                    'post_type' => $page['post_type'] ?? 'post'
+                );
+            }, array_slice($pages_missing_og_image, 0, 10));
+            
+            $recommendations[] = array(
+                'type' => 'opengraph_image',
+                'title' => 'Add OpenGraph images',
+                'description' => 'Add OpenGraph images to ' . count($pages_missing_og_image) . ' pages missing og:image',
+                'severity' => 'medium',
+                'affected_count' => count($pages_missing_og_image),
+                'affected_pages' => $affected_pages,
+                'showing_count' => count($affected_pages)
+            );
         }
         
         // Canonical URL recommendations
-        if (isset($canonical_results['summary']['canonical_issues']['missing_canonical'])) {
-            $missing = $canonical_results['summary']['canonical_issues']['missing_canonical'];
-            $recommendations[] = "Fix {$missing} pages with missing canonical URLs";
+        $pages_missing_canonical = array_filter($canonical_results['pages'] ?? array(), function($page) {
+            return isset($page['error']) ? false : in_array('Missing canonical URL', $page['issues'] ?? array());
+        });
+        if (count($pages_missing_canonical) > 0) {
+            $affected_pages = array_map(function($page) {
+                return array(
+                    'title' => $page['post_title'] ?? 'Unknown',
+                    'url' => $page['url'] ?? '',
+                    'post_id' => $page['post_id'] ?? null,
+                    'post_type' => $page['post_type'] ?? 'post'
+                );
+            }, array_slice($pages_missing_canonical, 0, 10));
+            
+            $recommendations[] = array(
+                'type' => 'canonical_url',
+                'title' => 'Fix missing canonical URLs',
+                'description' => 'Fix ' . count($pages_missing_canonical) . ' pages with missing canonical URLs',
+                'severity' => 'medium',
+                'affected_count' => count($pages_missing_canonical),
+                'affected_pages' => $affected_pages,
+                'showing_count' => count($affected_pages)
+            );
         }
         
-        // Limit recommendations
+        // Title length issues
+        $pages_title_issues = array_filter($meta_results['pages'], function($page) {
+            return isset($page['error']) ? false : !empty($page['title']['issues']);
+        });
+        if (count($pages_title_issues) > 0) {
+            $affected_pages = array_map(function($page) {
+                return array(
+                    'title' => $page['post_title'] ?? 'Unknown',
+                    'url' => $page['url'] ?? '',
+                    'post_id' => $page['post_id'] ?? null,
+                    'post_type' => $page['post_type'] ?? 'post',
+                    'issues' => $page['title']['issues'] ?? array()
+                );
+            }, array_slice($pages_title_issues, 0, 10));
+            
+            $recommendations[] = array(
+                'type' => 'title_length',
+                'title' => 'Fix title length issues',
+                'description' => 'Fix title length issues on ' . count($pages_title_issues) . ' pages',
+                'severity' => 'low',
+                'affected_count' => count($pages_title_issues),
+                'affected_pages' => $affected_pages,
+                'showing_count' => count($affected_pages)
+            );
+        }
+        
+        // Description length issues
+        $pages_description_issues = array_filter($meta_results['pages'], function($page) {
+            return isset($page['error']) ? false : !empty($page['meta_description']['issues']);
+        });
+        if (count($pages_description_issues) > 0) {
+            $affected_pages = array_map(function($page) {
+                return array(
+                    'title' => $page['post_title'] ?? 'Unknown',
+                    'url' => $page['url'] ?? '',
+                    'post_id' => $page['post_id'] ?? null,
+                    'post_type' => $page['post_type'] ?? 'post',
+                    'issues' => $page['meta_description']['issues'] ?? array()
+                );
+            }, array_slice($pages_description_issues, 0, 10));
+            
+            $recommendations[] = array(
+                'type' => 'description_length',
+                'title' => 'Fix description length issues',
+                'description' => 'Fix meta description length issues on ' . count($pages_description_issues) . ' pages',
+                'severity' => 'low',
+                'affected_count' => count($pages_description_issues),
+                'affected_pages' => $affected_pages,
+                'showing_count' => count($affected_pages)
+            );
+        }
+        
+        // Sort by severity (high, medium, low) and limit to 5
+        usort($recommendations, function($a, $b) {
+            $severity_order = array('high' => 0, 'medium' => 1, 'low' => 2);
+            return $severity_order[$a['severity']] - $severity_order[$b['severity']];
+        });
+        
         return array_slice($recommendations, 0, 5);
+    }
+
+    /**
+     * Get SEO settings for targeted analysis
+     */
+    public function get_seo_settings($args) {
+        if (!$this->db) {
+            return array(
+                'success' => false,
+                'error' => 'Database connection not available'
+            );
+        }
+        
+        // Get current site URL for context
+        $site_url = get_site_url();
+        $site_name = get_bloginfo('name');
+        
+        // Retrieve SEO settings from plugin's settings table
+        $settings = array(
+            'seo_target_location' => $this->db->get_setting('seo_target_location', ''),
+            'seo_target_language' => $this->db->get_setting('seo_target_language', 'en'),
+            'seo_target_keywords' => $this->db->get_setting('seo_target_keywords', ''),
+            'manual_competitors' => $this->db->get_setting('manual_competitors', '')
+        );
+        
+        // Process keywords into an array
+        $target_keywords = array();
+        if (!empty($settings['seo_target_keywords'])) {
+            $target_keywords = array_filter(
+                array_map('trim', explode("\n", $settings['seo_target_keywords'])),
+                function($keyword) {
+                    return !empty($keyword);
+                }
+            );
+        }
+        
+        // Process competitors into an array
+        $competitors = array();
+        if (!empty($settings['manual_competitors'])) {
+            $competitors = array_filter(
+                array_map('trim', explode("\n", $settings['manual_competitors'])),
+                function($competitor) {
+                    return !empty($competitor);
+                }
+            );
+        }
+        
+        // Get location name if set
+        $location_name = '';
+        if (!empty($settings['seo_target_location'])) {
+            // Try to get a readable location name (this is basic - could be enhanced with a country lookup)
+            $location_name = $settings['seo_target_location'];
+        }
+        
+        // Get language name
+        $language_name = '';
+        if (!empty($settings['seo_target_language'])) {
+            $language_map = array(
+                'en' => 'English',
+                'es' => 'Spanish', 
+                'fr' => 'French',
+                'de' => 'German',
+                'it' => 'Italian',
+                'pt' => 'Portuguese',
+                'ja' => 'Japanese',
+                'ko' => 'Korean',
+                'zh' => 'Chinese',
+                'ru' => 'Russian',
+                'ar' => 'Arabic',
+                'hi' => 'Hindi'
+            );
+            $language_name = isset($language_map[$settings['seo_target_language']]) 
+                ? $language_map[$settings['seo_target_language']] 
+                : $settings['seo_target_language'];
+        }
+        
+        return array(
+            'success' => true,
+            'site_info' => array(
+                'domain' => parse_url($site_url, PHP_URL_HOST),
+                'site_url' => $site_url,
+                'site_name' => $site_name
+            ),
+            'seo_settings' => array(
+                'target_location' => array(
+                    'code' => $settings['seo_target_location'],
+                    'name' => $location_name ?: 'Global'
+                ),
+                'target_language' => array(
+                    'code' => $settings['seo_target_language'],
+                    'name' => $language_name
+                ),
+                'target_keywords' => $target_keywords,
+                'target_keywords_count' => count($target_keywords),
+                'manual_competitors' => $competitors,
+                'competitors_count' => count($competitors)
+            ),
+            'analysis_context' => array(
+                'has_target_keywords' => !empty($target_keywords),
+                'has_target_location' => !empty($settings['seo_target_location']),
+                'has_competitors' => !empty($competitors),
+                'ready_for_analysis' => !empty($target_keywords) || !empty($competitors)
+            ),
+            'recommendations' => $this->get_seo_settings_recommendations($target_keywords, $competitors, $settings)
+        );
+    }
+    
+    /**
+     * Get recommendations based on SEO settings completeness
+     */
+    private function get_seo_settings_recommendations($target_keywords, $competitors, $settings) {
+        $recommendations = array();
+        
+        if (empty($target_keywords)) {
+            $recommendations[] = array(
+                'type' => 'missing_keywords',
+                'message' => 'No target keywords configured. Add your primary keywords in Settings > SEO Configuration to get more targeted analysis.',
+                'action' => 'Configure target keywords in SEO settings'
+            );
+        }
+        
+        if (empty($competitors)) {
+            $recommendations[] = array(
+                'type' => 'missing_competitors',
+                'message' => 'No manual competitors configured. Add competitor domains to enable competitive analysis when automatic discovery fails.',
+                'action' => 'Add competitor domains in SEO settings'
+            );
+        }
+        
+        if (empty($settings['seo_target_location'])) {
+            $recommendations[] = array(
+                'type' => 'missing_location',
+                'message' => 'No target location set. Configure your target geographic location for more accurate local SEO analysis.',
+                'action' => 'Set target location in SEO settings'
+            );
+        }
+        
+        if (count($target_keywords) < 3) {
+            $recommendations[] = array(
+                'type' => 'few_keywords',
+                'message' => 'Consider adding more target keywords (recommended: 5-10) for comprehensive keyword analysis.',
+                'action' => 'Add more target keywords in SEO settings'
+            );
+        }
+        
+        return $recommendations;
     }
 }
 
