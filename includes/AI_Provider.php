@@ -386,18 +386,20 @@ class AI_Provider {
                 );
                 
                 // Log the API request for analytics
-                $this->db->log_api_request(
-                    $user_id,
-                    $provider,
-                    $model,
-                    $provider === 'openai' ? 'https://api.openai.com/v1/chat/completions' : 'https://api.anthropic.com/v1/messages',
-                    array('message' => $message), // Request data (simplified)
-                    array('response' => $result['response']), // Response data (simplified)
-                    200, // Status code (assuming success if we got here)
-                    $result['tokens_used'] ?? null,
-                    $result['cost'] ?? null,
-                    $response_time
-                );
+                if ($result['user_key_used'] ?? false) {
+                    $this->db->log_api_request(
+                        $user_id,
+                        $provider,
+                        $model,
+                        $provider === 'openai' ? 'https://api.openai.com/v1/chat/completions' : 'https://api.anthropic.com/v1/messages',
+                        array('message' => $message), // Request data (simplified)
+                        array('response' => $result['response']), // Response data (simplified)
+                        200, // Status code (assuming success if we got here)
+                        $result['tokens_used'] ?? null,
+                        $result['cost'] ?? null,
+                        $response_time
+                    );
+                }
             }
             
             return array(
@@ -538,6 +540,7 @@ class AI_Provider {
         $tool_calls_count = 0;
         $total_tokens = 0;
         $total_cost = 0;
+        $user_key_used_total = false; // track if ANY request actually used the user key
         
         // Initial AI call
         if ($provider === 'openai') {
@@ -547,6 +550,9 @@ class AI_Provider {
         } else {
             throw new Exception('Unsupported AI provider: ' . $provider);
         }
+        
+        // Track whether this call counted towards user quota
+        $user_key_used_total = $user_key_used_total || ($response['user_key_used'] ?? false);
         
         // Update usage tracking
         $total_tokens += $this->extract_token_count($response, $provider) ?? 0;
@@ -613,25 +619,39 @@ class AI_Provider {
                 throw new Exception('Unsupported AI provider: ' . $provider);
             }
             
+            // Track flag for the second call as well
+            $user_key_used_total = $user_key_used_total || ($final_response['user_key_used'] ?? false);
+            
             // Update usage tracking for the second call
             $total_tokens += $this->extract_token_count($final_response, $provider) ?? 0;
             $total_cost += $final_response['cost'] ?? 0;
             
+            // If the user key was not used in any of the calls, zero-out cost and token statistics
+            if (!$user_key_used_total) {
+                $total_tokens = 0;
+                $total_cost   = 0;
+            }
             return array(
                 'response' => $final_response['content'] ?? '',
                 'tool_calls_count' => $tool_calls_count,
                 'tokens_used' => $total_tokens,
                 'cost' => $total_cost,
-                'debug_tool_data' => $this->format_debug_tool_results($tool_results) // For future debugging feature
+                'debug_tool_data' => $this->format_debug_tool_results($tool_results),
+                'user_key_used' => $user_key_used_total
             );
         }
         
         // No tool calls, return direct response
+        if (!$user_key_used_total) {
+            $total_tokens = 0;
+            $total_cost   = 0;
+        }
         return array(
             'response' => $response['content'] ?? '',
             'tool_calls_count' => 0,
             'tokens_used' => $total_tokens,
-            'cost' => $total_cost
+            'cost' => $total_cost,
+            'user_key_used' => $user_key_used_total
         );
     }
     
@@ -662,6 +682,7 @@ class AI_Provider {
         // Track total tokens & cost across all AI calls in agent mode
         $total_tokens = 0;
         $total_cost   = 0;
+        $user_key_used_total = false; // track flag across iterations
         
         while ($iteration < $max_iterations) {
             $iteration++;
@@ -674,6 +695,9 @@ class AI_Provider {
             } else {
                 throw new Exception('Unsupported AI provider: ' . $provider);
             }
+            
+            // Track whether this call counted towards user quota
+            $user_key_used_total = $user_key_used_total || ($response['user_key_used'] ?? false);
             
             // Accumulate tokens & cost from this AI call before deciding next step
             $total_tokens += $this->extract_token_count($response, $provider) ?? 0;
@@ -765,13 +789,18 @@ class AI_Provider {
         
         // After loop ends, $total_tokens & $total_cost already include all calls
         
+        if (!$user_key_used_total) {
+            $total_tokens = 0;
+            $total_cost   = 0;
+        }
         return array(
             'response' => $final_response,
             'reasoning' => $reasoning_chain,
             'tool_calls_count' => $total_tool_calls,
             'tokens_used' => $total_tokens,
             'cost' => $total_cost,
-            'debug_tool_data' => !empty($all_tool_results) ? $this->format_debug_tool_results($all_tool_results) : null // For future debugging feature
+            'debug_tool_data' => !empty($all_tool_results) ? $this->format_debug_tool_results($all_tool_results) : null,
+            'user_key_used' => $user_key_used_total
         );
     }
     
@@ -934,6 +963,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             throw new Exception('OpenAI proxy error: ' . ($data['error'] ?? 'Unknown error'));
         }
         $result  = $data['data'];
+        // NEW: detect if the proxy actually used the user-supplied API key
+        $userKeyUsed = $data['userKeyUsed'] ?? ($data['user_key_used'] ?? false);
         $message = $result['choices'][0]['message'] ?? null;
         $usage   = $result['usage'] ?? null;
         $cost = 0;
@@ -944,6 +975,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         if ($message) {
             $message['usage'] = $usage;
             $message['cost']  = $cost;
+            // Pass through the flag so downstream logic can decide whether to count analytics
+            $message['user_key_used'] = $userKeyUsed;
         }
         return $message;
     }
@@ -992,6 +1025,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             throw new Exception('Anthropic proxy error: ' . ($data['error'] ?? 'Unknown error'));
         }
         $result       = $data['data'];
+        // NEW: detect if the proxy actually used the user-supplied API key
+        $userKeyUsed  = $data['userKeyUsed'] ?? ($data['user_key_used'] ?? false);
         $content      = $result['content']    ?? '';
         $tool_calls   = $result['tool_calls'] ?? [];
         $usage        = $result['usage']      ?? null;
@@ -1004,7 +1039,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'content'        => $content,
             'tool_calls'     => $tool_calls,
             'usage'          => $usage,
-            'cost'           => $cost
+            'cost'           => $cost,
+            'user_key_used'  => $userKeyUsed
         );
     }
     
@@ -1198,6 +1234,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'has_api_key' => $this->db ? ($this->db->has_api_key('openai_api_key') || $this->db->has_api_key('anthropic_api_key')) : false,
             'openai_api_key' => $this->db ? $this->db->has_api_key('openai_api_key') : false,
             'anthropic_api_key' => $this->db ? $this->db->has_api_key('anthropic_api_key') : false,
+            'dataforseo_login_id' => $this->db ? ($this->db->has_api_key('dataforseo_login_id') ? $this->db->decrypt_api_key($this->db->get_setting('dataforseo_login_id')) : null) : null,
             'dataforseo_api_key' => $this->db ? $this->db->has_api_key('dataforseo_api_key') : false,
             'enable_create_tools' => isset($this->settings['enable_create_tools']) ? (bool) $this->settings['enable_create_tools'] : true,
             'enable_update_tools' => isset($this->settings['enable_update_tools']) ? (bool) $this->settings['enable_update_tools'] : true,
@@ -1237,9 +1274,16 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $this->db->save_setting('anthropic_api_key', $api_key);
         }
         
+        if (isset($data['dataforseo_login_id']) && !empty($data['dataforseo_login_id'])) {
+            $login_id = sanitize_email($data['dataforseo_login_id']);
+            $encrypted_login_id = $this->db->encrypt_api_key($login_id);
+            $this->db->save_setting('dataforseo_login_id', $encrypted_login_id);
+        }
+
         if (isset($data['dataforseo_api_key']) && !empty($data['dataforseo_api_key'])) {
             $api_key = sanitize_text_field($data['dataforseo_api_key']);
-            $this->db->save_setting('dataforseo_api_key', $api_key);
+            $encrypted_api_key = $this->db->encrypt_api_key($api_key);
+            $this->db->save_setting('dataforseo_api_key', $encrypted_api_key);
         }
         
         if (isset($data['complete_data_removal'])) {
@@ -1363,12 +1407,21 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         // Delete the API key from database
         $this->db->delete_api_key($key_name);
         
+        // For DataForSEO, also delete the login ID
+        if ($provider === 'dataforseo') {
+            $this->db->delete_api_key('dataforseo_login_id');
+        }
+        
         // Refresh settings from database
         $this->settings = $this->db->get_all_settings();
         
+        $message = $provider === 'dataforseo' 
+            ? 'DataForSEO credentials deleted successfully' 
+            : ucfirst($provider) . ' API key deleted successfully';
+        
         return array(
             'success' => true,
-            'message' => ucfirst($provider) . ' API key deleted successfully'
+            'message' => $message
         );
     }
     
@@ -3642,6 +3695,13 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 $status['activated_at_raw'] = $activation->created_at; // Keep raw value for debugging
             }
             
+            // Get tier from MagicProxy using the license key
+            $tier = $this->get_tier_from_magicproxy( $license_key );
+            
+            if ( ! empty( $tier ) ) {
+                $status['tier'] = $tier;
+            }
+            
             return array(
                 'success' => true,
                 'data' => $status
@@ -3681,6 +3741,9 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 $activated_at_raw = $activation_data->created_at ?? current_time('mysql');
                 $timestamp = is_numeric($activated_at_raw) ? $activated_at_raw : strtotime($activated_at_raw);
                 $activated_at_formatted = \MagicAssistant\Admin::format_date($timestamp, true);
+
+                // Get tier from MagicProxy using the license key
+                $tier = $this->get_tier_from_magicproxy( $licensing_client->settings()->license_key );
                 
                 return array(
                     'success' => true,
@@ -3691,7 +3754,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         'license_key' => $this->mask_license_key($licensing_client->settings()->license_key),
                         'site_name' => get_bloginfo('name'),
                         'activated_at' => $activated_at_formatted,
-                        'activated_at_raw' => $activated_at_raw // Keep raw value for debugging
+                        'activated_at_raw' => $activated_at_raw, // Keep raw value for debugging
+                        'tier' => $tier
                     )
                 );
             } else {
@@ -3930,6 +3994,62 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
 
         return $headers;
+    }
+
+    /**
+     * Get license tier from MagicProxy
+     * @param string $license_key
+     * @return string|null
+     */
+    private function get_tier_from_magicproxy( $license_key ) {
+        if ( empty( $license_key ) ) {
+            return null;
+        }
+
+        try {
+            // Make request to MagicProxy to get license tier information
+            $response = wp_remote_get( 'https://proxy.magicplugins.io/api/proxy/license-tier', array(
+                'headers' => array(
+                    'X-License-Key' => $license_key,
+                    'Content-Type' => 'application/json',
+                ),
+                'timeout' => 10,
+            ) );
+
+            if ( is_wp_error( $response ) ) {
+                error_log( 'MagicAssistant License Tier Error: ' . $response->get_error_message() );
+                return null;
+            }
+
+            $response_code = wp_remote_retrieve_response_code( $response );
+            $response_body = wp_remote_retrieve_body( $response );
+
+            // Debug: Log the full response
+            error_log( 'MagicAssistant License Tier Debug: Response code: ' . $response_code );
+            error_log( 'MagicAssistant License Tier Debug: Response body: ' . $response_body );
+
+            if ( $response_code !== 200 ) {
+                error_log( 'MagicAssistant License Tier Error: HTTP ' . $response_code . ' - ' . $response_body );
+                return null;
+            }
+
+            $data = json_decode( $response_body, true );
+
+            if ( json_last_error() !== JSON_ERROR_NONE ) {
+                error_log( 'MagicAssistant License Tier Error: Invalid JSON response. JSON Error: ' . json_last_error_msg() );
+                error_log( 'MagicAssistant License Tier Error: Raw response body: ' . substr($response_body, 0, 500) );
+                return null;
+            }
+
+            if ( isset( $data['tier'] ) && ! empty( $data['tier'] ) ) {
+                return sanitize_text_field( $data['tier'] );
+            }
+
+            return null;
+        } catch ( Exception $e ) {
+            error_log( 'MagicAssistant License Tier Exception: ' . $e->getMessage() );
+            return null;
+        }
     }
 
 }
