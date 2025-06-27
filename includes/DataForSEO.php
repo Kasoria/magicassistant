@@ -309,10 +309,15 @@ class DataForSEO {
         $license_headers = $this->get_license_headers();
         
         if ($this->ai_provider && $this->ai_provider->get_db()) {
+            $encrypted_login_id = $this->ai_provider->get_db()->get_setting('dataforseo_login_id');
             $encrypted_key = $this->ai_provider->get_db()->get_setting('dataforseo_api_key');
-            if ($encrypted_key) {
+            
+            if ($encrypted_login_id && $encrypted_key) {
+                $user_login_id = $this->ai_provider->get_db()->decrypt_api_key($encrypted_login_id);
                 $user_key = $this->ai_provider->get_db()->decrypt_api_key($encrypted_key);
-                if (!empty($user_key)) {
+                
+                if (!empty($user_login_id) && !empty($user_key)) {
+                    $license_headers['X-User-Dataforseo-Login'] = $user_login_id;
                     $license_headers['X-User-Dataforseo-Key'] = $user_key;
                 }
             }

@@ -9,6 +9,7 @@ import ISO6391 from 'iso-639-1'
 
 const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onToggleDarkMode }) => {
   const [apiKey, setApiKey] = useState('')
+  const [dataForSEOLoginId, setDataForSEOLoginId] = useState('')
   const [activeTab, setActiveTab] = useState('general')
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [showApiKeyDeleteModal, setShowApiKeyDeleteModal] = useState(false)
@@ -69,11 +70,20 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
   }
 
   const handleApiKeySubmit = (provider) => {
-    if (apiKey.trim()) {
+    if (provider === 'dataforseo') {
+      // DataForSEO requires both login ID and API key
+      if (dataForSEOLoginId.trim() && apiKey.trim()) {
+        onSaveSettings({ 
+          'dataforseo_login_id': dataForSEOLoginId.trim(),
+          'dataforseo_api_key': apiKey.trim() 
+        })
+        setDataForSEOLoginId('')
+        setApiKey('')
+      }
+    } else if (apiKey.trim()) {
       let settingsKey = ''
       if (provider === 'openai') settingsKey = 'openai_api_key'
       else if (provider === 'anthropic') settingsKey = 'anthropic_api_key'
-      else if (provider === 'dataforseo') settingsKey = 'dataforseo_api_key'
       onSaveSettings({ [settingsKey]: apiKey.trim() })
       setApiKey('')
     }
@@ -536,38 +546,62 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
 
               {/* DataForSEO API Key */}
               <div className="space-y-4 border-t border-gray-200 dark:border-gray-600 pt-4">
-                <h5 className="font-medium text-brand-dark dark:text-white">DataForSEO API Key (Optional)</h5>
+                <h5 className="font-medium text-brand-dark dark:text-white">DataForSEO API Credentials (Optional)</h5>
                 <p className="text-sm text-gray-600 dark:text-gray-300">
-                  Enter your own DataForSEO key to allow requests to continue after your MagicAssistant license quota is reached.
+                  Enter your own DataForSEO credentials to allow requests to continue after your MagicAssistant license quota is reached.
                 </p>
-                <div className="flex gap-2">
+                <div>
+                  <Label htmlFor="dataforseo-login-id" value="API Login ID (Email)" className="mb-2" />
                   <TextInput
-                    id="dataforseo-api-key"
-                    type="password"
-                    placeholder="Enter DataForSEO API key"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    className="flex-1"
+                    id="dataforseo-login-id"
+                    type="email"
+                    placeholder="Enter your DataForSEO login email"
+                    value={dataForSEOLoginId}
+                    onChange={(e) => setDataForSEOLoginId(e.target.value)}
+                    className="w-full mb-2"
                     disabled={isSavingSettings}
                   />
-                  <Button
-                    onClick={() => handleApiKeySubmit('dataforseo')}
-                    disabled={!apiKey.trim() || isSavingSettings}
-                    size="sm"
-                  >
-                    {isSavingSettings ? 'Saving...' : 'Save'}
-                  </Button>
                 </div>
-                {settings?.dataforseo_api_key && (
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <Label htmlFor="dataforseo-api-key" value="API Key" className="mb-2" />
+                    <TextInput
+                      id="dataforseo-api-key"
+                      type="password"
+                      placeholder="Enter DataForSEO API key"
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      className="w-full"
+                      disabled={isSavingSettings}
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      onClick={() => handleApiKeySubmit('dataforseo')}
+                      disabled={!dataForSEOLoginId.trim() || !apiKey.trim() || isSavingSettings}
+                      size="sm"
+                    >
+                      {isSavingSettings ? 'Saving...' : 'Save'}
+                    </Button>
+                  </div>
+                </div>
+                {(settings?.dataforseo_login_id || settings?.dataforseo_api_key) && (
                   <div className="flex items-center justify-between">
-                    <p className="text-sm text-green-600 dark:text-green-400">✓ API key configured</p>
+                    <p className="text-sm text-green-600 dark:text-green-400">
+                      ✓ DataForSEO credentials configured
+                      {settings?.dataforseo_login_id && (
+                        <span className="block text-xs text-gray-500 dark:text-gray-400">
+                          Login ID: {settings.dataforseo_login_id}
+                        </span>
+                      )}
+                    </p>
                     <Button
                       size="xs"
                       color="failure"
                       onClick={() => handleDeleteApiKeyClick('dataforseo')}
                       disabled={isSavingSettings}
                     >
-                      Delete Key
+                      Delete Credentials
                     </Button>
                   </div>
                 )}
@@ -1093,13 +1127,20 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           setPendingApiKeyDelete(null)
         }}
         onConfirm={confirmDeleteApiKey}
-        title="Delete API Key?"
-        message={`Are you sure you want to delete the ${pendingApiKeyDelete} API key? This action cannot be undone.`}
-        confirmText="Yes, delete API key"
+        title={pendingApiKeyDelete === 'dataforseo' ? "Delete API Credentials?" : "Delete API Key?"}
+        message={pendingApiKeyDelete === 'dataforseo' 
+          ? `Are you sure you want to delete the DataForSEO API credentials? This action cannot be undone.`
+          : `Are you sure you want to delete the ${pendingApiKeyDelete} API key? This action cannot be undone.`
+        }
+        confirmText={pendingApiKeyDelete === 'dataforseo' ? "Yes, delete credentials" : "Yes, delete API key"}
         cancelText="No, keep it"
         confirmButtonClass="bg-red-600 hover:bg-red-700 focus:ring-red-300 dark:bg-red-500 dark:hover:bg-red-600 dark:focus:ring-red-900"
         icon="delete"
-        items={[
+        items={pendingApiKeyDelete === 'dataforseo' ? [
+          "Both the login ID and API key will be permanently removed",
+          "You will need to re-enter both credentials to use DataForSEO features",
+          "This will not affect your account with DataForSEO"
+        ] : [
           "The encrypted API key will be permanently removed",
           "You will need to re-enter the API key to use AI features",
           "This will not affect your account with the provider"

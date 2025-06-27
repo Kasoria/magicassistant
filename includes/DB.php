@@ -744,7 +744,7 @@ class DB {
     /**
      * Encrypt an API key using AES-256-CBC
      */
-    private function encrypt_api_key($api_key) {
+    public function encrypt_api_key($api_key) {
         if (empty($api_key)) {
             return '';
         }
