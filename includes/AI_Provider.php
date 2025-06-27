@@ -4017,16 +4017,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             ) );
 
             if ( is_wp_error( $response ) ) {
-                error_log( 'MagicAssistant License Tier Error: ' . $response->get_error_message() );
                 return null;
             }
 
             $response_code = wp_remote_retrieve_response_code( $response );
             $response_body = wp_remote_retrieve_body( $response );
-
-            // Debug: Log the full response
-            error_log( 'MagicAssistant License Tier Debug: Response code: ' . $response_code );
-            error_log( 'MagicAssistant License Tier Debug: Response body: ' . $response_body );
 
             if ( $response_code !== 200 ) {
                 error_log( 'MagicAssistant License Tier Error: HTTP ' . $response_code . ' - ' . $response_body );
@@ -4036,8 +4031,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $data = json_decode( $response_body, true );
 
             if ( json_last_error() !== JSON_ERROR_NONE ) {
-                error_log( 'MagicAssistant License Tier Error: Invalid JSON response. JSON Error: ' . json_last_error_msg() );
-                error_log( 'MagicAssistant License Tier Error: Raw response body: ' . substr($response_body, 0, 500) );
                 return null;
             }
 
@@ -4047,7 +4040,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
             return null;
         } catch ( Exception $e ) {
-            error_log( 'MagicAssistant License Tier Exception: ' . $e->getMessage() );
             return null;
         }
     }
