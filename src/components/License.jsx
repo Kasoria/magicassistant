@@ -216,7 +216,7 @@ const License = ({ adminData }) => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div className="flex flex-col gap-4 text-sm">
                 <div>
                   <Label className="text-green-800 dark:text-green-200 font-medium">
                     License Key
@@ -225,16 +225,18 @@ const License = ({ adminData }) => {
                     {licenseData.license_key || '••••••••••••••••'}
                   </div>
                 </div>
-                <div>
-                  <Label className="text-green-800 dark:text-green-200 font-medium">
-                    Site
-                  </Label>
-                  <div className="mt-1 text-green-700 dark:text-green-300">
-                    {licenseData.site_name}
+                {licenseData.tier && (
+                  <div>
+                    <Label className="text-green-800 dark:text-green-200 font-medium">
+                      Plan
+                    </Label>
+                    <div className="mt-1 text-green-700 dark:text-green-300">
+                      {licenseData.tier}
+                    </div>
                   </div>
-                </div>
+                )}
                 {licenseData.activated_at && (
-                  <div className="md:col-span-2">
+                  <div className="md:col-span-3">
                     <Label className="text-green-800 dark:text-green-200 font-medium">
                       Activated On
                     </Label>
