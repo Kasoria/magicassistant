@@ -767,7 +767,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
 
   return (
     
-    <div className={`flex flex-col ${isDrawerMode ? 'h-[calc(100vh-80px)]' : 'h-[calc(100vh-15rem)]'}`}>
+    <div className={`h-[calc(100vh-7.4rem)] mx-auto flex flex-col ${isDrawerMode ? 'h-full' : ''}`}>
       {/* Header - new layout */}
       {!isDrawerMode && (
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
@@ -903,19 +903,19 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
       {/* Messages */}
       <div className={`overflow-y-auto ${
         isDrawerMode 
-          ? 'h-[calc(100vh-270px)]' 
+          ? 'h-[calc(100%-190px)]' 
           : 'h-[calc(100vh-18.7rem)] sm:h-[calc(100vh-15.4rem)]'
       }`}>
-        <div className="space-y-6 pt-6">
+        <div className="max-w-4xl mx-auto py-4 lg:py-6 space-y-6 px-4 lg:px-6">
           {messages.map((message, index) => (
             <div
               key={index}
-              className={`p-4 shadow-xs rounded-lg flex items-start gap-6 group relative pe-14 ${
+              className={`p-6 shadow-xs rounded-lg flex items-start gap-6 group relative pe-14 ${
                 message.role === 'user'
-                  ? 'bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/30'
+                  ? 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700'
                   : message.isError
-                  ? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/30'
-                  : 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700'
+                    ? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/30'
+                    : 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700'
               }`}
             >
               {/* Avatar */}
@@ -1123,23 +1123,35 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
             </p>
           </div>
         ) : (
-          <div className={`flex ${isDrawerMode ? 'space-x-1' : 'space-x-2'}`}>
-            <Textarea
-              placeholder="Ask me anything about your WordPress site..."
-              value={inputMessage}
-              onChange={(e) => setInputMessage(e.target.value)}
-              onKeyPress={handleKeyPress}
-              disabled={isLoading}
-              rows={isDrawerMode ? 2 : 3}
-              className={`flex-1 resize-none ${isDrawerMode ? 'text-sm' : ''}`}
-            />
-            <Button
-              onClick={sendMessage}
-              disabled={isLoading || !inputMessage.trim()}
-              size={isDrawerMode ? "sm" : "default"}
-            >
-              {isLoading ? <Spinner size="sm" /> : 'Send'}
-            </Button>
+          <div className={`flex items-center gap-3`}>
+            <div className="relative flex-1">
+              <Textarea
+                placeholder="Ask me anything about your WordPress site..."
+                value={inputMessage}
+                onChange={(e) => setInputMessage(e.target.value)}
+                onKeyPress={handleKeyPress}
+                disabled={isLoading}
+                rows={isDrawerMode ? 2 : 3}
+                className={`w-full pr-16 resize-y text-sm leading-relaxed placeholder-gray-500 dark:placeholder-gray-400 ${isDrawerMode ? 'text-sm' : ''}`}
+              />
+              <Button
+                onClick={sendMessage}
+                disabled={isLoading || !inputMessage.trim()}
+                size={isDrawerMode ? "sm" : "default"}
+                className="absolute bottom-2 right-2 z-10 rounded-full p-2 text-primary-600 hover:bg-primary-100 dark:text-primary-500 dark:hover:bg-gray-600"
+              >
+                {isLoading ? <Spinner size="sm" /> : (
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    className="w-5 h-5"
+                  >
+                    <path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" />
+                  </svg>
+                )}
+              </Button>
+            </div>
           </div>
         )}
       </div>

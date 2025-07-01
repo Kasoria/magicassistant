@@ -23,12 +23,40 @@ const FloatingChat = ({ pluginData }) => {
   const [isOpen, setIsOpen] = useState(false)
   const [isAnimating, setIsAnimating] = useState(false)
   const [theme, setTheme] = useState('light')
+  const [adminBarHeight, setAdminBarHeight] = useState(0)
 
   // Initialize theme
   useEffect(() => {
     const savedTheme = localStorage.getItem('mat-theme') || 'light'
     setTheme(savedTheme)
     document.documentElement.classList.toggle('dark', savedTheme === 'dark')
+  }, [])
+
+  // Detect WordPress admin bar height
+  useEffect(() => {
+    const detectAdminBar = () => {
+      const adminBar = document.getElementById('wpadminbar')
+      if (adminBar) {
+        const height = adminBar.offsetHeight
+        setAdminBarHeight(height)
+      } else {
+        setAdminBarHeight(0)
+      }
+    }
+
+    // Check immediately
+    detectAdminBar()
+
+    // Also check after a short delay in case the admin bar loads later
+    const timer = setTimeout(detectAdminBar, 100)
+
+    // Listen for window resize to handle responsive admin bar height changes
+    window.addEventListener('resize', detectAdminBar)
+
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener('resize', detectAdminBar)
+    }
   }, [])
 
   const toggleTheme = () => {
@@ -124,13 +152,17 @@ const FloatingChat = ({ pluginData }) => {
 
       {/* Drawer panel (always mounted to keep chat state) */}
       <div 
-        className={`fixed top-[32px] right-0 h-full w-full sm:w-[420px] bg-white dark:bg-gray-900 shadow-xl transform transition-transform duration-300 ease-in-out ${
+        className={`fixed right-0 w-full sm:w-[420px] bg-white dark:bg-gray-900 shadow-xl transform transition-transform duration-300 ease-in-out ${
           isOpen ? 'translate-x-0' : 'translate-x-full'
         } ${(isOpen || isAnimating) ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'} z-50`}
+        style={{
+          top: `${adminBarHeight}px`,
+          height: `calc(100vh - ${adminBarHeight}px)`
+        }}
         onClick={(e) => e.stopPropagation()} // Prevent closing when clicking inside drawer
       >
         {/* Drawer Header */}
-        <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-600">
+        <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900">
           <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">MagicAssistant</h2>
           <div className="flex items-center space-x-2">
             {/* Theme toggle */}
@@ -148,7 +180,7 @@ const FloatingChat = ({ pluginData }) => {
         </div>
         
         {/* Drawer Content */}
-        <div className="h-full overflow-hidden p-4">
+        <div className="h-[calc(100%-80px)] overflow-hidden">
           <ToastProvider position="top-right" maxToasts={3}>
             <ChatInterface adminData={pluginData} isDrawerMode={true} />
           </ToastProvider>

@@ -114,16 +114,22 @@ class React_Dev {
                     // Load admin React app
                     $this->enqueue_admin_scripts( $hook );
                 } else {
-                    // Load public React app for floating components on other admin pages
-                    $this->enqueue_public_scripts( $hook );
+                    // Check floating chat settings before loading public React app on admin pages
+                    if ( $this->should_show_floating_chat() ) {
+                        $this->enqueue_public_scripts( $hook );
+                    }
                 }
             } else {
-                // Load public React app for floating components
-                $this->enqueue_public_scripts( $hook );
+                // Check floating chat settings before loading public React app
+                if ( $this->should_show_floating_chat() ) {
+                    $this->enqueue_public_scripts( $hook );
+                }
             }
         } else {
-            // Load public React app on frontend
-            $this->enqueue_public_scripts( $hook );
+            // Check floating chat settings before loading public React app on frontend
+            if ( $this->should_show_floating_chat() ) {
+                $this->enqueue_public_scripts( $hook );
+            }
         }
     }
 
@@ -652,8 +658,10 @@ class React_Dev {
    */
   public function add_react_root_elements() {
     if ( ! is_admin() ) {
-      // Add public root element on frontend pages
-      echo '<div id="mat-public-root"></div>';
+      // Add public root element on frontend pages only if floating chat should be shown
+      if ( $this->should_show_floating_chat() ) {
+        echo '<div id="mat-public-root"></div>';
+      }
     } else {
       // Check if this is a plugin admin page
       $screen = get_current_screen();
@@ -668,12 +676,16 @@ class React_Dev {
           // The admin root is already added by the admin_page() method in MAT_Admin class
           // Don't add any additional roots here to avoid conflicts
         } else {
-          // Other admin pages - add public root for floating components
-          echo '<div id="mat-public-root"></div>';
+          // Other admin pages - add public root for floating components only if should be shown
+          if ( $this->should_show_floating_chat() ) {
+            echo '<div id="mat-public-root"></div>';
+          }
         }
       } else {
-        // Fallback - add public root
-        echo '<div id="mat-public-root"></div>';
+        // Fallback - add public root only if should be shown
+        if ( $this->should_show_floating_chat() ) {
+          echo '<div id="mat-public-root"></div>';
+        }
       }
     }
   }
@@ -759,5 +771,207 @@ class React_Dev {
         );
         
         return in_array( $screen->id, $plugin_pages );
+    }
+
+    /**
+     * Check if floating chat should be shown based on settings and conditions
+     */
+    private function should_show_floating_chat() {
+        // Get floating chat settings from database
+        if (!function_exists('MATDB') || !MATDB()) {
+            // If database not available, default to showing (fallback)
+            return true;
+        }
+
+        $db = MATDB();
+        $settings = $db->get_all_settings();
+
+        // If floating chat is disabled, don't show it
+        if (!isset($settings['floating_chat_enabled']) || !$settings['floating_chat_enabled']) {
+            return false;
+        }
+
+        $condition = $settings['floating_chat_conditions'] ?? 'everywhere';
+        $is_admin = is_admin();
+        $is_logged_in = is_user_logged_in();
+
+        switch ($condition) {
+            case 'everywhere':
+                return true;
+                
+            case 'frontend_only':
+                if ($is_admin) {
+                    return false;
+                }
+                return $this->check_frontend_page_restrictions($settings);
+                
+            case 'admin_only':
+                if (!$is_admin) {
+                    return false;
+                }
+                return $this->check_admin_page_restrictions($settings);
+                
+            case 'logged_in_only':
+                if (!$is_logged_in) {
+                    return false;
+                }
+                return $this->check_user_restrictions($settings);
+                
+            default:
+                return true;
+        }
+    }
+    
+    /**
+     * Check user role and ID restrictions for logged-in users
+     */
+    private function check_user_restrictions($settings) {
+        $current_user = wp_get_current_user();
+        
+        // Get role restrictions
+        $allowed_roles = isset($settings['floating_chat_user_roles']) ? json_decode($settings['floating_chat_user_roles'], true) : [];
+        if (!is_array($allowed_roles)) {
+            $allowed_roles = [];
+        }
+        
+        // Get specific user restrictions
+        $allowed_users = isset($settings['floating_chat_specific_users']) ? json_decode($settings['floating_chat_specific_users'], true) : [];
+        if (!is_array($allowed_users)) {
+            $allowed_users = [];
+        }
+        
+        // If no restrictions are set, allow all logged-in users
+        if (empty($allowed_roles) && empty($allowed_users)) {
+            return true;
+        }
+        
+        // Check if user ID is specifically allowed
+        if (!empty($allowed_users) && in_array($current_user->ID, $allowed_users)) {
+            return true;
+        }
+        
+        // Check if user has an allowed role
+        if (!empty($allowed_roles)) {
+            $user_roles = $current_user->roles;
+            if (array_intersect($user_roles, $allowed_roles)) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Check frontend page restrictions
+     */
+    private function check_frontend_page_restrictions($settings) {
+        $frontend_pages = $settings['floating_chat_frontend_pages'] ?? 'all';
+        
+        if ($frontend_pages === 'all') {
+            return true;
+        }
+        
+        if ($frontend_pages === 'specific') {
+            $url_patterns = $settings['floating_chat_frontend_urls'] ?? '';
+            if (empty($url_patterns)) {
+                return false; // No patterns specified, don't show
+            }
+            
+            $current_url = $_SERVER['REQUEST_URI'] ?? '';
+            $patterns = array_filter(array_map('trim', explode("\n", $url_patterns)));
+            
+            foreach ($patterns as $pattern) {
+                if ($this->match_url_pattern($current_url, $pattern)) {
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Check admin page restrictions
+     */
+    private function check_admin_page_restrictions($settings) {
+        $admin_pages = $settings['floating_chat_admin_pages'] ?? 'all';
+        
+        if ($admin_pages === 'all') {
+            return true;
+        }
+        
+        if ($admin_pages === 'specific') {
+            $allowed_pages = isset($settings['floating_chat_specific_admin_pages']) ? json_decode($settings['floating_chat_specific_admin_pages'], true) : [];
+            if (!is_array($allowed_pages) || empty($allowed_pages)) {
+                return false;
+            }
+            
+            global $pagenow;
+            $current_page = $this->get_admin_page_type($pagenow);
+            
+            return in_array($current_page, $allowed_pages);
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Match URL pattern with wildcards
+     */
+    private function match_url_pattern($url, $pattern) {
+        // Convert pattern to regex
+        $regex_pattern = str_replace(['*', '/'], ['.*', '\/'], $pattern);
+        $regex_pattern = '/^' . $regex_pattern . '$/i';
+        
+        return preg_match($regex_pattern, $url);
+    }
+    
+    /**
+     * Get admin page type from pagenow
+     */
+    private function get_admin_page_type($pagenow) {
+        $page_map = [
+            'index.php' => 'dashboard',
+            'edit.php' => 'posts',
+            'post.php' => 'posts',
+            'post-new.php' => 'posts',
+            'edit-pages.php' => 'pages',
+            'page.php' => 'pages',
+            'page-new.php' => 'pages',
+            'upload.php' => 'media',
+            'media-new.php' => 'media',
+            'edit-comments.php' => 'comments',
+            'comment.php' => 'comments',
+            'themes.php' => 'appearance',
+            'customize.php' => 'appearance',
+            'widgets.php' => 'appearance',
+            'nav-menus.php' => 'appearance',
+            'theme-editor.php' => 'appearance',
+            'plugins.php' => 'plugins',
+            'plugin-install.php' => 'plugins',
+            'plugin-editor.php' => 'plugins',
+            'users.php' => 'users',
+            'user-new.php' => 'users',
+            'profile.php' => 'users',
+            'user-edit.php' => 'users',
+            'tools.php' => 'tools',
+            'import.php' => 'tools',
+            'export.php' => 'tools',
+            'options-general.php' => 'settings',
+            'options-writing.php' => 'settings',
+            'options-reading.php' => 'settings',
+            'options-discussion.php' => 'settings',
+            'options-media.php' => 'settings',
+            'options-permalink.php' => 'settings'
+        ];
+        
+        // Check for WooCommerce pages
+        if (strpos($pagenow, 'wc-') === 0 || isset($_GET['page']) && strpos($_GET['page'], 'wc-') === 0) {
+            return 'woocommerce';
+        }
+        
+        return $page_map[$pagenow] ?? 'unknown';
     }
 }

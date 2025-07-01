@@ -19,6 +19,9 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
   const [debugLogs, setDebugLogs] = useState(null)
   const [isLoadingLogs, setIsLoadingLogs] = useState(false)
   const [isClearingLogs, setIsClearingLogs] = useState(false)
+  const [availableUsers, setAvailableUsers] = useState([])
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false)
+  const [showDangerousSqlModal, setShowDangerousSqlModal] = useState(false)
   const { showSuccess, showWarning, showError } = useToast()
 
   // Sync local state with props
@@ -42,7 +45,17 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         show_tips: settings.show_tips === undefined ? true : settings.show_tips,
         seo_target_location: settings.seo_target_location || '',
         seo_target_language: settings.seo_target_language || 'en',
-        seo_target_keywords: settings.seo_target_keywords || ''
+        seo_target_keywords: settings.seo_target_keywords || '',
+        floating_chat_enabled: settings.floating_chat_enabled === undefined ? true : settings.floating_chat_enabled,
+        floating_chat_conditions: settings.floating_chat_conditions || 'everywhere',
+        floating_chat_user_roles: settings.floating_chat_user_roles || [],
+        floating_chat_specific_users: settings.floating_chat_specific_users || [],
+        floating_chat_frontend_pages: settings.floating_chat_frontend_pages || 'all',
+        floating_chat_frontend_urls: settings.floating_chat_frontend_urls || '',
+        floating_chat_admin_pages: settings.floating_chat_admin_pages || 'all',
+        floating_chat_specific_admin_pages: settings.floating_chat_specific_admin_pages || [],
+        enable_sql_queries: settings.enable_sql_queries === true,
+        enable_dangerous_sql_queries: settings.enable_dangerous_sql_queries === true,
       })
       setHasUnsavedChanges(false)
     }
@@ -225,6 +238,33 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     }
   }
 
+  // Load available users for selection
+  const loadAvailableUsers = async () => {
+    if (isLoadingUsers || availableUsers.length > 0) return
+    
+    setIsLoadingUsers(true)
+    
+    try {
+      const response = await fetch(`${window.matAdminData?.restUrl}users`, {
+        headers: {
+          'X-WP-Nonce': window.matAdminData?.nonces.wp_rest,
+        },
+      })
+      
+      if (response.ok) {
+        const users = await response.json()
+        setAvailableUsers(users)
+      } else {
+        showError('Failed to load users')
+      }
+    } catch (error) {
+      console.error('Error loading users:', error)
+      showError('Failed to load users')
+    }
+    
+    setIsLoadingUsers(false)
+  }
+
   const getTabSettings = () => {
     switch (activeTab) {
       case 'general':
@@ -245,7 +285,9 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           enable_delete_tools: localSettings.enable_delete_tools,
           debug_log_raw_responses: localSettings.debug_log_raw_responses,
           max_response_tokens: parseInt(localSettings.max_response_tokens),
-          conversation_history_limit: parseInt(localSettings.conversation_history_limit)
+          conversation_history_limit: parseInt(localSettings.conversation_history_limit),
+          enable_sql_queries: localSettings.enable_sql_queries,
+          enable_dangerous_sql_queries: localSettings.enable_dangerous_sql_queries,
         }
       case 'seo':
         return {
@@ -253,6 +295,17 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           seo_target_language: localSettings.seo_target_language,
           seo_target_keywords: localSettings.seo_target_keywords,
           manual_competitors: localSettings.manual_competitors
+        }
+      case 'floating-chat':
+        return {
+          floating_chat_enabled: localSettings.floating_chat_enabled,
+          floating_chat_conditions: localSettings.floating_chat_conditions,
+          floating_chat_user_roles: localSettings.floating_chat_user_roles,
+          floating_chat_specific_users: localSettings.floating_chat_specific_users,
+          floating_chat_frontend_pages: localSettings.floating_chat_frontend_pages,
+          floating_chat_frontend_urls: localSettings.floating_chat_frontend_urls,
+          floating_chat_admin_pages: localSettings.floating_chat_admin_pages,
+          floating_chat_specific_admin_pages: localSettings.floating_chat_specific_admin_pages
         }
       default:
         return {}
@@ -312,6 +365,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     { id: 'general', label: 'General', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
     { id: 'ai', label: 'AI Configuration', icon: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z' },
     { id: 'seo', label: 'SEO Configuration', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' },
+    { id: 'floating-chat', label: 'Floating Chat', icon: 'M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z' },
     { id: 'sharing', label: 'Shared Conversations', icon: 'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z' }
   ]
 
@@ -320,7 +374,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
       case 'general':
         return (
           <div className="space-y-4">
-            <div className="flex items-center justify-between p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
+            <div className="flex items-center justify-between p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
               <div>
                 <h4 className="font-medium text-brand-dark dark:text-white">Dark Mode</h4>
                 <p className="text-sm text-gray-600 dark:text-gray-300">Toggle between light and dark themes</p>
@@ -330,7 +384,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
               </Button>
             </div>
 
-            <div className="flex items-center justify-between p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
+            <div className="flex items-center justify-between p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
               <div>
                 <h4 className="font-medium text-brand-dark dark:text-white">Show Tips</h4>
                 <p className="text-sm text-gray-600 dark:text-gray-300">Display helpful tips and explanations throughout the interface</p>
@@ -350,7 +404,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
               </label>
             </div>
             
-            <div className="p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
+            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <h4 className="font-medium text-brand-dark dark:text-white mb-2">Complete Data Removal</h4>
@@ -414,7 +468,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         return (
           <div className="space-y-6">
             {/* AI Provider Section */}
-            <div className="p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
+            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
               <h4 className="font-medium text-brand-dark dark:text-white mb-3">AI Provider</h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <div>
@@ -597,7 +651,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                     </p>
                     <Button
                       size="xs"
-                      color="failure"
+                      className="bg-red-600 hover:bg-red-700 focus:ring-red-300 dark:bg-red-500 dark:hover:bg-red-600 dark:focus:ring-red-900"
                       onClick={() => handleDeleteApiKeyClick('dataforseo')}
                       disabled={isSavingSettings}
                     >
@@ -609,7 +663,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
             </div>
 
             {/* Agent Mode Section */}
-            <div className="p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
+            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
               <h4 className="font-medium text-brand-dark dark:text-white mb-3">Agent Mode Configuration</h4>
               {localSettings.show_tips === true && (
                 <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
@@ -682,7 +736,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
             </div>
 
             {/* MCP Settings Section */}
-            <div className="p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
+            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
               <h4 className="font-medium text-brand-dark dark:text-white mb-3">MCP (Model Context Protocol)</h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="flex items-center space-x-3">
@@ -700,7 +754,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                 </div>
               </div>
               
-              <div className="mt-4 p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
+              <div className="mt-4 p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
                 <h5 className="font-medium text-brand-dark dark:text-white mb-3">Operation Permissions</h5>
                 <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
                   Control which types of operations the AI can perform via REST API tools
@@ -745,6 +799,35 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                       Delete Operations
                     </Label>
                   </div>
+                  <div className="flex items-center space-x-3">
+                    <input
+                      type="checkbox"
+                      id="enable-sql-queries"
+                      checked={localSettings.enable_sql_queries === true}
+                      onChange={(e) => handleLocalChange('enable_sql_queries', e.target.checked)}
+                      disabled={isSavingSettings}
+                      className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 rounded focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                    />
+                    <Label htmlFor="enable-sql-queries" className="font-medium">
+                      SQL Query Tool (read-only)
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <input
+                      type="checkbox"
+                      id="enable-dangerous-sql"
+                      checked={localSettings.enable_dangerous_sql_queries === true}
+                      onChange={(e) => handleDangerousSqlChange(e.target.checked)}
+                      disabled={isSavingSettings || localSettings.enable_sql_queries !== true}
+                      className="w-4 h-4 text-red-600 bg-gray-100 border-gray-300 rounded focus:ring-red-600 dark:focus:ring-red-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                    />
+                    <Label htmlFor="enable-dangerous-sql" className="font-medium text-red-700 dark:text-red-400">
+                      FULL SQL (write/delete) – Dangerous
+                    </Label>
+                  </div>
+                  <p className="col-span-full text-xs text-red-600 dark:text-red-400 -mt-2">
+                    WARNING: Allows AI to run ANY SQL statement, including UPDATE / DELETE / DROP. Use only if you fully trust actions.
+                  </p>
                 </div>
                 <div className="mt-3 bg-yellow-50 dark:bg-yellow-900/20 p-3 rounded-lg">
                   <p className="text-sm text-yellow-800 dark:text-yellow-200">
@@ -755,7 +838,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
             </div>
 
             {/* Cost & Context Controls Section */}
-            <div className="p-4 border border-purple-200 dark:border-purple-600 rounded-lg">
+              <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
               <h4 className="font-medium text-brand-dark dark:text-white mb-3">Response & Context Limits</h4>
               <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
                 Fine-tune token usage and context length to balance cost and answer quality. Lower values reduce cost but may shorten responses or context.
@@ -797,7 +880,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
             </div>
 
             {/* Debug Logging Section */}
-            <div className="p-4 border border-red-200 dark:border-red-600 rounded-lg">
+            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
               <h4 className="font-medium text-brand-dark dark:text-white mb-2">Debug: Raw API Response Logging</h4>
               <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
                 Logs the full raw JSON responses from OpenAI / Anthropic to a custom secure log file. These responses can contain sensitive data. Only enable when troubleshooting and disable afterwards.
@@ -942,7 +1025,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         return (
           <div className="space-y-6">
             {/* Target Location and Language */}
-            <div className="p-4 border border-green-200 dark:border-green-600 rounded-lg">
+            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
               <h4 className="font-medium text-brand-dark dark:text-white mb-3">Target Audience</h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
@@ -977,7 +1060,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
             </div>
 
             {/* Target Keywords */}
-            <div className="p-4 border border-blue-200 dark:border-blue-600 rounded-lg">
+            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
               <h4 className="font-medium text-brand-dark dark:text-white mb-3">Target Keywords</h4>
               <div>
                 <Label htmlFor="seo-target-keywords" value="Primary Keywords" className="mb-2" />
@@ -1004,7 +1087,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
             </div>
 
             {/* Competitor URLs */}
-            <div className="p-4 border border-purple-200 dark:border-purple-600 rounded-lg">
+            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
               <h4 className="font-medium text-brand-dark dark:text-white mb-3">Competitor Analysis</h4>
               <div>
                 <Label htmlFor="manual-competitors" value="Competitor URLs" className="mb-2" />
@@ -1050,6 +1133,399 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           </div>
         )
 
+      case 'floating-chat':
+        return (
+          <div className="space-y-6">
+            {/* Enable/Disable Floating Chat */}
+            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
+              <h4 className="font-medium text-brand-dark dark:text-white mb-3">Floating Chat Widget</h4>
+              {localSettings.show_tips === true && (
+                <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                  <p className="text-sm text-blue-800 dark:text-blue-200">
+                    <strong>💬 Floating Chat:</strong> When enabled, a floating chat button appears on your website allowing visitors to interact with the AI assistant. 
+                    The chat provides the same functionality as the admin interface but is accessible to site visitors.
+                  </p>
+                </div>
+              )}
+              
+              <div className="flex items-center justify-between">
+                <div>
+                  <h5 className="font-medium text-brand-dark dark:text-white">Enable Floating Chat</h5>
+                  <p className="text-sm text-gray-600 dark:text-gray-300">Show a floating chat button on your website</p>
+                </div>
+                <label className="inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={localSettings.floating_chat_enabled === true}
+                    onChange={(e) => handleLocalChange('floating_chat_enabled', e.target.checked)}
+                    disabled={isSavingSettings}
+                    className="sr-only peer"
+                  />
+                  <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-accent/20 dark:peer-focus:ring-brand-accent/30 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-brand-accent dark:peer-checked:bg-brand-accent peer-disabled:opacity-50 peer-disabled:cursor-not-allowed"></div>
+                  <span className="ms-3 text-sm font-medium text-gray-900 dark:text-gray-300">
+                    Enable floating chat
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            {/* Display Conditions */}
+            {localSettings.floating_chat_enabled && (
+              <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
+                <h4 className="font-medium text-brand-dark dark:text-white mb-3">Display Conditions</h4>
+                <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+                  Choose where the floating chat button should appear on your website
+                </p>
+                
+                <div className="space-y-3">
+                  <label className="flex items-center space-x-3 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="floating_chat_conditions"
+                      value="everywhere"
+                      checked={localSettings.floating_chat_conditions === 'everywhere'}
+                      onChange={(e) => handleLocalChange('floating_chat_conditions', e.target.value)}
+                      disabled={isSavingSettings}
+                      className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                    />
+                    <div>
+                      <div className="font-medium text-gray-900 dark:text-white">Show Everywhere</div>
+                      <div className="text-sm text-gray-600 dark:text-gray-300">Display the floating chat on all pages (frontend and admin)</div>
+                    </div>
+                  </label>
+                  
+                  <label className="flex items-center space-x-3 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="floating_chat_conditions"
+                      value="frontend_only"
+                      checked={localSettings.floating_chat_conditions === 'frontend_only'}
+                      onChange={(e) => handleLocalChange('floating_chat_conditions', e.target.value)}
+                      disabled={isSavingSettings}
+                      className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                    />
+                    <div>
+                      <div className="font-medium text-gray-900 dark:text-white">Frontend Only</div>
+                      <div className="text-sm text-gray-600 dark:text-gray-300">Display only on public pages (not in admin area)</div>
+                    </div>
+                  </label>
+                  
+                  <label className="flex items-center space-x-3 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="floating_chat_conditions"
+                      value="admin_only"
+                      checked={localSettings.floating_chat_conditions === 'admin_only'}
+                      onChange={(e) => handleLocalChange('floating_chat_conditions', e.target.value)}
+                      disabled={isSavingSettings}
+                      className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                    />
+                    <div>
+                      <div className="font-medium text-gray-900 dark:text-white">Admin Area Only</div>
+                      <div className="text-sm text-gray-600 dark:text-gray-300">Display only in WordPress admin area (not on public pages)</div>
+                    </div>
+                  </label>
+                  
+                  <label className="flex items-center space-x-3 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="floating_chat_conditions"
+                      value="logged_in_only"
+                      checked={localSettings.floating_chat_conditions === 'logged_in_only'}
+                      onChange={(e) => {
+                        handleLocalChange('floating_chat_conditions', e.target.value)
+                        // Pre-load users when this option is selected
+                        if (e.target.value === 'logged_in_only' && availableUsers.length === 0) {
+                          loadAvailableUsers()
+                        }
+                      }}
+                      disabled={isSavingSettings}
+                      className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                    />
+                    <div>
+                      <div className="font-medium text-gray-900 dark:text-white">Logged-in Users Only</div>
+                      <div className="text-sm text-gray-600 dark:text-gray-300">Display only when users are logged into WordPress</div>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Advanced Settings for Logged-in Users */}
+                {localSettings.floating_chat_conditions === 'logged_in_only' && (
+                  <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600">
+                    <h5 className="font-medium text-gray-900 dark:text-white mb-3">User Restrictions</h5>
+                    <div className="space-y-4">
+                      <div>
+                        <Label htmlFor="floating-chat-user-roles" value="Allowed User Roles" className="mb-2" />
+                        <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
+                          Leave empty to allow all logged-in users, or select specific roles to restrict access.
+                        </p>
+                        <div className="space-y-2 max-h-32 overflow-y-auto">
+                          {['administrator', 'editor', 'author', 'contributor', 'subscriber'].map(role => (
+                            <label key={role} className="flex items-center space-x-2">
+                              <input
+                                type="checkbox"
+                                checked={localSettings.floating_chat_user_roles.includes(role)}
+                                onChange={(e) => {
+                                  const roles = [...localSettings.floating_chat_user_roles]
+                                  if (e.target.checked) {
+                                    if (!roles.includes(role)) roles.push(role)
+                                  } else {
+                                    const index = roles.indexOf(role)
+                                    if (index > -1) roles.splice(index, 1)
+                                  }
+                                  handleLocalChange('floating_chat_user_roles', roles)
+                                }}
+                                disabled={isSavingSettings}
+                                className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 rounded focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                              />
+                              <span className="text-sm text-gray-700 dark:text-gray-300 capitalize">{role}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      
+                      <div>
+                        <Label htmlFor="floating-chat-specific-users" value="Specific Users (Advanced)" className="mb-2" />
+                        <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
+                          Select specific users who should see the floating chat. Leave empty to use role restrictions only.
+                        </p>
+                        <div className="space-y-2 max-h-40 overflow-y-auto border border-gray-300 dark:border-gray-600 rounded-lg p-3">
+                          {!isLoadingUsers && availableUsers.length === 0 && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-gray-600 dark:text-gray-300">No users loaded</span>
+                              <Button
+                                size="xs"
+                                onClick={loadAvailableUsers}
+                                disabled={isLoadingUsers}
+                                className="bg-blue-600 hover:bg-blue-700 text-white"
+                              >
+                                Load Users
+                              </Button>
+                            </div>
+                          )}
+                          
+                          {isLoadingUsers && (
+                            <div className="flex items-center justify-center p-4">
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-brand-accent"></div>
+                              <span className="ml-2 text-sm text-gray-600 dark:text-gray-300">Loading users...</span>
+                            </div>
+                          )}
+                          
+                          {availableUsers.length > 0 && (
+                            <>
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Select Users:</span>
+                                <Button
+                                  size="xs"
+                                  onClick={() => {
+                                    setAvailableUsers([])
+                                    loadAvailableUsers()
+                                  }}
+                                  className="bg-gray-600 hover:bg-gray-700 text-white"
+                                >
+                                  Refresh
+                                </Button>
+                              </div>
+                              {availableUsers.map(user => (
+                                <label key={user.id} className="flex items-center space-x-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={localSettings.floating_chat_specific_users.includes(user.id)}
+                                    onChange={(e) => {
+                                      const userIds = [...localSettings.floating_chat_specific_users]
+                                      if (e.target.checked) {
+                                        if (!userIds.includes(user.id)) userIds.push(user.id)
+                                      } else {
+                                        const index = userIds.indexOf(user.id)
+                                        if (index > -1) userIds.splice(index, 1)
+                                      }
+                                      handleLocalChange('floating_chat_specific_users', userIds)
+                                    }}
+                                    disabled={isSavingSettings}
+                                    className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 rounded focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                                  />
+                                  <span className="text-sm text-gray-700 dark:text-gray-300" title={user.email}>
+                                    {user.display_name} ({user.username})
+                                  </span>
+                                </label>
+                              ))}
+                            </>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          If both roles and specific users are selected, users must match either criteria to see the chat.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Advanced Settings for Frontend Only */}
+                {localSettings.floating_chat_conditions === 'frontend_only' && (
+                  <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600">
+                    <h5 className="font-medium text-gray-900 dark:text-white mb-3">Frontend Page Restrictions</h5>
+                    <div className="space-y-4">
+                      <div>
+                        <Label value="Page Selection" className="mb-2" />
+                        <div className="space-y-2">
+                          <label className="flex items-center space-x-2">
+                            <input
+                              type="radio"
+                              name="floating_chat_frontend_pages"
+                              value="all"
+                              checked={localSettings.floating_chat_frontend_pages === 'all'}
+                              onChange={(e) => handleLocalChange('floating_chat_frontend_pages', e.target.value)}
+                              disabled={isSavingSettings}
+                              className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                            />
+                            <span className="text-sm text-gray-700 dark:text-gray-300">All frontend pages</span>
+                          </label>
+                          <label className="flex items-center space-x-2">
+                            <input
+                              type="radio"
+                              name="floating_chat_frontend_pages"
+                              value="specific"
+                              checked={localSettings.floating_chat_frontend_pages === 'specific'}
+                              onChange={(e) => handleLocalChange('floating_chat_frontend_pages', e.target.value)}
+                              disabled={isSavingSettings}
+                              className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                            />
+                            <span className="text-sm text-gray-700 dark:text-gray-300">Specific pages/patterns only</span>
+                          </label>
+                        </div>
+                      </div>
+
+                      {localSettings.floating_chat_frontend_pages === 'specific' && (
+                        <div>
+                          <Label htmlFor="floating-chat-frontend-urls" value="URL Patterns" className="mb-2" />
+                          <textarea
+                            id="floating-chat-frontend-urls"
+                            rows="4"
+                            placeholder="Enter URL patterns, one per line. Examples:&#10;/contact&#10;/support/*&#10;/blog/*&#10;Use * as wildcard for multiple pages"
+                            value={localSettings.floating_chat_frontend_urls}
+                            onChange={(e) => handleLocalChange('floating_chat_frontend_urls', e.target.value)}
+                            disabled={isSavingSettings}
+                            className="block w-full p-2.5 text-sm text-gray-900 bg-gray-50 rounded-lg border border-gray-300 focus:ring-brand-accent focus:border-brand-accent dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-brand-accent dark:focus:border-brand-accent"
+                          />
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                            Relative URLs starting from site root. Use * for wildcards (e.g., /blog/* matches all blog pages).
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Advanced Settings for Admin Only */}
+                {localSettings.floating_chat_conditions === 'admin_only' && (
+                  <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600">
+                    <h5 className="font-medium text-gray-900 dark:text-white mb-3">Admin Page Restrictions</h5>
+                    <div className="space-y-4">
+                      <div>
+                        <Label value="Admin Page Selection" className="mb-2" />
+                        <div className="space-y-2">
+                          <label className="flex items-center space-x-2">
+                            <input
+                              type="radio"
+                              name="floating_chat_admin_pages"
+                              value="all"
+                              checked={localSettings.floating_chat_admin_pages === 'all'}
+                              onChange={(e) => handleLocalChange('floating_chat_admin_pages', e.target.value)}
+                              disabled={isSavingSettings}
+                              className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                            />
+                            <span className="text-sm text-gray-700 dark:text-gray-300">All admin pages</span>
+                          </label>
+                          <label className="flex items-center space-x-2">
+                            <input
+                              type="radio"
+                              name="floating_chat_admin_pages"
+                              value="specific"
+                              checked={localSettings.floating_chat_admin_pages === 'specific'}
+                              onChange={(e) => handleLocalChange('floating_chat_admin_pages', e.target.value)}
+                              disabled={isSavingSettings}
+                              className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                            />
+                            <span className="text-sm text-gray-700 dark:text-gray-300">Specific admin pages only</span>
+                          </label>
+                        </div>
+                      </div>
+
+                      {localSettings.floating_chat_admin_pages === 'specific' && (
+                        <div>
+                          <Label value="Select Admin Pages" className="mb-2" />
+                          <div className="space-y-2 max-h-32 overflow-y-auto">
+                            {[
+                              { value: 'dashboard', label: 'Dashboard' },
+                              { value: 'posts', label: 'Posts' },
+                              { value: 'pages', label: 'Pages' },
+                              { value: 'media', label: 'Media Library' },
+                              { value: 'comments', label: 'Comments' },
+                              { value: 'appearance', label: 'Appearance' },
+                              { value: 'plugins', label: 'Plugins' },
+                              { value: 'users', label: 'Users' },
+                              { value: 'tools', label: 'Tools' },
+                              { value: 'settings', label: 'Settings' },
+                              { value: 'woocommerce', label: 'WooCommerce (if active)' }
+                            ].map(page => (
+                              <label key={page.value} className="flex items-center space-x-2">
+                                <input
+                                  type="checkbox"
+                                  checked={localSettings.floating_chat_specific_admin_pages.includes(page.value)}
+                                  onChange={(e) => {
+                                    const pages = [...localSettings.floating_chat_specific_admin_pages]
+                                    if (e.target.checked) {
+                                      if (!pages.includes(page.value)) pages.push(page.value)
+                                    } else {
+                                      const index = pages.indexOf(page.value)
+                                      if (index > -1) pages.splice(index, 1)
+                                    }
+                                    handleLocalChange('floating_chat_specific_admin_pages', pages)
+                                  }}
+                                  disabled={isSavingSettings}
+                                  className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 rounded focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                                />
+                                <span className="text-sm text-gray-700 dark:text-gray-300">{page.label}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                
+                {localSettings.show_tips === true && (
+                  <div className="mt-4 p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+                    <p className="text-sm text-green-800 dark:text-green-200">
+                      <strong>💡 Tip:</strong> "Frontend Only" is recommended if you want to provide customer support via the floating chat. 
+                      "Logged-in Users Only" is good for member sites where you want to restrict access to the AI assistant.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Save Button */}
+            <div className="pt-4 border-t border-gray-200 dark:border-gray-600">
+              <div className="flex items-center justify-between">
+                {hasUnsavedChanges && (
+                  <p className="text-sm text-amber-600 dark:text-amber-400">
+                    ⚠️ You have unsaved changes
+                  </p>
+                )}
+                <Button
+                  onClick={handleSaveTab}
+                  disabled={isSavingSettings || !hasUnsavedChanges}
+                  className="ml-auto"
+                >
+                  {isSavingSettings ? 'Saving...' : 'Save Floating Chat Settings'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )
+
       case 'sharing':
         return (
           <SharedConversations adminData={window.matAdminData} />
@@ -1060,45 +1536,57 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     }
   }
 
+  // Handle FULL SQL (dangerous SQL) checkbox change
+  const handleDangerousSqlChange = (checked) => {
+    if (checked) {
+      setShowDangerousSqlModal(true)
+    } else {
+      handleLocalChange('enable_dangerous_sql_queries', false)
+    }
+  }
+
+  const confirmDangerousSql = () => {
+    handleLocalChange('enable_dangerous_sql_queries', true)
+    showWarning('FULL SQL access will be enabled when you save these settings')
+  }
+
   return (
     <div className="space-y-6">
-      <Card className="p-6">
-        {/* Tab Navigation */}
-        <div className="border-b border-gray-200 dark:border-gray-600 mb-6">
-          <nav className="-mb-px flex space-x-8">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
+      {/* Tab Navigation */}
+      <div className="border-b border-gray-200 dark:border-gray-700">
+        <nav className="-mb-px flex space-x-8">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
+                activeTab === tab.id
+                  ? 'border-brand-accent text-brand-accent dark:text-brand-accent'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+              }`}
+            >
+              <svg
+                className={`w-5 h-5 mr-2 ${
                   activeTab === tab.id
-                    ? 'border-brand-accent text-brand-accent dark:text-brand-accent'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+                    ? 'text-brand-accent'
+                    : 'text-gray-400'
                 }`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
               >
-                <svg
-                  className={`w-5 h-5 mr-2 ${
-                    activeTab === tab.id
-                      ? 'text-brand-accent'
-                      : 'text-gray-400'
-                  }`}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={tab.icon} />
-                </svg>
-                {tab.label}
-              </button>
-            ))}
-          </nav>
-        </div>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={tab.icon} />
+              </svg>
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      </div>
 
-        {/* Tab Content */}
-        <div>
-          {renderTabContent()}
-        </div>
-      </Card>
+      {/* Tab Content */}
+      <div>
+        {renderTabContent()}
+      </div>
 
       {/* Delete Tools Confirmation Modal */}
       <ConfirmationModal
@@ -1144,6 +1632,24 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           "The encrypted API key will be permanently removed",
           "You will need to re-enter the API key to use AI features",
           "This will not affect your account with the provider"
+        ]}
+      />
+
+      {/* FULL SQL Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={showDangerousSqlModal}
+        onClose={() => setShowDangerousSqlModal(false)}
+        onConfirm={confirmDangerousSql}
+        title="Enable FULL SQL Access?"
+        message="Are you sure you want to enable FULL SQL (write/delete) access? This will allow the AI to execute any SQL statement, including destructive operations."
+        confirmText="Yes, enable FULL SQL"
+        cancelText="No, keep it disabled"
+        confirmButtonClass="bg-red-600 hover:bg-red-700 focus:ring-red-300 dark:bg-red-500 dark:hover:bg-red-600 dark:focus:ring-red-900"
+        icon="delete"
+        items={[
+          "AI can run UPDATE and DELETE queries",
+          "AI can DROP tables or alter database schema",
+          "These actions can permanently alter or delete data"
         ]}
       />
     </div>
