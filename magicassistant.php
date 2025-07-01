@@ -212,3 +212,6 @@ function MATPS() {
 function MATLIC() {
   return $GLOBALS['magic_assistant']->get_licensing_client();
 }
+
+// Register login event tracker
+\MagicAssistant\Login_Tracker::register();

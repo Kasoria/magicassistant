@@ -7,7 +7,7 @@ const PublicApp = () => {
 
   useEffect(() => {
     // Check if WordPress data is available
-    if (typeof window.matPublicData !== 'undefined') {
+    if (typeof window.matPublicData !== 'undefined' || typeof window.matAdminData !== 'undefined') {
       setIsLoaded(true)
     }
   }, [])

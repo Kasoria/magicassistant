@@ -180,6 +180,18 @@ class AI_Provider {
             'permission_callback' => array($this, 'check_permissions'),
         ));
         
+        register_rest_route('magicassistant/v1', '/security-data', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_security_data'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        register_rest_route('magicassistant/v1', '/security-data', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'save_security_data'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
         // DEBUG LOG ENDPOINTS
         register_rest_route('magicassistant/v1', '/debug-logs', array(
             'methods' => 'GET',
@@ -270,6 +282,31 @@ class AI_Provider {
         register_rest_route('magicassistant/v1', '/license/deactivate', array(
             'methods' => 'POST',
             'callback' => array($this, 'deactivate_license'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        // USERS ENDPOINT
+        register_rest_route('magicassistant/v1', '/users', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_users'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        // HTACCESS EDITOR ENDPOINTS
+        register_rest_route('magicassistant/v1', '/htaccess', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_htaccess'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        register_rest_route('magicassistant/v1', '/htaccess', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'save_htaccess'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        register_rest_route('magicassistant/v1', '/htaccess-backup', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'backup_htaccess'),
             'permission_callback' => array($this, 'check_permissions'),
         ));
     }
@@ -536,6 +573,9 @@ class AI_Provider {
             $conversation_history,
             [['role' => 'user', 'content' => $message]]
         );
+        
+        // Remove any accidental duplicate consecutive messages to save tokens
+        $messages = $this->remove_consecutive_duplicates($messages);
         
         $tool_calls_count = 0;
         $total_tokens = 0;
@@ -875,8 +915,6 @@ IMPORTANT - SEO Tool Usage:
 When using DataForSEO tools, ALWAYS consider the language and geographic context:
 - FIRST use the 'dataforseo_suggest_location' tool to get intelligent location/language suggestions
 - Use the suggestions from that tool for subsequent SEO API calls
-- Common location codes: USA (2840), Germany (2276), UK (2826), France (2250), Spain (2724)
-- Common language codes: en (English), de (German), fr (French), es (Spanish), it (Italian)
 - If suggestion tool returns low confidence, ask the user for clarification before making the API call
 
 In Agent Mode, you should:
@@ -886,13 +924,6 @@ In Agent Mode, you should:
 4. Only make additional tool calls if you need more specific information
 5. Present information naturally based on what the user is asking for
 6. Provide insights and analysis, not just raw data
-
-RESPONSE APPROACH:
-- For analysis requests: Craft detailed, insightful responses that interpret the data
-- For management tasks: Explain what you did and the results clearly
-- For SEO requests: Use DataForSEO tools to provide comprehensive SEO insights
-- For information requests: Present data in an organized, conversational way
-- Always adapt your response style to match the user's needs and intent
 
 Be proactive and thorough, but focus on creating natural, helpful responses rather than technical data dumps.";
     }
@@ -904,7 +935,10 @@ Be proactive and thorough, but focus on creating natural, helpful responses rath
 
 {$tools_info}
 
-AVAILABLE CAPABILITIES:
+CRITICAL FIRST STEP:
+Before attempting to use any tools to help the user, you MUST first call the 'get_available_tools' tool to discover what tools are available. This tool will provide you with the complete list of available tools and their descriptions. Only after calling this tool will you know what specific tools you can use to help the user.
+
+AVAILABLE CAPABILITIES (after discovering tools):
 - WordPress content management (posts, pages, media, users, etc.)
 - SEO analysis and optimization (SERP analysis, keyword research, competitor analysis, technical audits)
 - Site administration and settings management
@@ -914,8 +948,6 @@ IMPORTANT - SEO Tool Usage:
 When using DataForSEO tools, ALWAYS consider the language and geographic context:
 - FIRST use the 'dataforseo_suggest_location' tool to get intelligent location/language suggestions
 - Use the suggestions from that tool for subsequent SEO API calls
-- Common location codes: USA (2840), Germany (2276), UK (2826), France (2250), Spain (2724)
-- Common language codes: en (English), de (German), fr (French), es (Spanish), it (Italian)
 - If suggestion tool returns low confidence, ask the user for clarification before making the API call
 
 IMPORTANT: Respond naturally and conversationally. When you use tools to gather information:
@@ -1049,25 +1081,43 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             return [];
         }
 
+        // Only return the dynamic tool discovery tool to reduce token usage
+        // The AI will call this tool first to get the complete list of available tools
         $registered_tools = $this->mcp_server->get_registered_tools();
-        $openai_tools     = [];
+        
+        // Fallback to all tools if dynamic discovery tool missing or already used
+        if (!isset($registered_tools['get_available_tools']) || ($this->mcp_server && $this->mcp_server->get_tools_discovered())) {
+            $openai_tools = [];
+            foreach ($registered_tools as $name => $tool) {
+                $description = isset($tool['description']) ? mb_substr($tool['description'], 0, 160) : '';
+                $schema      = $tool['inputSchema'] ?? array('type' => 'object');
+                $schema      = $this->compress_tool_schema($schema);
 
-        foreach ($registered_tools as $name => $tool) {
-            $description = isset($tool['description']) ? mb_substr($tool['description'], 0, 160) : '';
-            $schema      = $tool['inputSchema'] ?? array('type' => 'object');
-            $schema      = $this->compress_tool_schema($schema);
-
-            $openai_tools[] = array(
-                'type'     => 'function',
-                'function' => array(
-                    'name'        => $name,
-                    'description' => $description,
-                    'parameters'  => $schema,
-                ),
-            );
+                $openai_tools[] = array(
+                    'type'     => 'function',
+                    'function' => array(
+                        'name'        => $name,
+                        'description' => $description,
+                        'parameters'  => $schema,
+                    ),
+                );
+            }
+            return $openai_tools;
         }
 
-        return $openai_tools;
+        $tool = $registered_tools['get_available_tools'];
+        $description = isset($tool['description']) ? $tool['description'] : '';
+        $schema = $tool['inputSchema'] ?? array('type' => 'object');
+        $schema = $this->compress_tool_schema($schema);
+
+        return [array(
+            'type'     => 'function',
+            'function' => array(
+                'name'        => 'get_available_tools',
+                'description' => $description,
+                'parameters'  => $schema,
+            ),
+        )];
     }
     
     private function get_mcp_tools_for_anthropic() {
@@ -1075,22 +1125,37 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             return [];
         }
 
+        // Only return the dynamic tool discovery tool to reduce token usage
+        // The AI will call this tool first to get the complete list of available tools
         $registered_tools = $this->mcp_server->get_registered_tools();
-        $anthropic_tools  = [];
+        
+        // Fallback to all tools if dynamic discovery tool missing or already used
+        if (!isset($registered_tools['get_available_tools']) || ($this->mcp_server && $this->mcp_server->get_tools_discovered())) {
+            $anthropic_tools = [];
+            foreach ($registered_tools as $name => $tool) {
+                $description = isset($tool['description']) ? mb_substr($tool['description'], 0, 160) : '';
+                $schema      = $tool['inputSchema'] ?? array('type' => 'object');
+                $schema      = $this->compress_tool_schema($schema);
 
-        foreach ($registered_tools as $name => $tool) {
-            $description = isset($tool['description']) ? mb_substr($tool['description'], 0, 160) : '';
-            $schema      = $tool['inputSchema'] ?? array('type' => 'object');
-            $schema      = $this->compress_tool_schema($schema);
-
-            $anthropic_tools[] = array(
-                'name'         => $name,
-                'description'  => $description,
-                'input_schema' => $schema,
-            );
+                $anthropic_tools[] = array(
+                    'name'         => $name,
+                    'description'  => $description,
+                    'input_schema' => $schema,
+                );
+            }
+            return $anthropic_tools;
         }
 
-        return $anthropic_tools;
+        $tool = $registered_tools['get_available_tools'];
+        $description = isset($tool['description']) ? $tool['description'] : '';
+        $schema = $tool['inputSchema'] ?? array('type' => 'object');
+        $schema = $this->compress_tool_schema($schema);
+
+        return [array(
+            'name'         => 'get_available_tools',
+            'description'  => $description,
+            'input_schema' => $schema,
+        )];
     }
     
     private function process_ai_response($response) {
@@ -1104,8 +1169,19 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             throw new Exception('MCP server not available');
         }
 
-        // Leverage the public helper to execute any registered tool.
-        return $this->mcp_server->invoke_tool($tool_name, $tool_args);
+        // Execute the requested tool
+        $result = $this->mcp_server->invoke_tool($tool_name, $tool_args);
+
+        // Persist security tool results automatically
+        if (strpos($tool_name, 'security_') === 0 && $this->db && is_array($result)) {
+            $user_id = get_current_user_id();
+            $security_data = $this->db->get_user_setting('security_data', $user_id, array());
+            $security_data[$tool_name] = $result;
+            $security_data['lastUpdated'] = current_time('mysql');
+            $this->db->save_user_setting('security_data', $security_data, $user_id);
+        }
+
+        return $result;
     }
     
     /**
@@ -1141,8 +1217,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             }
         }
         
-        // Escape the text for markdown
-        $escaped_text = str_replace(['[', ']', '(', ')'], ['\\[', '\\]', '\\(', '\\)'], $text);
+        // Do not escape text for markdown to reduce token usage
+        $escaped_text = $text;
         
         // Return as markdown link
         return "[{$escaped_text}]({$sanitized_url})";
@@ -1167,8 +1243,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     return $text; // Return just text if URL is invalid
                 }
                 
-                // Escape markdown special characters in text
-                $escaped_text = str_replace(['[', ']', '(', ')'], ['\\[', '\\]', '\\(', '\\)'], $text);
+                // Do not escape markdown special characters to reduce token usage
+                $escaped_text = $text;
                 
                 return "[{$escaped_text}]({$url})";
             },
@@ -1242,13 +1318,23 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'agent_mode' => $this->settings['agent_mode'] ?? 'always',
             'max_agent_iterations' => $this->settings['max_agent_iterations'] ?? 10,
             'debug_log_raw_responses' => isset($this->settings['debug_log_raw_responses']) ? (bool) $this->settings['debug_log_raw_responses'] : false,
+            'enable_sql_queries' => isset($this->settings['enable_sql_queries']) ? (bool) $this->settings['enable_sql_queries'] : false,
             'max_response_tokens' => intval($this->settings['max_response_tokens'] ?? 1500),
             'conversation_history_limit' => intval($this->settings['conversation_history_limit'] ?? 20),
             'manual_competitors' => $this->settings['manual_competitors'] ?? '',
             'show_tips' => isset($this->settings['show_tips']) ? (bool) $this->settings['show_tips'] : true,
             'seo_target_location' => $this->settings['seo_target_location'] ?? '',
             'seo_target_language' => $this->settings['seo_target_language'] ?? 'en',
-            'seo_target_keywords' => $this->settings['seo_target_keywords'] ?? ''
+            'seo_target_keywords' => $this->settings['seo_target_keywords'] ?? '',
+            'floating_chat_enabled' => isset($this->settings['floating_chat_enabled']) ? (bool) $this->settings['floating_chat_enabled'] : true,
+            'floating_chat_conditions' => $this->settings['floating_chat_conditions'] ?? 'everywhere',
+            'floating_chat_user_roles' => isset($this->settings['floating_chat_user_roles']) ? json_decode($this->settings['floating_chat_user_roles'], true) : [],
+            'floating_chat_specific_users' => isset($this->settings['floating_chat_specific_users']) ? json_decode($this->settings['floating_chat_specific_users'], true) : [],
+            'floating_chat_frontend_pages' => $this->settings['floating_chat_frontend_pages'] ?? 'all',
+            'floating_chat_frontend_urls' => $this->settings['floating_chat_frontend_urls'] ?? '',
+            'floating_chat_admin_pages' => $this->settings['floating_chat_admin_pages'] ?? 'all',
+            'floating_chat_specific_admin_pages' => isset($this->settings['floating_chat_specific_admin_pages']) ? json_decode($this->settings['floating_chat_specific_admin_pages'], true) : [],
+            'enable_dangerous_sql_queries' => isset($this->settings['enable_dangerous_sql_queries']) ? (bool) $this->settings['enable_dangerous_sql_queries'] : false,
         );
     }
     
@@ -1329,6 +1415,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             }
         }
         
+        // SQL query execution toggle
+        if (isset($data['enable_sql_queries'])) {
+            $this->db->save_setting('enable_sql_queries', (bool) $data['enable_sql_queries']);
+        }
+        
         // Debug raw API response logging toggle
         if (isset($data['debug_log_raw_responses'])) {
             $this->db->save_setting('debug_log_raw_responses', (bool) $data['debug_log_raw_responses']);
@@ -1371,6 +1462,65 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         if (isset($data['seo_target_keywords'])) {
             $this->db->save_setting('seo_target_keywords', sanitize_textarea_field($data['seo_target_keywords']));
+        }
+        
+        // Floating chat settings
+        if (isset($data['floating_chat_enabled'])) {
+            $this->db->save_setting('floating_chat_enabled', (bool) $data['floating_chat_enabled']);
+        }
+        
+        if (isset($data['floating_chat_conditions'])) {
+            $valid_conditions = ['everywhere', 'frontend_only', 'admin_only', 'logged_in_only'];
+            $condition = sanitize_text_field($data['floating_chat_conditions']);
+            if (in_array($condition, $valid_conditions)) {
+                $this->db->save_setting('floating_chat_conditions', $condition);
+            }
+        }
+        
+        if (isset($data['floating_chat_user_roles'])) {
+            $roles = is_array($data['floating_chat_user_roles']) ? $data['floating_chat_user_roles'] : [];
+            $valid_roles = ['administrator', 'editor', 'author', 'contributor', 'subscriber'];
+            $filtered_roles = array_intersect($roles, $valid_roles);
+            $this->db->save_setting('floating_chat_user_roles', json_encode($filtered_roles));
+        }
+        
+        if (isset($data['floating_chat_specific_users'])) {
+            $users = is_array($data['floating_chat_specific_users']) ? $data['floating_chat_specific_users'] : [];
+            $user_ids = array_map('intval', $users);
+            $user_ids = array_filter($user_ids, function($id) { return $id > 0; });
+            $this->db->save_setting('floating_chat_specific_users', json_encode($user_ids));
+        }
+        
+        if (isset($data['floating_chat_frontend_pages'])) {
+            $valid_values = ['all', 'specific'];
+            $value = sanitize_text_field($data['floating_chat_frontend_pages']);
+            if (in_array($value, $valid_values)) {
+                $this->db->save_setting('floating_chat_frontend_pages', $value);
+            }
+        }
+        
+        if (isset($data['floating_chat_frontend_urls'])) {
+            $this->db->save_setting('floating_chat_frontend_urls', sanitize_textarea_field($data['floating_chat_frontend_urls']));
+        }
+        
+        if (isset($data['floating_chat_admin_pages'])) {
+            $valid_values = ['all', 'specific'];
+            $value = sanitize_text_field($data['floating_chat_admin_pages']);
+            if (in_array($value, $valid_values)) {
+                $this->db->save_setting('floating_chat_admin_pages', $value);
+            }
+        }
+        
+        if (isset($data['floating_chat_specific_admin_pages'])) {
+            $pages = is_array($data['floating_chat_specific_admin_pages']) ? $data['floating_chat_specific_admin_pages'] : [];
+            $valid_pages = ['dashboard', 'posts', 'pages', 'media', 'comments', 'appearance', 'plugins', 'users', 'tools', 'settings', 'woocommerce'];
+            $filtered_pages = array_intersect($pages, $valid_pages);
+            $this->db->save_setting('floating_chat_specific_admin_pages', json_encode($filtered_pages));
+        }
+        
+        // Dangerous SQL query execution toggle
+        if (isset($data['enable_dangerous_sql_queries'])) {
+            $this->db->save_setting('enable_dangerous_sql_queries', (bool) $data['enable_dangerous_sql_queries']);
         }
         
         // Refresh settings from database
@@ -4042,6 +4192,192 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         } catch ( Exception $e ) {
             return null;
         }
+    }
+
+    /**
+     * Strip out consecutive duplicate messages (by role & trimmed content)
+     * to avoid sending the same user prompt twice to the LLM, which wastes tokens.
+     * @param array $messages
+     * @return array
+     */
+    private function remove_consecutive_duplicates($messages) {
+        $filtered = [];
+        foreach ($messages as $msg) {
+            if (empty($filtered)) {
+                $filtered[] = $msg;
+                continue;
+            }
+            $last = end($filtered);
+            $sameRole    = isset($last['role'])    && isset($msg['role'])    && $last['role'] === $msg['role'];
+            $sameContent = isset($last['content']) && isset($msg['content']) && trim($last['content']) === trim($msg['content']);
+            if ($sameRole && $sameContent) {
+                // Skip duplicate
+                continue;
+            }
+            $filtered[] = $msg;
+        }
+        return $filtered;
+    }
+    
+    /**
+     * Get all users for selection
+     */
+    public function get_users($request) {
+        $users = get_users(array(
+            'number' => 100, // Limit to 100 users for performance
+            'orderby' => 'display_name',
+            'order' => 'ASC',
+            'fields' => array('ID', 'display_name', 'user_email', 'user_login')
+        ));
+        
+        $formatted_users = array();
+        foreach ($users as $user) {
+            $formatted_users[] = array(
+                'id' => (int) $user->ID,
+                'display_name' => $user->display_name,
+                'email' => $user->user_email,
+                'username' => $user->user_login,
+                'label' => sprintf('%s (%s)', $user->display_name, $user->user_email)
+            );
+        }
+        
+        return $formatted_users;
+    }
+
+    /**
+     * Get Security scan data
+     */
+    public function get_security_data($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+
+        $user_id = get_current_user_id();
+        $security_data = $this->db->get_user_setting('security_data', $user_id, array());
+
+        return array(
+            'success' => true,
+            'data' => $security_data
+        );
+    }
+
+    /**
+     * Save Security scan data
+     */
+    public function save_security_data($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+
+        $data = $request->get_json_params();
+        $user_id = get_current_user_id();
+
+        if (empty($data)) {
+            return new WP_Error('no_data', 'No data provided', array('status' => 400));
+        }
+
+        // Sanitize incoming data (allow nested arrays)
+        $security_data = $this->sanitize_security_data($data);
+        $security_data['lastUpdated'] = current_time('mysql');
+
+        $this->db->save_user_setting('security_data', $security_data, $user_id);
+
+        return array(
+            'success' => true,
+            'message' => 'Security data saved successfully'
+        );
+    }
+
+    /**
+     * Recursively sanitize security data arrays
+     */
+    private function sanitize_security_data($data) {
+        if (!is_array($data)) {
+            return array();
+        }
+
+        $sanitized = array();
+        foreach ($data as $key => $value) {
+            $safe_key = sanitize_key($key);
+            if (is_array($value)) {
+                $sanitized[$safe_key] = $this->sanitize_security_data($value);
+            } else {
+                if (is_string($value)) {
+                    $sanitized[$safe_key] = sanitize_text_field($value);
+                } elseif (is_numeric($value)) {
+                    $sanitized[$safe_key] = $value + 0; // cast to proper numeric type
+                } else {
+                    // Fallback: store scalar as-is
+                    $sanitized[$safe_key] = $value;
+                }
+            }
+        }
+
+        return $sanitized;
+    }
+
+    // HTACCESS EDITOR ENDPOINTS
+    public function get_htaccess($request) {
+        $file = ABSPATH . '.htaccess';
+        if (!file_exists($file)) {
+            return array('success' => true, 'content' => '');
+        }
+        $content = file_get_contents($file);
+        return array('success' => true, 'content' => $content);
+    }
+
+    public function save_htaccess($request) {
+        $data = $request->get_json_params();
+        if (!isset($data['content'])) {
+            return new WP_Error('missing_content', 'No content provided', array('status' => 400));
+        }
+        $file = ABSPATH . '.htaccess';
+        $result = file_put_contents($file, $data['content']);
+        if ($result === false) {
+            return new WP_Error('write_failed', 'Failed to write .htaccess file', array('status' => 500));
+        }
+        return array('success' => true, 'message' => '.htaccess file saved successfully');
+    }
+
+    public function backup_htaccess($request) {
+        $data = $request->get_json_params();
+        if (!isset($data['content'])) {
+            return new WP_Error('missing_content', 'No content provided for backup', array('status' => 400));
+        }
+
+        // Store backups in the root directory where .htaccess resides
+        $backup_dir = ABSPATH; // ABSPATH ends with a trailing slash
+
+        // Generate backup filename with timestamp
+        $timestamp = isset($data['timestamp']) ? sanitize_file_name($data['timestamp']) : current_time('Y-m-d_H-i-s');
+        $backup_filename = 'htaccess_backup_' . $timestamp . '.txt';
+        $backup_file = $backup_dir . $backup_filename;
+
+        // Keep only the 2 most recent backups in the root directory
+        $existing_backups = glob(ABSPATH . 'htaccess_backup_*.txt');
+        if ($existing_backups && count($existing_backups) >= 2) {
+            // Sort by modification time, oldest first
+            usort($existing_backups, function($a, $b) {
+                return filemtime($a) - filemtime($b);
+            });
+            // Remove the oldest backups until we have fewer than 2
+            while (count($existing_backups) >= 2) {
+                $oldest = array_shift($existing_backups);
+                @unlink($oldest);
+            }
+        }
+
+        // Save the backup
+        $result = file_put_contents($backup_file, $data['content']);
+        if ($result === false) {
+            return new WP_Error('backup_failed', 'Failed to create .htaccess backup', array('status' => 500));
+        }
+
+        return array(
+            'success' => true,
+            'message' => '.htaccess backup created successfully',
+            'backup_file' => $backup_filename
+        );
     }
 
 }

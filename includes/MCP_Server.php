@@ -22,6 +22,7 @@ class MCP_Server {
     private $registered_tools = [];
     private $registered_resources = [];
     private $registered_prompts = [];
+    private $tools_discovered = false;
     
     public function __construct($db = null) {
         $this->db = $db;
@@ -144,6 +145,42 @@ class MCP_Server {
                 case 'prompts/get':
                     $result = $this->get_prompt($params);
                     break;
+                case 'security/core_checksum':
+                    $result = $this->security_core_checksum($params);
+                    break;
+                case 'security/file_permissions':
+                    $result = $this->security_file_permissions($params);
+                    break;
+                case 'security/http_headers':
+                    $result = $this->security_http_headers($params);
+                    break;
+                case 'security/https_enforcement':
+                    $result = $this->security_https_enforcement($params);
+                    break;
+                case 'security/php_version_check':
+                    $result = $this->security_php_version_check($params);
+                    break;
+                case 'security/admin_users_audit':
+                    $result = $this->security_admin_users_audit($params);
+                    break;
+                case 'security/login_events':
+                    $result = $this->security_login_events($params);
+                    break;
+                case 'security/file_integrity_watch':
+                    $result = $this->security_file_integrity_watch($params);
+                    break;
+                case 'security/plugins_checksum':
+                    $result = $this->security_plugins_checksum($params);
+                    break;
+                case 'security/themes_checksum':
+                    $result = $this->security_themes_checksum($params);
+                    break;
+                case 'security/vulnerability_scan':
+                    $result = $this->security_vulnerability_scan($params);
+                    break;
+                case 'security/htaccess_protection':
+                    $result = $this->security_htaccess_protection($params);
+                    break;
                 default:
                     throw new Exception('Method not found: ' . $method);
             }
@@ -241,6 +278,24 @@ class MCP_Server {
     }
     
     private function register_default_tools() {
+        // Register the dynamic tool discovery tool FIRST - this reduces token usage by not sending all tools in system message
+        $this->register_tool(array(
+            'name' => 'get_available_tools',
+            'description' => 'Get the complete list of available tools and their schemas. ALWAYS call this first to discover what tools are available before attempting any other operations.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'category' => array(
+                        'type' => 'string',
+                        'description' => 'Optional category filter (media, posts, pages, users, woocommerce, seo, etc.)',
+                        'enum' => array('all', 'media', 'posts', 'pages', 'users', 'woocommerce', 'seo', 'repository', 'rest_api', 'site_info', 'dataforseo', 'pagespeed', 'database', 'security')
+                    )
+                ),
+                'additionalProperties' => false
+            ),
+            'callback' => array($this, 'get_available_tools')
+        ));
+
         // Register Media Tools (from wordpress-mcp)
         $this->register_media_tools();
         
@@ -276,6 +331,12 @@ class MCP_Server {
         
         // Register SEO analysis tools
         $this->register_seo_analysis_tools();
+        
+        // Register Database tools
+        $this->register_database_tools();
+
+        // Register Security tools
+        $this->register_security_tools();
         
         // Register generic REST API tools
         $this->register_rest_api_tools();
@@ -2776,6 +2837,1419 @@ class MCP_Server {
         ));
     }
     
+    /**
+     * Register Database tools (db_*)
+     */
+    private function register_database_tools() {
+        // db_get_info
+        $this->register_tool(array(
+            'name' => 'db_get_info',
+            'description' => 'Get general information about the WordPress database including size and table count.',
+            'inputSchema' => array('type' => 'object', 'properties' => new \stdClass()),
+            'callback' => array($this, 'db_get_info')
+        ));
+
+        // db_list_tables
+        $this->register_tool(array(
+            'name' => 'db_list_tables',
+            'description' => 'List all database tables with size and row count.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'sort_by' => array('type' => 'string', 'enum' => array('name','size','rows'), 'default' => 'size'),
+                    'sort_order' => array('type' => 'string', 'enum' => array('asc','desc'), 'default' => 'desc')
+                )
+            ),
+            'callback' => array($this, 'db_list_tables')
+        ));
+
+        // db_get_table_schema
+        $this->register_tool(array(
+            'name' => 'db_get_table_schema',
+            'description' => 'Get the schema definition for a specific table.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'table_name' => array('type' => 'string')
+                ),
+                'required' => array('table_name')
+            ),
+            'callback' => array($this, 'db_get_table_schema')
+        ));
+
+        // db_run_query (read-only)
+        $this->register_tool(array(
+            'name' => 'db_run_query',
+            'description' => 'Execute a read-only (SELECT) SQL query. Disabled by default for security – enable via settings.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array('query' => array('type' => 'string')),
+                'required' => array('query')
+            ),
+            'callback' => array($this, 'db_run_query')
+        ));
+
+        // db_find_unused_data
+        $this->register_tool(array(
+            'name' => 'db_find_unused_data',
+            'description' => 'Scan the database for orphaned tables (left by removed plugins) and expired or bloated transients/options.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'include_details' => array(
+                        'type' => 'boolean',
+                        'description' => 'If true, include full lists of orphaned tables and expired transients.',
+                        'default' => false
+                    )
+                )
+            ),
+            'callback' => array($this, 'db_find_unused_data')
+        ));
+    }
+
+    /**
+     * Register Security tools (security_*)
+     */
+    private function register_security_tools() {
+        $this->register_tool(array(
+            'name' => 'security_audit',
+            'description' => 'Run a security audit of common WordPress hardening checks and return actionable recommendations.',
+            'inputSchema' => array('type' => 'object', 'properties' => new \stdClass()),
+            'callback' => array($this, 'security_audit')
+        ));
+
+        $this->register_tool(array(
+            'name' => 'security_core_checksum',
+            'description' => 'Verify WordPress core files against official checksums to detect tampering or unexpected files.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'include_details' => array(
+                        'type' => 'boolean',
+                        'description' => 'Whether to include full lists of mismatched/extra/missing files',
+                        'default' => false
+                    )
+                )
+            ),
+            'callback' => array($this, 'security_core_checksum')
+        ));
+
+        // ==== New security tools registrations ====
+        $this->register_tool(array(
+            'name' => 'security_file_permissions',
+            'description' => 'Scan core, wp-content, uploads and wp-config.php for insecure file or directory permissions.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'include_details' => array(
+                        'type' => 'boolean',
+                        'description' => 'Include full list of items with incorrect permissions',
+                        'default' => false
+                    )
+                )
+            ),
+            'callback' => array($this, 'security_file_permissions')
+        ));
+
+        $this->register_tool(array(
+            'name' => 'security_http_headers',
+            'description' => 'Check recommended security-related HTTP response headers for the front-page request.',
+            'inputSchema' => array('type' => 'object', 'properties' => new \stdClass()),
+            'callback' => array($this, 'security_http_headers')
+        ));
+
+        $this->register_tool(array(
+            'name' => 'security_https_enforcement',
+            'description' => 'Verify that the site enforces HTTPS and HSTS correctly.',
+            'inputSchema' => array('type' => 'object', 'properties' => new \stdClass()),
+            'callback' => array($this, 'security_https_enforcement')
+        ));
+
+        $this->register_tool(array(
+            'name' => 'security_php_version_check',
+            'description' => 'Check the running PHP version against the recommended minimum.',
+            'inputSchema' => array('type' => 'object', 'properties' => new \stdClass()),
+            'callback' => array($this, 'security_php_version_check')
+        ));
+
+        $this->register_tool(array(
+            'name' => 'security_admin_users_audit',
+            'description' => 'List administrator accounts and flag dormant ones.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'dormant_days' => array(
+                        'type' => 'integer',
+                        'description' => 'Number of days without login after which an admin account is considered dormant',
+                        'default' => 90
+                    )
+                )
+            ),
+            'callback' => array($this, 'security_admin_users_audit')
+        ));
+
+        $this->register_tool(array(
+            'name' => 'security_login_events',
+            'description' => 'Return recent successful and failed login events captured by MagicAssistant.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'limit' => array(
+                        'type' => 'integer',
+                        'description' => 'Maximum number of events to return',
+                        'default' => 20
+                    )
+                )
+            ),
+            'callback' => array($this, 'security_login_events')
+        ));
+
+        $this->register_tool(array(
+            'name' => 'security_file_integrity_watch',
+            'description' => 'Detect new, modified or deleted files compared to a stored baseline.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'include_details' => array(
+                        'type' => 'boolean',
+                        'description' => 'Include full lists of changed files',
+                        'default' => false
+                    ),
+                    'reset_baseline' => array(
+                        'type' => 'boolean',
+                        'description' => 'If true, create/overwrite the baseline snapshot without comparison',
+                        'default' => false
+                    )
+                )
+            ),
+            'callback' => array($this, 'security_file_integrity_watch')
+        ));
+
+        $this->register_tool(array(
+            'name' => 'security_plugins_checksum',
+            'description' => 'Compare active plugin files against the official WordPress.org release to detect tampering.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'include_details' => array(
+                        'type' => 'boolean',
+                        'description' => 'Include per-plugin lists of modified/missing/unexpected files',
+                        'default' => false
+                    )
+                )
+            ),
+            'callback' => array($this, 'security_plugins_checksum')
+        ));
+
+        $this->register_tool(array(
+            'name' => 'security_themes_checksum',
+            'description' => 'Compare active theme files against the official WordPress.org release to detect tampering.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'include_details' => array(
+                        'type' => 'boolean',
+                        'description' => 'Include detailed lists of changed files',
+                        'default' => false
+                    )
+                )
+            ),
+            'callback' => array($this, 'security_themes_checksum')
+        ));
+
+        $this->register_tool(array(
+            'name' => 'security_vulnerability_scan',
+            'description' => 'Query WPScan API to list known vulnerabilities affecting installed components.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'include_details' => array(
+                        'type' => 'boolean',
+                        'description' => 'Include full vulnerability objects returned by the API',
+                        'default' => false
+                    )
+                )
+            ),
+            'callback' => array($this, 'security_vulnerability_scan')
+        ));
+
+        $this->register_tool(array(
+            'name' => 'security_htaccess_protection',
+            'description' => 'Check .htaccess for common hardening rules (Apache only).',
+            'inputSchema' => array('type' => 'object', 'properties' => new \stdClass()),
+            'callback' => array($this, 'security_htaccess_protection')
+        ));
+    }
+
+    /* ===================== Database tool callbacks ===================== */
+    public function db_get_info($args) {
+        global $wpdb;
+        $dbName = DB_NAME;
+        // Total size in MB
+        $size = $wpdb->get_var($wpdb->prepare(
+            "SELECT SUM(data_length + index_length)/1024/1024 FROM information_schema.TABLES WHERE table_schema = %s",
+            $dbName
+        ));
+        // Table count
+        $tableCount = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM information_schema.TABLES WHERE table_schema = %s",
+            $dbName
+        ));
+        return array(
+            'success' => true,
+            'database_name' => $dbName,
+            'total_size_mb' => round($size,2),
+            'table_count' => intval($tableCount),
+            'table_prefix' => $wpdb->prefix
+        );
+    }
+
+    public function db_list_tables($args) {
+        global $wpdb;
+        $sortBy = isset($args['sort_by']) ? $args['sort_by'] : 'size';
+        $sortOrder = (isset($args['sort_order']) && strtolower($args['sort_order'])==='asc') ? 'asc' : 'desc';
+        $tables = $wpdb->get_results("SHOW TABLE STATUS", ARRAY_A);
+        $list = array_map(function($tbl){
+            return array(
+                'name' => $tbl['Name'],
+                'rows' => intval($tbl['Rows']),
+                'engine' => $tbl['Engine'],
+                'size_mb' => round(($tbl['Data_length']+$tbl['Index_length'])/1024/1024,3)
+            );
+        }, $tables);
+        usort($list, function($a,$b) use($sortBy,$sortOrder){
+            if($a[$sortBy]==$b[$sortBy]) return 0;
+            $cmp = ($a[$sortBy]<$b[$sortBy])? -1:1;
+            return $sortOrder==='asc' ? $cmp : -$cmp;
+        });
+        return array('success'=>true,'tables'=>$list,'total_tables'=>count($list));
+    }
+
+    public function db_get_table_schema($args) {
+        global $wpdb;
+        $table = sanitize_text_field($args['table_name']);
+        if(preg_match('/[^a-zA-Z0-9_]/',$table)) throw new \Exception('Invalid table name');
+        $exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table));
+        if($exists!=$table) throw new \Exception("Table not found");
+        $schema = $wpdb->get_results("DESCRIBE `$table`", ARRAY_A);
+        return array('success'=>true,'table_name'=>$table,'schema'=>$schema);
+    }
+
+    public function db_run_query($args) {
+        if(!$this->db || !$this->db->get_setting('enable_sql_queries', false)) {
+            throw new \Exception('SQL query execution is disabled in settings.');
+        }
+        global $wpdb;
+        $query = trim($args['query']);
+        $dangerous = $this->db && $this->db->get_setting('enable_dangerous_sql_queries', false);
+        if(!$dangerous && stripos($query,'select')!==0) {
+            throw new \Exception('Only SELECT queries allowed (dangerous queries disabled).');
+        }
+        $query = rtrim($query,';');
+        $results = $wpdb->get_results($query, ARRAY_A);
+        if($wpdb->last_error) throw new \Exception('SQL Error: '.$wpdb->last_error);
+        return array('success'=>true,'row_count'=>count($results),'results'=>array_slice($results,0,100));
+    }
+
+    public function db_find_unused_data($args) {
+        global $wpdb;
+        $include_details = isset($args['include_details']) ? (bool) $args['include_details'] : false;
+
+        // Find orphaned tables (left by removed plugins)
+        $all_tables = $wpdb->get_col("SHOW TABLES");
+        $active_plugins = get_option('active_plugins'); // array of active plugin file paths
+
+        // wp_get_theme()->get_stylesheet() returns a single theme slug (string). Cast to array for consistency.
+        $active_themes  = array( wp_get_theme()->get_stylesheet() );
+
+        // Build a list of tables that we expect to exist:
+        // 1) Core WordPress tables (introspected from $wpdb properties)
+        // 2) Any tables that plugins/themes explicitly add to this list (future extension)
+
+        $core_tables = array();
+        foreach (get_object_vars($wpdb) as $prop_value) {
+            if (is_string($prop_value) && strpos($prop_value, $wpdb->prefix) === 0) {
+                $core_tables[] = $prop_value;
+            }
+        }
+
+        $expected_tables = array_merge(
+            $core_tables,
+            array_map(function ($plugin) use ($wpdb) {
+                return $wpdb->prefix . 'options'; // placeholder for plugin-specific tables, extend as needed
+            }, $active_plugins),
+            array_map(function ($theme) use ($wpdb) {
+                return $wpdb->prefix . 'options'; // placeholder for theme-specific tables, extend as needed
+            }, $active_themes)
+        );
+
+        // Remove duplicates just in case
+        $expected_tables = array_unique($expected_tables);
+
+        // Any prefixed table that isn't in our expected list is a candidate for being orphaned
+        $orphaned_tables = array_filter($all_tables, function($tbl) use ($expected_tables) {
+            return !in_array($tbl, $expected_tables, true);
+        });
+
+        // Find expired transients
+        $expired_transients = $wpdb->get_results("SELECT option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE '_transient_timeout_%' AND option_value < UNIX_TIMESTAMP()", ARRAY_A);
+        $expired_transient_names = array_map(function($row) {
+            return str_replace('_transient_timeout_', '', $row['option_name']);
+        }, $expired_transients);
+
+        $summary = array(
+            'orphaned_tables' => count($orphaned_tables),
+            'expired_transients' => count($expired_transient_names),
+            'has_issues' => !empty($orphaned_tables) || !empty($expired_transients)
+        );
+
+        if ($include_details) {
+            $summary['details'] = array(
+                'orphaned_tables' => $orphaned_tables,
+                'expired_transients' => $expired_transient_names
+            );
+        }
+
+        return array('success' => true, 'report' => $summary);
+    }
+
+    /* ===================== Security tool callbacks ===================== */
+    public function security_audit($args) {
+        $checks = array();
+        
+        // 1. Public registration
+        $reg = get_option('users_can_register');
+        $checks[] = array(
+            'check' => 'User Registration',
+            'status' => $reg ? 'warning' : 'ok',
+            'message' => $reg ? 'Public user registration is enabled.' : 'Public registration disabled.',
+            'recommendation' => $reg ? 'Disable "Anyone can register" unless you need public registration.' : null,
+            'severity' => $reg ? 'medium' : null
+        );
+        
+        // 2. Default role
+        $role = get_option('default_role');
+        $crit = $role === 'administrator';
+        $checks[] = array(
+            'check' => 'Default Role',
+            'status' => $crit ? 'critical' : 'ok',
+            'message' => "Default role set to {$role}.",
+            'recommendation' => $crit ? 'URGENT: Change default role to Subscriber. New users currently get admin access!' : null,
+            'severity' => $crit ? 'high' : null
+        );
+        
+        // 3. admin user exists
+        $adminExists = username_exists('admin');
+        $checks[] = array(
+            'check' => 'Admin Username',
+            'status' => $adminExists ? 'critical' : 'ok',
+            'message' => $adminExists ? 'User named "admin" exists.' : 'No predictable "admin" username.',
+            'recommendation' => $adminExists ? 'Rename the "admin" user to something less predictable.' : null,
+            'severity' => $adminExists ? 'high' : null
+        );
+        
+        // 4. DB prefix
+        global $wpdb; 
+        $defPrefix = $wpdb->prefix === 'wp_';
+        $checks[] = array(
+            'check' => 'Database Prefix',
+            'status' => $defPrefix ? 'warning' : 'ok',
+            'message' => 'Current prefix: ' . $wpdb->prefix,
+            'recommendation' => $defPrefix ? 'Consider changing DB prefix from wp_ to something custom for additional security.' : null,
+            'severity' => $defPrefix ? 'low' : null
+        );
+        
+        // 5. WP_DEBUG (context-aware)
+        $debug = defined('WP_DEBUG') && WP_DEBUG;
+        $isProduction = !in_array($_SERVER['SERVER_NAME'] ?? '', array('localhost', '127.0.0.1', 'local.test')) && 
+                       !preg_match('/\.(local|test|dev)$/', $_SERVER['SERVER_NAME'] ?? '');
+        $checks[] = array(
+            'check' => 'Debug Mode',
+            'status' => ($debug && $isProduction) ? 'warning' : 'ok',
+            'message' => $debug ? 'WP_DEBUG is ON.' : 'WP_DEBUG is OFF.',
+            'recommendation' => ($debug && $isProduction) ? 'Disable debugging on production sites.' : null,
+            'severity' => ($debug && $isProduction) ? 'medium' : null
+        );
+        
+        // 6. Keys & salts
+        $keyConsts = array('AUTH_KEY', 'SECURE_AUTH_KEY', 'LOGGED_IN_KEY', 'NONCE_KEY', 'AUTH_SALT', 'SECURE_AUTH_SALT', 'LOGGED_IN_SALT', 'NONCE_SALT');
+        $keysOk = true;
+        $weakKeys = array();
+        foreach ($keyConsts as $kc) {
+            if (!defined($kc) || constant($kc) == 'put your unique phrase here' || strlen(constant($kc)) < 32) { 
+                $keysOk = false; 
+                $weakKeys[] = $kc;
+            }
+        }
+        $checks[] = array(
+            'check' => 'Security Keys & Salts',
+            'status' => $keysOk ? 'ok' : 'critical',
+            'message' => $keysOk ? 'Unique security keys configured.' : 'Default or weak security keys detected.',
+            'recommendation' => $keysOk ? null : 'Update security keys in wp-config.php using WordPress.org secret-key generator.',
+            'severity' => $keysOk ? null : 'high'
+        );
+        
+        // 7. File editing
+        $fileEdit = !defined('DISALLOW_FILE_EDIT') || !DISALLOW_FILE_EDIT;
+        $checks[] = array(
+            'check' => 'File Editing',
+            'status' => $fileEdit ? 'warning' : 'ok',
+            'message' => $fileEdit ? 'Theme/plugin file editing is enabled in admin.' : 'File editing disabled.',
+            'recommendation' => $fileEdit ? 'Add define("DISALLOW_FILE_EDIT", true); to wp-config.php to disable admin file editing.' : null,
+            'severity' => $fileEdit ? 'medium' : null
+        );
+        
+        // 8. Directory indexing check
+        $indexingCheck = $this->check_directory_indexing();
+        $checks[] = array(
+            'check' => 'Directory Indexing',
+            'status' => $indexingCheck['enabled'] ? 'warning' : 'ok',
+            'message' => $indexingCheck['enabled'] ? 'Directory indexing may be enabled.' : 'Directory indexing appears disabled.',
+            'recommendation' => $indexingCheck['enabled'] ? 'Ensure directory indexing is disabled via .htaccess or server config.' : null,
+            'severity' => $indexingCheck['enabled'] ? 'medium' : null
+        );
+
+        $summary = array(
+            'total_checks' => count($checks),
+            'critical' => count(array_filter($checks, function($c) { return $c['status'] == 'critical'; })),
+            'warning' => count(array_filter($checks, function($c) { return $c['status'] == 'warning'; })),
+            'ok' => count(array_filter($checks, function($c) { return $c['status'] == 'ok'; })),
+            'security_score' => $this->calculate_security_score($checks),
+            'notes' => array(
+                'scope' => 'Basic WordPress security configuration audit',
+                'focus' => 'Common security misconfigurations and hardening opportunities',
+                'next_steps' => 'Run additional security tools for comprehensive analysis'
+            )
+        );
+        
+        return array('success' => true, 'audit_results' => $checks, 'summary' => $summary);
+    }
+
+    /**
+     * Check if directory indexing is enabled
+     */
+    private function check_directory_indexing() {
+        // Try to check wp-content/uploads directory
+        $uploads_dir = wp_upload_dir();
+        $test_url = $uploads_dir['baseurl'] . '/';
+        
+        $response = wp_remote_head($test_url, array('timeout' => 5));
+        
+        if (is_wp_error($response)) {
+            return array('enabled' => false, 'checked' => false);
+        }
+        
+        $response_code = wp_remote_retrieve_response_code($response);
+        
+        // If we get a 200 response, indexing might be enabled
+        // If we get 403 (Forbidden), indexing is likely disabled
+        return array(
+            'enabled' => $response_code === 200,
+            'checked' => true,
+            'response_code' => $response_code
+        );
+    }
+
+    /**
+     * Calculate overall security score
+     */
+    private function calculate_security_score($checks) {
+        $total_checks = count($checks);
+        $critical_issues = count(array_filter($checks, function($c) { return $c['status'] == 'critical'; }));
+        $warning_issues = count(array_filter($checks, function($c) { return $c['status'] == 'warning'; }));
+        
+        // Start with 100, subtract points for issues
+        $score = 100;
+        $score -= $critical_issues * 20; // Critical issues cost 20 points each
+        $score -= $warning_issues * 10;  // Warning issues cost 10 points each
+        
+        return max(0, $score); // Don't go below 0
+    }
+
+    /**
+     * Verify WordPress core checksums
+     */
+    public function security_core_checksum($args) {
+        $include_details = isset($args['include_details']) ? (bool) $args['include_details'] : false;
+
+        global $wp_version;
+        // Ensure the checksum helper is loaded (front-end contexts may not include it)
+        if ( ! function_exists( 'get_core_checksums' ) ) {
+            require_once ABSPATH . 'wp-admin/includes/update.php';
+        }
+
+        // Fetch official checksums from WordPress.org
+        $checksums = get_core_checksums($wp_version, get_locale());
+        if (!$checksums || !is_array($checksums)) {
+            return array('success' => false, 'error' => 'Unable to fetch official checksums from WordPress.org API');
+        }
+
+        $missing  = array();
+        $modified = array();
+        $verified_count = 0;
+
+        // Files that are commonly and safely removed from WordPress installations
+        $safe_to_remove = array(
+            'wp-content/themes/twentytwentyone',
+            'wp-content/themes/twentytwentytwo', 
+            'wp-content/themes/twentytwentythree',
+            'wp-content/themes/twentytwentyfour',
+            'wp-content/themes/twentytwentyfive',
+            'wp-content/plugins/akismet',
+            'wp-content/plugins/hello.php',
+            'license.txt',
+            'readme.html',
+            'wp-config-sample.php'
+        );
+
+        foreach ($checksums as $file => $md5) {
+            $local_path = ABSPATH . $file;
+            if (!file_exists($local_path)) {
+                // Skip commonly removed files that are safe to delete
+                $is_safe_removal = false;
+                foreach ($safe_to_remove as $safe_pattern) {
+                    if (strpos($file, $safe_pattern) === 0) {
+                        $is_safe_removal = true;
+                        break;
+                    }
+                }
+                
+                if (!$is_safe_removal) {
+                    $missing[] = $file;
+                }
+                continue;
+            }
+            $verified_count++;
+            if (md5_file($local_path) !== $md5) {
+                // Only flag modifications of potentially dangerous files
+                if ($this->is_security_critical_file($file)) {
+                    $modified[] = $file;
+                }
+            }
+        }
+
+        // Detect unexpected files in core directories (wp-admin, wp-includes, root php files)
+        $core_dirs = array('wp-admin', 'wp-includes');
+        $unexpected = array();
+        foreach ($core_dirs as $dir) {
+            $dir_path = ABSPATH . $dir;
+            if (!is_dir($dir_path)) continue;
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($dir_path, \RecursiveDirectoryIterator::SKIP_DOTS)
+            );
+            foreach ($iterator as $path => $info) {
+                $relative = str_replace(ABSPATH, '', $path);
+                if (!isset($checksums[$relative]) && !$this->is_harmless_unexpected_file($relative)) {
+                    $unexpected[] = $relative;
+                }
+            }
+        }
+        // Also check root php files (index.php, wp-login.php etc.)
+        foreach (glob(ABSPATH . '*.php') as $path) {
+            $relative = str_replace(ABSPATH, '', $path);
+            if (!isset($checksums[$relative]) && !$this->is_harmless_unexpected_file($relative)) {
+                $unexpected[] = $relative;
+            }
+        }
+
+        $summary = array(
+            'total_core_files'        => count($checksums),
+            'files_verified'          => $verified_count,
+            'missing_files'           => count($missing),
+            'modified_files'          => count($modified),
+            'unexpected_files'        => count($unexpected),
+            'integrity_ok'            => empty($missing) && empty($modified) && empty($unexpected),
+            'notes' => array(
+                'missing_files_note' => count($missing) > 0 ? 'Missing files detected. Common theme/plugin removals are ignored.' : null,
+                'modified_files_note' => count($modified) > 0 ? 'Only security-critical file modifications are flagged.' : null,
+                'unexpected_files_note' => count($unexpected) > 0 ? 'Unexpected files found. Development/system files are ignored.' : null
+            )
+        );
+
+        if ($include_details) {
+            $summary['details'] = array(
+                'missing'    => $missing,
+                'modified'   => $modified,
+                'unexpected' => $unexpected
+            );
+        }
+
+        return array('success' => true, 'checksum_report' => $summary);
+    }
+
+    /**
+     * Check if a file modification is security critical
+     */
+    private function is_security_critical_file($file) {
+        // Files that could be dangerous if modified
+        $critical_patterns = array(
+            '.php', // All PHP files are potentially dangerous
+            'wp-config', // Configuration files
+            '.htaccess', // Access control files
+            'wp-admin/admin', // Admin interface files
+            'wp-includes/class-', // Core class files
+            'wp-includes/functions', // Core function files
+            'wp-login.php', // Login functionality
+            'wp-cron.php', // Cron functionality
+            'wp-mail.php', // Mail functionality
+            'wp-settings.php', // Core settings
+            'wp-load.php' // Core loading
+        );
+
+        // Non-critical file types that are safe to modify
+        $safe_extensions = array('.txt', '.md', '.html', '.css', '.js', '.json', '.xml');
+        
+        // Check if file has a safe extension
+        $file_ext = '.' . pathinfo($file, PATHINFO_EXTENSION);
+        if (in_array($file_ext, $safe_extensions)) {
+            return false;
+        }
+
+        // Check if file matches critical patterns
+        foreach ($critical_patterns as $pattern) {
+            if (strpos($file, $pattern) !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Check if an unexpected file is harmless
+     */
+    private function is_harmless_unexpected_file($file) {
+        // Common development and system files that are harmless
+        $harmless_patterns = array(
+            '.DS_Store', // macOS system files
+            'Thumbs.db', // Windows thumbnail cache
+            '.git', // Git version control
+            '.svn', // SVN version control
+            '.htaccess', // Often added by plugins/themes
+            'robots.txt', // SEO files
+            'sitemap', // SEO sitemaps
+            '.well-known', // Security/verification files
+            'favicon.ico', // Site icons
+            'apple-touch-icon', // iOS icons
+            'browserconfig.xml', // Windows tile config
+            'manifest.json', // PWA manifest
+            '.log', // Log files
+            '.cache', // Cache files
+            '.tmp', // Temporary files
+            'local-', // Local development tool files
+            'wp-cli.yml', // WP CLI config
+            'composer.json', // Composer files
+            'package.json', // NPM files
+            'gulpfile.js', // Gulp task runner
+            'gruntfile.js', // Grunt task runner
+            'webpack.config.js', // Webpack config
+            '.env', // Environment files (though should be secured)
+            'debug.log', // Debug logs
+            'error_log', // Error logs
+            'access.log' // Access logs
+        );
+
+        $file_lower = strtolower($file);
+        
+        foreach ($harmless_patterns as $pattern) {
+            if (strpos($file_lower, strtolower($pattern)) !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Check file and directory permissions across the installation.
+     */
+    public function security_file_permissions($args) {
+        $include_details = isset($args['include_details']) ? (bool) $args['include_details'] : false;
+
+        $paths_to_scan = array(
+            ABSPATH,
+            WP_CONTENT_DIR,
+            wp_upload_dir()['basedir'],
+            ABSPATH . 'wp-config.php'
+        );
+
+        $issues = array();
+        $critical_issues = array();
+        $total = 0;
+
+        foreach ($paths_to_scan as $base) {
+            if (!file_exists($base)) continue;
+
+            $iterator = is_dir($base)
+                ? new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($base, \FilesystemIterator::SKIP_DOTS))
+                : array($base);
+
+            foreach ($iterator as $path) {
+                // Skip files that shouldn't be checked for permissions issues
+                $relative_path = str_replace(ABSPATH, '', $path);
+                if ($this->should_skip_permission_check($relative_path)) {
+                    continue;
+                }
+
+                $total++;
+                $isDir = is_dir($path);
+                $perms = substr(sprintf('%o', fileperms($path)), -4);
+                
+                // Determine recommended permissions and severity
+                $severity = $this->assess_permission_issue($path, $perms, $isDir);
+                
+                if ($severity !== 'ok') {
+                    $recommended = $isDir ? '0755' : '0644';
+                    
+                    // Special cases
+                    if (basename($path) === 'wp-config.php') {
+                        $recommended = '0600-0644';
+                        if (!in_array($perms, array('0600', '0644', '0640'), true)) {
+                            $issue = array(
+                                'path' => $relative_path, 
+                                'perms' => $perms, 
+                                'recommended' => $recommended,
+                                'severity' => 'critical',
+                                'reason' => 'wp-config.php contains sensitive database credentials'
+                            );
+                            $issues[] = $issue;
+                            $critical_issues[] = $issue;
+                        }
+                        continue;
+                    }
+                    
+                    if ($severity === 'critical') {
+                        $issue = array(
+                            'path' => $relative_path, 
+                            'perms' => $perms, 
+                            'recommended' => $recommended,
+                            'severity' => $severity,
+                            'reason' => $this->get_permission_issue_reason($path, $perms, $isDir)
+                        );
+                        $issues[] = $issue;
+                        $critical_issues[] = $issue;
+                    } elseif ($severity === 'warning') {
+                        $issues[] = array(
+                            'path' => $relative_path, 
+                            'perms' => $perms, 
+                            'recommended' => $recommended,
+                            'severity' => $severity,
+                            'reason' => $this->get_permission_issue_reason($path, $perms, $isDir)
+                        );
+                    }
+                }
+            }
+        }
+
+        $summary = array(
+            'total_items_scanned' => $total,
+            'items_with_issues'   => count($issues),
+            'critical_issues'     => count($critical_issues),
+            'has_issues'          => !empty($issues),
+            'has_critical_issues' => !empty($critical_issues),
+            'notes' => array(
+                'scope' => 'Focused on security-critical files and directories',
+                'excluded' => 'Cache files, logs, uploads, and development files are excluded from permission checks',
+                'critical_note' => count($critical_issues) > 0 ? 'Critical permission issues found that could compromise security' : null,
+                'general_note' => 'Only significant permission deviations are flagged'
+            )
+        );
+        
+        if ($include_details) {
+            $summary['details'] = $issues;
+        }
+        
+        return array('success' => true, 'report' => $summary);
+    }
+
+    /**
+     * Check if a file should be skipped in permission checks
+     */
+    private function should_skip_permission_check($file) {
+        $skip_patterns = array(
+            // Files that commonly have different permissions
+            'wp-content/cache/',
+            'wp-content/uploads/',
+            'wp-content/backups/',
+            '.log',
+            '.tmp',
+            '.cache',
+            '.DS_Store',
+            'Thumbs.db',
+            '.git/',
+            '.svn/',
+            'error_log',
+            'debug.log',
+            'wp-content/upgrade/',
+            'wp-content/languages/', // Language files may have different perms
+        );
+
+        $file_lower = strtolower($file);
+        
+        foreach ($skip_patterns as $pattern) {
+            if (strpos($file_lower, strtolower($pattern)) !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Assess the severity of a permission issue
+     */
+    private function assess_permission_issue($path, $perms, $isDir) {
+        $filename = basename($path);
+        $extension = pathinfo($path, PATHINFO_EXTENSION);
+        
+        // World-writable files/directories are always critical
+        if (substr($perms, -1) === '7' || substr($perms, -1) === '6') {
+            return 'critical';
+        }
+        
+        // Executable PHP files in uploads directory
+        if (strpos($path, 'wp-content/uploads/') !== false && $extension === 'php') {
+            if (substr($perms, -3, 1) >= '1' || substr($perms, -2, 1) >= '1' || substr($perms, -1) >= '1') {
+                return 'critical';
+            }
+        }
+        
+        // Core WordPress files with wrong permissions
+        if (strpos($path, 'wp-admin/') !== false || strpos($path, 'wp-includes/') !== false) {
+            if ($isDir && $perms !== '0755') {
+                return intval($perms) > 755 ? 'critical' : 'warning';
+            } elseif (!$isDir && $perms !== '0644') {
+                return intval($perms) > 644 ? 'warning' : 'ok';
+            }
+        }
+        
+        // Configuration files
+        if (in_array($filename, array('wp-config.php', '.htaccess'))) {
+            if (intval($perms) > 644) {
+                return 'critical';
+            }
+        }
+        
+        // Plugin/theme files
+        if (strpos($path, 'wp-content/plugins/') !== false || strpos($path, 'wp-content/themes/') !== false) {
+            if ($isDir && intval($perms) > 755) {
+                return 'warning';
+            } elseif (!$isDir && intval($perms) > 644) {
+                return 'warning';
+            }
+        }
+        
+        return 'ok';
+    }
+
+    /**
+     * Get reason for permission issue
+     */
+    private function get_permission_issue_reason($path, $perms, $isDir) {
+        $filename = basename($path);
+        
+        // World-writable
+        if (substr($perms, -1) === '7' || substr($perms, -1) === '6') {
+            return 'File/directory is world-writable, allowing anyone to modify it';
+        }
+        
+        // Executable uploads
+        if (strpos($path, 'wp-content/uploads/') !== false) {
+            return 'Files in uploads directory should not be executable';
+        }
+        
+        // Configuration files
+        if (in_array($filename, array('wp-config.php', '.htaccess'))) {
+            return 'Configuration files should have restrictive permissions';
+        }
+        
+        // Generic
+        if ($isDir) {
+            return 'Directory permissions are more permissive than recommended';
+        } else {
+            return 'File permissions are more permissive than recommended';
+        }
+    }
+
+    /**
+     * Inspect security-related HTTP headers.
+     */
+    public function security_http_headers($args) {
+        $response = wp_remote_head(home_url());
+        if (is_wp_error($response)) {
+            return array('success' => false, 'error' => $response->get_error_message());
+        }
+        $raw_headers = wp_remote_retrieve_headers($response);
+
+        if (is_array($raw_headers)) {
+            $headers = array_change_key_case($raw_headers, CASE_LOWER);
+        } elseif (is_object($raw_headers) && method_exists($raw_headers, 'getAll')) {
+            $headers = array_change_key_case($raw_headers->getAll(), CASE_LOWER);
+        } else {
+            $headers = array();
+        }
+
+        $expected = array(
+            'strict-transport-security' => 'max-age',
+            'x-content-type-options'    => 'nosniff',
+            'x-frame-options'           => 'SAMEORIGIN',
+            'referrer-policy'          => '',
+            'permissions-policy'       => '',
+            'content-security-policy'  => ''
+        );
+
+        $results = array();
+        foreach ($expected as $header => $required_value_fragment) {
+            if (!isset($headers[$header])) {
+                $results[$header] = array('status' => 'warning', 'message' => 'Header missing');
+            } elseif ($required_value_fragment && stripos($headers[$header], $required_value_fragment) === false) {
+                $results[$header] = array('status' => 'warning', 'message' => 'Header present but may be misconfigured', 'current_value' => $headers[$header]);
+            } else {
+                $results[$header] = array('status' => 'ok', 'current_value' => $headers[$header]);
+            }
+        }
+        return array('success' => true, 'headers_report' => $results);
+    }
+
+    /**
+     * Verify HTTPS enforcement and HSTS.
+     */
+    public function security_https_enforcement($args) {
+        $home_is_https = stripos(home_url(), 'https://') === 0;
+        $site_is_https = stripos(site_url(), 'https://') === 0;
+        $is_ssl        = is_ssl();
+        $hsts_header   = null;
+        $response      = wp_remote_head(home_url());
+        if (!is_wp_error($response)) {
+            $hsts_header = wp_remote_retrieve_header($response, 'strict-transport-security');
+        }
+        $enforced = $home_is_https && $site_is_https && $is_ssl;
+        return array('success' => true, 'https_report' => array(
+            'home_url_https' => $home_is_https,
+            'site_url_https' => $site_is_https,
+            'is_ssl'         => $is_ssl,
+            'hsts_present'   => !empty($hsts_header),
+            'enforced'       => $enforced
+        ));
+    }
+
+    /**
+     * PHP version compliance check.
+     */
+    public function security_php_version_check($args) {
+        $php_version = PHP_VERSION;
+        $status      = version_compare($php_version, '8.1', '>=') ? 'ok' : (version_compare($php_version, '7.4', '>=') ? 'warning' : 'critical');
+        return array('success' => true, 'php_report' => array(
+            'version' => $php_version,
+            'status'  => $status,
+            'recommendation' => $status === 'ok' ? null : 'Upgrade to PHP 8.1 or later'
+        ));
+    }
+
+    /**
+     * Audit administrator accounts.
+     */
+    public function security_admin_users_audit($args) {
+        $days = isset($args['dormant_days']) ? intval($args['dormant_days']) : 90;
+        $threshold = time() - ($days * DAY_IN_SECONDS);
+
+        $admins = get_users(array('role' => 'administrator'));
+        $results = array();
+        foreach ($admins as $user) {
+            $last_login = (int) get_user_meta($user->ID, 'magicassistant_last_login', true);
+            $dormant = $last_login && $last_login < $threshold;
+            $results[] = array(
+                'ID'          => $user->ID,
+                'user_login'  => $user->user_login,
+                'user_email'  => $user->user_email,
+                'registered'  => $user->user_registered,
+                'last_login'  => $last_login ? date('Y-m-d H:i:s', $last_login) : null,
+                'dormant'     => $dormant
+            );
+        }
+        return array('success' => true, 'administrators' => $results);
+    }
+
+    /**
+     * Return recent login events captured by the plugin.
+     */
+    public function security_login_events($args) {
+        $limit = isset($args['limit']) ? intval($args['limit']) : 20;
+        $events = get_option('magicassistant_login_events', array());
+        return array('success' => true, 'events' => array_slice($events, 0, $limit));
+    }
+
+    /**
+     * Basic file integrity watcher.
+     */
+    public function security_file_integrity_watch($args) {
+        $include_details = isset($args['include_details']) ? (bool) $args['include_details'] : false;
+        $reset           = isset($args['reset_baseline']) ? (bool) $args['reset_baseline'] : false;
+
+        $option_key = 'magicassistant_file_hashes';
+        $baseline   = get_option($option_key, array());
+
+        if ($reset || empty($baseline)) {
+            $snapshot = $this->generate_file_hash_snapshot();
+            update_option($option_key, $snapshot, false);
+            return array(
+                'success' => true, 
+                'message' => 'Security-focused baseline snapshot '.($reset ? 'reset' : 'created').'. Monitoring core files, themes, plugins, and critical configurations only.',
+                'monitored_files_count' => count($snapshot)
+            );
+        }
+
+        $current   = $this->generate_file_hash_snapshot();
+
+        $new_files      = array_diff_key($current, $baseline);
+        $deleted_files  = array_diff_key($baseline, $current);
+        $modified_files = array();
+        foreach ($current as $file => $hash) {
+            if (isset($baseline[$file]) && $baseline[$file] !== $hash) {
+                $modified_files[$file] = array('old' => $baseline[$file], 'new' => $hash);
+            }
+        }
+
+        // Update baseline for next time
+        update_option($option_key, $current, false);
+
+        $summary = array(
+            'new_files'      => count($new_files),
+            'deleted_files'  => count($deleted_files),
+            'modified_files' => count($modified_files),
+            'has_changes'    => !empty($new_files) || !empty($deleted_files) || !empty($modified_files),
+            'total_monitored_files' => count($current),
+            'monitoring_scope' => 'Security-critical files only (excludes logs, cache, uploads)',
+            'notes' => array(
+                'scope' => 'Monitoring WordPress core files, themes, plugins, and configuration files',
+                'excluded' => 'Log files, cache files, uploads (except PHP), and temporary files are excluded',
+                'new_files_note' => count($new_files) > 0 ? 'New files detected in monitored locations' : null,
+                'deleted_files_note' => count($deleted_files) > 0 ? 'Previously monitored files have been removed' : null,
+                'modified_files_note' => count($modified_files) > 0 ? 'Monitored files have been changed since last check' : null
+            )
+        );
+        if ($include_details) {
+            $summary['details'] = array(
+                'new_files'      => array_keys($new_files),
+                'deleted_files'  => array_keys($deleted_files),
+                'modified_files' => $modified_files
+            );
+        }
+        return array('success' => true, 'integrity_report' => $summary);
+    }
+
+    /**
+     * Helper to generate file => md5 hash snapshot.
+     */
+    private function generate_file_hash_snapshot() {
+        $dirs = array(ABSPATH, WP_CONTENT_DIR);
+        $snapshot = array();
+        foreach ($dirs as $base) {
+            if (!is_dir($base)) continue;
+            $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($base, \FilesystemIterator::SKIP_DOTS));
+            foreach ($iterator as $file) {
+                if ($file->isDir() || $file->isLink()) continue;
+                $rel = str_replace(ABSPATH, '', (string) $file);
+                
+                // Skip files that are expected to change frequently and are not security critical
+                if ($this->should_skip_file_integrity_check($rel)) {
+                    continue;
+                }
+                
+                // Only hash reasonably sized files (<5MB) to avoid memory issues
+                if ($file->getSize() <= 5 * 1024 * 1024) {
+                    $snapshot[$rel] = md5_file($file);
+                }
+            }
+        }
+        return $snapshot;
+    }
+
+    /**
+     * Check if a file should be skipped in integrity monitoring
+     */
+    private function should_skip_file_integrity_check($file) {
+        // Files/directories that change frequently and are not security-critical
+        $skip_patterns = array(
+            // Log files
+            '.log',
+            'debug.log',
+            'error_log',
+            'access.log',
+            
+            // Cache files and directories
+            '/cache/',
+            '.cache',
+            '/tmp/',
+            '.tmp',
+            'wp-content/cache/',
+            'wp-content/uploads/cache/',
+            
+            // Backup files
+            '.bak',
+            '.backup',
+            'wp-content/backups/',
+            
+            // Update/upgrade temporary files
+            'wp-content/upgrade/',
+            'wp-content/uploads/wp-migrate-db/',
+            
+            // Development files
+            '.DS_Store',
+            'Thumbs.db',
+            '.git/',
+            '.svn/',
+            'node_modules/',
+            
+            // Session files
+            'wp-content/uploads/wpcf7_uploads/',
+            
+            // Plugin/theme update files
+            '.tmp',
+            '.zip',
+            
+            // Database exports
+            '.sql',
+            
+            // Minified/compiled assets that may regenerate
+            '.min.css',
+            '.min.js',
+            
+            // Dynamic configuration files that may change
+            'wp-content/advanced-cache.php',
+            'wp-content/object-cache.php',
+            'wp-content/db.php',
+            
+            // Some file managers create these
+            '.quarantine',
+            
+            // Temporary plugin files
+            'wp-content/mu-plugins/mu-plugin.php', // Some plugins auto-generate this
+        );
+
+        $file_lower = strtolower($file);
+        
+        foreach ($skip_patterns as $pattern) {
+            if (strpos($file_lower, strtolower($pattern)) !== false) {
+                return true;
+            }
+        }
+
+        // Skip uploads directory except for critical files
+        if (strpos($file, 'wp-content/uploads/') === 0) {
+            // Only monitor PHP files in uploads (potential security risk)
+            return pathinfo($file, PATHINFO_EXTENSION) !== 'php';
+        }
+
+        return false;
+    }
+
+    /**
+     * Plugins checksum using WP.org zip for each active plugin.
+     */
+    public function security_plugins_checksum($args) {
+        if (!function_exists('get_plugins')) {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
+        if (!function_exists('plugins_api')) {
+            require_once ABSPATH . 'wp-admin/includes/plugin-install.php';
+        }
+        if (!function_exists('download_url')) {
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+        }
+
+        $include_details = isset($args['include_details']) ? (bool) $args['include_details'] : false;
+        $plugins = get_plugins();
+        $results = array();
+
+        foreach ($plugins as $file => $info) {
+            $slug = dirname($file);
+            $local_file = WP_PLUGIN_DIR . '/' . $file;
+            $local_hash = md5_file($local_file);
+            // Fetch remote information
+            $api = \plugins_api('plugin_information', array('slug' => $slug, 'per_page' => 1, 'fields' => array('download_link' => true, 'version' => true)));
+            if (is_wp_error($api) || empty($api->download_link)) {
+                $results[$slug] = array('status' => 'unknown', 'message' => 'Could not fetch plugin info');
+                continue;
+            }
+            $tmp = \download_url($api->download_link);
+            if (is_wp_error($tmp)) {
+                $results[$slug] = array('status' => 'unknown', 'message' => 'Failed to download remote plugin zip');
+                continue;
+            }
+            $remote_hash = null;
+            $zip = new \ZipArchive();
+            if ($zip->open($tmp) === true) {
+                for ($i = 0; $i < $zip->numFiles; $i++) {
+                    $stat = $zip->statIndex($i);
+                    $name = $stat['name'];
+                    // Look for main plugin file inside zip
+                    if (stripos($name, $file) !== false) {
+                        $content = $zip->getFromIndex($i);
+                        $remote_hash = md5($content);
+                        break;
+                    }
+                }
+                $zip->close();
+            }
+            unlink($tmp);
+            if (!$remote_hash) {
+                $results[$slug] = array('status' => 'unknown', 'message' => 'Main file not found in zip');
+                continue;
+            }
+            $status = ($local_hash === $remote_hash) ? 'ok' : 'modified';
+            $results[$slug] = array('status' => $status);
+            if ($include_details) {
+                $results[$slug]['local_hash']  = $local_hash;
+                $results[$slug]['remote_hash'] = $remote_hash;
+            }
+        }
+        return array('success' => true, 'plugins_report' => $results);
+    }
+
+    /**
+     * Themes checksum verification against WP.org.
+     */
+    public function security_themes_checksum($args) {
+        if (!function_exists('themes_api')) {
+            $theme_include_files = array(
+                ABSPATH . 'wp-admin/includes/theme.php',          // WP 5.5+
+                ABSPATH . 'wp-admin/includes/theme-install.php',  // Legacy fallback
+            );
+            foreach ($theme_include_files as $include_file) {
+                if (file_exists($include_file)) {
+                    require_once $include_file;
+                    if (function_exists('themes_api')) {
+                        break;
+                    }
+                }
+            }
+        }
+        if (!function_exists('download_url')) {
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+        }
+
+        $include_details = isset($args['include_details']) ? (bool) $args['include_details'] : false;
+        $results = array();
+        $themes = wp_get_themes();
+
+        foreach ($themes as $slug => $theme) {
+            $local_file = $theme->get_stylesheet_directory() . '/style.css';
+            $local_hash = md5_file($local_file);
+            $api = \themes_api('theme_information', array('slug' => $slug, 'fields' => array('download_link' => true)));
+            if (is_wp_error($api) || empty($api->download_link)) {
+                $results[$slug] = array('status' => 'unknown', 'message' => 'Could not fetch theme info');
+                continue;
+            }
+            $tmp = \download_url($api->download_link);
+            if (is_wp_error($tmp)) {
+                $results[$slug] = array('status' => 'unknown', 'message' => 'Failed to download remote theme zip');
+                continue;
+            }
+            $remote_hash = null;
+            $zip = new \ZipArchive();
+            if ($zip->open($tmp) === true) {
+                for ($i = 0; $i < $zip->numFiles; $i++) {
+                    $stat = $zip->statIndex($i);
+                    $name = $stat['name'];
+                    if (stripos($name, $slug . '/style.css') !== false) {
+                        $content = $zip->getFromIndex($i);
+                        $remote_hash = md5($content);
+                        break;
+                    }
+                }
+                $zip->close();
+            }
+            unlink($tmp);
+            if (!$remote_hash) {
+                $results[$slug] = array('status' => 'unknown', 'message' => 'style.css not found in zip');
+                continue;
+            }
+            $status = ($local_hash === $remote_hash) ? 'ok' : 'modified';
+            $results[$slug] = array('status' => $status);
+            if ($include_details) {
+                $results[$slug]['local_hash']  = $local_hash;
+                $results[$slug]['remote_hash'] = $remote_hash;
+            }
+        }
+        return array('success' => true, 'themes_report' => $results);
+    }
+
+    /**
+     * Query WPScan for known vulnerabilities.
+     */
+    public function security_vulnerability_scan($args) {
+        $include_details = isset($args['include_details']) ? (bool) $args['include_details'] : false;
+        $token = get_option('magicassistant_wpscan_token');
+        if (!$token) {
+            return array('success' => false, 'error' => 'WPScan API token not configured.');
+        }
+        $components = array();
+        if (!function_exists('get_plugins')) {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
+        $plugins = get_plugins();
+        foreach ($plugins as $file => $info) {
+            $components[] = array('type' => 'plugin', 'slug' => dirname($file), 'version' => $info['Version']);
+        }
+        $themes = wp_get_themes();
+        foreach ($themes as $slug => $theme) {
+            $components[] = array('type' => 'theme', 'slug' => $slug, 'version' => $theme->get('Version'));
+        }
+
+        $found = array();
+        foreach ($components as $comp) {
+            $url = sprintf('https://wpscan.com/api/v3/%s/%s', $comp['type'] === 'plugin' ? 'plugins' : 'themes', $comp['slug']);
+            $response = wp_remote_get($url, array('headers' => array('Authorization' => 'Token token=' . $token)));
+            if (is_wp_error($response)) continue;
+            $body = wp_remote_retrieve_body($response);
+            $data = json_decode($body, true);
+            if (empty($data['vulnerabilities'])) continue;
+            foreach ($data['vulnerabilities'] as $vuln) {
+                // Rough check – if fixed_in exists and our version < fixed_in, vuln applies
+                $applies = true;
+                if (!empty($vuln['fixed_in']) && $vuln['fixed_in'] !== 'null') {
+                    $applies = version_compare($comp['version'], $vuln['fixed_in'], '<');
+                }
+                if (!$applies) continue;
+                $entry = array(
+                    'component' => $comp['type'].'/'.$comp['slug'],
+                    'title'     => $vuln['title'],
+                    'fixed_in'  => $vuln['fixed_in'],
+                    'references'=> $vuln['references']
+                );
+                if ($include_details) {
+                    $entry['vuln'] = $vuln;
+                }
+                $found[] = $entry;
+            }
+        }
+        return array('success' => true, 'vulnerabilities_found' => $found, 'total' => count($found));
+    }
+
+    /**
+     * Simple .htaccess hardening check.
+     */
+    public function security_htaccess_protection($args) {
+        $file = ABSPATH . '.htaccess';
+        if (!file_exists($file)) {
+            return array('success' => true, 'htaccess_report' => array('has_htaccess' => false));
+        }
+        $content = file_get_contents($file);
+        $checks = array(
+            'wp-includes lock' => strpos($content, 'RewriteRule ^wp-includes') !== false,
+            'block xmlrpc'     => strpos($content, 'xmlrpc.php') !== false,
+            'protect wp-config'=> strpos($content, 'wp-config.php') !== false,
+        );
+        $missing = array_keys(array_filter($checks, function($v){ return !$v; }));
+        return array('success' => true, 'htaccess_report' => array(
+            'has_htaccess' => true,
+            'checks'       => $checks,
+            'missing_rules'=> $missing,
+            'hardened'     => empty($missing)
+        ));
+    }
+
     // Site Info Tool implementations
     public function get_site_info($args) {
         if (!current_user_can('manage_options')) {
@@ -5550,6 +7024,11 @@ class MCP_Server {
      * @throws Exception        If the tool is not found or the callback fails.
      */
     public function invoke_tool($name, $arguments = array()) {
+        // Mark that dynamic discovery was performed when get_available_tools is invoked
+        if ($name === 'get_available_tools') {
+            $this->tools_discovered = true;
+        }
+
         if (!isset($this->registered_tools[$name])) {
             throw new Exception('Tool not found: ' . $name);
         }
@@ -5562,6 +7041,14 @@ class MCP_Server {
         }
 
         return call_user_func($callback, $arguments);
+    }
+
+    /**
+     * Check if dynamic tool discovery was already performed
+     * @return bool
+     */
+    public function get_tools_discovered() {
+        return $this->tools_discovered;
     }
 
     private function register_rest_api_tools() {
@@ -6196,7 +7683,7 @@ class MCP_Server {
         }
 
         // Get plugin information
-        $api = plugins_api('plugin_information', array(
+        $api = \plugins_api('plugin_information', array(
             'slug' => $slug,
             'fields' => array(
                 'sections' => false,
@@ -6472,16 +7959,24 @@ class MCP_Server {
             );
         }
 
-        // Include required WordPress files
+        // Include required WordPress files and maintain compatibility across WP versions
         if (!function_exists('themes_api')) {
-            require_once ABSPATH . 'wp-admin/includes/theme-install.php';
-        }
-        if (!class_exists('\WP_Upgrader')) {
-            require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+            $theme_include_files = array(
+                ABSPATH . 'wp-admin/includes/theme.php',
+                ABSPATH . 'wp-admin/includes/theme-install.php',
+            );
+            foreach ($theme_include_files as $include_file) {
+                if (file_exists($include_file)) {
+                    require_once $include_file;
+                    if (function_exists('themes_api')) {
+                        break;
+                    }
+                }
+            }
         }
 
         // Get theme information
-        $api = themes_api('theme_information', array(
+        $api = \themes_api('theme_information', array(
             'slug' => $slug,
             'fields' => array(
                 'sections' => false,
@@ -8586,6 +10081,133 @@ class MCP_Server {
         }
         
         return $recommendations;
+    }
+
+    /**
+     * Get available tools - callback for the dynamic tool discovery
+     * This method returns the complete list of tools to reduce system message token usage
+     */
+    public function get_available_tools($args) {
+        $category = isset($args['category']) ? $args['category'] : 'all';
+        
+        $all_tools = array();
+        
+        foreach ($this->registered_tools as $name => $tool) {
+            // Skip the get_available_tools tool itself to avoid infinite recursion
+            if ($name === 'get_available_tools') {
+                continue;
+            }
+            
+            $tool_info = array(
+                'name' => $name,
+                'description' => $tool['description'],
+                'inputSchema' => isset($tool['inputSchema']) ? $tool['inputSchema'] : array(
+                    'type' => 'object',
+                    'properties' => array(),
+                    'additionalProperties' => false
+                )
+            );
+            
+            // Add category classification for filtering
+            $tool_category = $this->categorize_tool($name);
+            $tool_info['category'] = $tool_category;
+            
+            // Filter by category if requested
+            if ($category === 'all' || $category === $tool_category) {
+                $all_tools[] = $tool_info;
+            }
+        }
+        
+        // Sort tools by name for consistent ordering
+        usort($all_tools, function($a, $b) {
+            return strcmp($a['name'], $b['name']);
+        });
+        
+        return array(
+            'success' => true,
+            'category_filter' => $category,
+            'total_tools' => count($all_tools),
+            'tools' => $all_tools,
+            'categories_available' => array('all', 'media', 'posts', 'pages', 'users', 'woocommerce', 'seo', 'repository', 'rest_api', 'site_info', 'dataforseo', 'pagespeed', 'database', 'security'),
+            'message' => 'Complete list of available tools loaded. You can now use any of these tools to help the user with their WordPress site.'
+        );
+    }
+    
+    /**
+     * Categorize a tool based on its name for filtering
+     */
+    private function categorize_tool($tool_name) {
+        if (strpos($tool_name, 'wp_list_media') === 0 || strpos($tool_name, 'wp_get_media') === 0 || 
+            strpos($tool_name, 'wp_upload_media') === 0 || strpos($tool_name, 'wp_update_media') === 0 || 
+            strpos($tool_name, 'wp_delete_media') === 0 || strpos($tool_name, 'wp_search_media') === 0) {
+            return 'media';
+        }
+        
+        if (strpos($tool_name, 'wp_posts_') === 0 || strpos($tool_name, 'wp_list_categories') === 0 || 
+            strpos($tool_name, 'wp_add_category') === 0 || strpos($tool_name, 'wp_update_category') === 0 || 
+            strpos($tool_name, 'wp_delete_category') === 0 || strpos($tool_name, 'wp_list_tags') === 0 || 
+            strpos($tool_name, 'wp_add_tag') === 0 || strpos($tool_name, 'wp_update_tag') === 0 || 
+            strpos($tool_name, 'wp_delete_tag') === 0) {
+            return 'posts';
+        }
+        
+        if (strpos($tool_name, 'wp_pages_') === 0 || strpos($tool_name, 'wp_get_page') === 0 || 
+            strpos($tool_name, 'wp_add_page') === 0 || strpos($tool_name, 'wp_update_page') === 0 || 
+            strpos($tool_name, 'wp_delete_page') === 0) {
+            return 'pages';
+        }
+        
+        if (strpos($tool_name, 'wp_users_') === 0 || strpos($tool_name, 'wp_get_user') === 0 || 
+            strpos($tool_name, 'wp_add_user') === 0 || strpos($tool_name, 'wp_update_user') === 0 || 
+            strpos($tool_name, 'wp_delete_user') === 0 || strpos($tool_name, 'wp_get_current_user') === 0 || 
+            strpos($tool_name, 'wp_update_current_user') === 0) {
+            return 'users';
+        }
+        
+        if (strpos($tool_name, 'wc_') === 0) {
+            return 'woocommerce';
+        }
+        
+        if (strpos($tool_name, 'seo_') === 0 || strpos($tool_name, 'get_seo_settings') === 0) {
+            return 'seo';
+        }
+        
+        if (strpos($tool_name, 'wp_search_repo_') === 0 || strpos($tool_name, 'wp_get_repo_') === 0 || 
+            strpos($tool_name, 'wp_install_repo_') === 0 || strpos($tool_name, 'wp_check_') === 0 || 
+            strpos($tool_name, 'wp_update_plugin') === 0 || strpos($tool_name, 'wp_update_theme') === 0 || 
+            strpos($tool_name, 'wp_update_all_') === 0) {
+            return 'repository';
+        }
+        
+        if (strpos($tool_name, 'list_api_functions') === 0 || strpos($tool_name, 'get_function_details') === 0 || 
+            strpos($tool_name, 'run_api_function') === 0) {
+            return 'rest_api';
+        }
+        
+        if (strpos($tool_name, 'get_site_info') === 0 || strpos($tool_name, 'wp_list_plugins') === 0 || 
+            strpos($tool_name, 'wp_get_theme_info') === 0 || strpos($tool_name, 'wp_list_themes') === 0 || 
+            strpos($tool_name, 'wp_get_site_settings') === 0 || strpos($tool_name, 'wp_get_general_site_info') === 0 || 
+            strpos($tool_name, 'wp_get_detailed_') === 0) {
+            return 'site_info';
+        }
+        
+        if (strpos($tool_name, 'dataforseo_') === 0) {
+            return 'dataforseo';
+        }
+        
+        if (strpos($tool_name, 'pagespeed_') === 0) {
+            return 'pagespeed';
+        }
+        
+        if (strpos($tool_name, 'db_') === 0) {
+            return 'database';
+        }
+
+        if (strpos($tool_name, 'security_') === 0) {
+            return 'security';
+        }
+        
+        return 'other';
     }
 }
 
