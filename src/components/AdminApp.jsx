@@ -4,6 +4,7 @@ import ChatInterface from './ChatInterface'
 import Settings from './Settings'
 import Analytics from './Analytics'
 import SEO from './SEO'
+import Security from './Security'
 import License from './License'
 import { ToastProvider } from './Toast'
 
@@ -27,6 +28,11 @@ const navigationItems = [
     id: 'seo',
     label: 'SEO',
     icon: "M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"
+  },
+  {
+    id: 'security',
+    label: 'Security',
+    icon: "M12 2l8 4v6c0 5.25-3.187 9.73-8 11-4.813-1.27-8-5.75-8-11V6l8-4z"
   },
   {
     id: 'analytics',
@@ -225,15 +231,12 @@ const AdminApp = () => {
     switch (activeTab) {
       case 'chat':
         return (
-          <div className="space-y-6">
-            <Card className="p-0 overflow-hidden">
-              <ChatInterface adminData={adminData} />
-            </Card>
-          </div>
+          <ChatInterface adminData={adminData} />
         )
-
       case 'seo':
         return <SEO adminData={adminData} settings={settings} />
+      case 'security':
+        return <Security adminData={adminData} />
       case 'analytics':
         return <Analytics adminData={adminData} />
       case 'license':
@@ -536,7 +539,7 @@ const AdminApp = () => {
 
         {/* Scrollable Content Area */}
         <main className="flex-1 bg-brand-light dark:bg-brand-dark transition-colors duration-300">
-          <div className="container px-6 py-8 pb-12 w-[100%] max-w-none">
+          <div className={`${activeTab === 'chat' ? '' : 'p-6'} container w-[100%] h-full max-w-none`}>
             {renderContent()}
           </div>
         </main>
