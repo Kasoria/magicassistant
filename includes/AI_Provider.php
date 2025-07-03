@@ -422,6 +422,11 @@ class AI_Provider {
                     $result['cost'] ?? null
                 );
                 
+                // Persist the latest credit info globally if present
+                if (isset($result['credits']) && is_array($result['credits'])) {
+                    $this->db->save_setting('current_credits', $result['credits']);
+                }
+                
                 // Log the API request for analytics
                 if ($result['user_key_used'] ?? false) {
                     $this->db->log_api_request(
@@ -451,7 +456,8 @@ class AI_Provider {
                 'response_time' => $response_time,
                 'tokens_used' => $result['tokens_used'] ?? null,
                 'cost' => $result['cost'] ?? 0,
-                'debug_tool_data' => $result['debug_tool_data'] ?? null
+                'debug_tool_data' => $result['debug_tool_data'] ?? null,
+                'credits' => $result['credits'] ?? null
             );
             
         } catch (Exception $e) {
@@ -677,7 +683,8 @@ class AI_Provider {
                 'tokens_used' => $total_tokens,
                 'cost' => $total_cost,
                 'debug_tool_data' => $this->format_debug_tool_results($tool_results),
-                'user_key_used' => $user_key_used_total
+                'user_key_used' => $user_key_used_total,
+                'credits' => $final_response['credits'] ?? $response['credits'] ?? null
             );
         }
         
@@ -691,7 +698,8 @@ class AI_Provider {
             'tool_calls_count' => 0,
             'tokens_used' => $total_tokens,
             'cost' => $total_cost,
-            'user_key_used' => $user_key_used_total
+            'user_key_used' => $user_key_used_total,
+            'credits' => $response['credits'] ?? null
         );
     }
     
@@ -833,6 +841,13 @@ class AI_Provider {
             $total_tokens = 0;
             $total_cost   = 0;
         }
+        
+        // Extract credits from the last response
+        $credits = null;
+        if (isset($response['credits'])) {
+            $credits = $response['credits'];
+        }
+        
         return array(
             'response' => $final_response,
             'reasoning' => $reasoning_chain,
@@ -840,7 +855,8 @@ class AI_Provider {
             'tokens_used' => $total_tokens,
             'cost' => $total_cost,
             'debug_tool_data' => !empty($all_tool_results) ? $this->format_debug_tool_results($all_tool_results) : null,
-            'user_key_used' => $user_key_used_total
+            'user_key_used' => $user_key_used_total,
+            'credits' => $credits
         );
     }
     
@@ -991,12 +1007,19 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
+        // DEBUG: Log the full response from MagicProxy
+        error_log('[MagicAssistant][DEBUG] OpenAI proxy raw response: ' . $body);
+        if (isset($data['credits'])) {
+            error_log('[MagicAssistant][DEBUG] OpenAI proxy credits: ' . print_r($data['credits'], true));
+        }
         if (empty($data['success']) || isset($data['error'])) {
             throw new Exception('OpenAI proxy error: ' . ($data['error'] ?? 'Unknown error'));
         }
         $result  = $data['data'];
         // NEW: detect if the proxy actually used the user-supplied API key
         $userKeyUsed = $data['userKeyUsed'] ?? ($data['user_key_used'] ?? false);
+        // Extract credits information from proxy response
+        $credits = $data['credits'] ?? null;
         $message = $result['choices'][0]['message'] ?? null;
         $usage   = $result['usage'] ?? null;
         $cost = 0;
@@ -1009,6 +1032,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $message['cost']  = $cost;
             // Pass through the flag so downstream logic can decide whether to count analytics
             $message['user_key_used'] = $userKeyUsed;
+            // Pass through credits information
+            $message['credits'] = $credits;
         }
         return $message;
     }
@@ -1053,12 +1078,19 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
+        // DEBUG: Log the full response from MagicProxy
+        error_log('[MagicAssistant][DEBUG] Anthropic proxy raw response: ' . $body);
+        if (isset($data['credits'])) {
+            error_log('[MagicAssistant][DEBUG] Anthropic proxy credits: ' . print_r($data['credits'], true));
+        }
         if (empty($data['success']) || isset($data['error'])) {
             throw new Exception('Anthropic proxy error: ' . ($data['error'] ?? 'Unknown error'));
         }
         $result       = $data['data'];
         // NEW: detect if the proxy actually used the user-supplied API key
         $userKeyUsed  = $data['userKeyUsed'] ?? ($data['user_key_used'] ?? false);
+        // Extract credits information from proxy response
+        $credits      = $data['credits'] ?? null;
         $content      = $result['content']    ?? '';
         $tool_calls   = $result['tool_calls'] ?? [];
         $usage        = $result['usage']      ?? null;
@@ -1072,7 +1104,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'tool_calls'     => $tool_calls,
             'usage'          => $usage,
             'cost'           => $cost,
-            'user_key_used'  => $userKeyUsed
+            'user_key_used'  => $userKeyUsed,
+            'credits'        => $credits
         );
     }
     
@@ -1338,6 +1371,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'debug_view_enabled' => isset($this->settings['debug_view_enabled']) ? (bool) $this->settings['debug_view_enabled'] : false,
             'debug_view_file_editing' => isset($this->settings['debug_view_file_editing']) ? (bool) $this->settings['debug_view_file_editing'] : false,
             'debug_view_password' => $this->db ? $this->db->has_api_key('debug_view_password') : false,
+            'current_credits' => isset($this->settings['current_credits']) ? $this->settings['current_credits'] : null,
         );
     }
     
@@ -3895,6 +3929,22 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 $status['tier'] = $tier;
             }
             
+            // Fetch credit information from MagicProxy (remaining & limit)
+            $credits = $this->get_credits_from_magicproxy( $license_key );
+            if ( $credits && isset( $credits['remaining'] ) ) {
+                $status['credits_remaining'] = intval( $credits['remaining'] );
+                if ( isset( $credits['limit'] ) ) {
+                    $status['credit_limit'] = intval( $credits['limit'] );
+                }
+            }
+            // Always include current_credits from the DB if present
+            if ($this->db) {
+                $settings = $this->db->get_all_settings();
+                if (isset($settings['current_credits'])) {
+                    $status['current_credits'] = $settings['current_credits'];
+                }
+            }
+            
             return array(
                 'success' => true,
                 'data' => $status
@@ -4229,6 +4279,60 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
             if ( isset( $data['tier'] ) && ! empty( $data['tier'] ) ) {
                 return sanitize_text_field( $data['tier'] );
+            }
+
+            return null;
+        } catch ( Exception $e ) {
+            return null;
+        }
+    }
+
+    /**
+     * Get remaining credits information for this license from MagicProxy
+     *
+     * @param string $license_key
+     * @return array|null Array with keys 'remaining' and optionally 'limit', or null on failure
+     */
+    private function get_credits_from_magicproxy( $license_key ) {
+        if ( empty( $license_key ) ) {
+            return null;
+        }
+
+        try {
+            // NOTE: Adjust the endpoint URL if the MagicProxy credit summary endpoint changes
+            $url = 'https://proxy.magicplugins.io/api/proxy/license-credits';
+
+            $response = wp_remote_get( $url, array(
+                'headers' => array(
+                    'X-License-Key' => $license_key,
+                    'Content-Type'   => 'application/json',
+                ),
+                'timeout' => 10,
+            ) );
+
+            if ( is_wp_error( $response ) ) {
+                return null;
+            }
+
+            $code = wp_remote_retrieve_response_code( $response );
+            $body = wp_remote_retrieve_body( $response );
+
+            if ( $code !== 200 ) {
+                error_log( 'MagicAssistant Credit Info Error: HTTP ' . $code . ' - ' . $body );
+                return null;
+            }
+
+            $data = json_decode( $body, true );
+
+            if ( json_last_error() !== JSON_ERROR_NONE || ! is_array( $data ) ) {
+                return null;
+            }
+
+            if ( isset( $data['credits_remaining'] ) || isset( $data['remaining'] ) ) {
+                return array(
+                    'remaining' => $data['credits_remaining'] ?? $data['remaining'],
+                    'limit'     => $data['credit_limit'] ?? $data['limit'] ?? null,
+                );
             }
 
             return null;

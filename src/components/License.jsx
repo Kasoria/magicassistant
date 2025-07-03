@@ -235,6 +235,43 @@ const License = ({ adminData }) => {
                     </div>
                   </div>
                 )}
+                {typeof licenseData.current_credits !== 'undefined' && licenseData.current_credits && typeof licenseData.current_credits.limit !== 'undefined' ? (
+                  <div>
+                    <Label className="text-green-800 dark:text-green-200 font-medium">
+                      Credits
+                    </Label>
+                    <div className="mt-1 text-green-700 dark:text-green-300">
+                      {(() => {
+                        const credits = licenseData.current_credits
+                        console.log(credits)
+                        let used = null
+                        if (typeof credits.current !== 'undefined') {
+                          used = Number(credits.current)
+                        } else if (typeof credits.limit !== 'undefined' && typeof credits.remaining !== 'undefined') {
+                          used = Number(credits.limit) - Number(credits.remaining)
+                        }
+                        if (used !== null && typeof credits.limit !== 'undefined') {
+                          console.log(credits)
+                          return `💳 ${used.toFixed(2)} / ${credits.limit}`
+                        } else if (typeof credits.limit !== 'undefined') {
+                          return `💳 ${credits.limit}`
+                        } else {
+                          return ''
+                        }
+                      })()}
+                    </div>
+                  </div>
+                ) : (typeof licenseData.credits_remaining !== 'undefined' && (
+                  <div>
+                    <Label className="text-green-800 dark:text-green-200 font-medium">
+                      Credits Remaining
+                    </Label>
+                    <div className="mt-1 text-green-700 dark:text-green-300">
+                      {licenseData.credits_remaining}
+                      {licenseData.credit_limit ? ` / ${licenseData.credit_limit}` : ''}
+                    </div>
+                  </div>
+                ))}
                 {licenseData.activated_at && (
                   <div className="md:col-span-3">
                     <Label className="text-green-800 dark:text-green-200 font-medium">

@@ -35,6 +35,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
   const [shareAsPermanent, setShareAsPermanent] = useState(false)
   const [shareExpiry, setShareExpiry] = useState(30)
   const [isCreatingShare, setIsCreatingShare] = useState(false)
+  const [creditsInfo, setCreditsInfo] = useState(null)
 
   // Agent mode options for react-select
   const agentModeOptions = [
@@ -115,6 +116,10 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
       if (response.ok) {
         const data = await response.json()
         setSettings(data)
+        // Always set creditsInfo from settings.current_credits
+        if (data.current_credits) {
+          setCreditsInfo(data.current_credits)
+        }
       }
     } catch (error) {
       console.error('Failed to load settings:', error)
@@ -218,6 +223,10 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
           response_time: data.response_time
         }
         setMessages(prev => [...prev, assistantMessage])
+        // Update credit info from response
+        if (data.credits) {
+          setCreditsInfo(data.credits)
+        }
       } else {
         const errorMessage = {
           role: 'assistant',
@@ -226,6 +235,10 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
           isError: true
         }
         setMessages(prev => [...prev, errorMessage])
+        // Update credit info from error response if available
+        if (data.credits) {
+          setCreditsInfo(data.credits)
+        }
       }
     } catch (error) {
       console.error('Chat error:', error)
@@ -827,6 +840,25 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
           </div>
           
             <div className="flex items-center space-x-2 shrink-0">
+              {creditsInfo && typeof creditsInfo.remaining !== 'undefined' && (
+                <span className="text-sm text-gray-600 dark:text-gray-300">
+                  {(() => {
+                    let used = null
+                    if (typeof creditsInfo.current !== 'undefined') {
+                      used = Number(creditsInfo.current)
+                    } else if (typeof creditsInfo.limit !== 'undefined' && typeof creditsInfo.remaining !== 'undefined') {
+                      used = Number(creditsInfo.limit) - Number(creditsInfo.remaining)
+                    }
+                    if (used !== null && typeof creditsInfo.limit !== 'undefined') {
+                      return `💳 ${used.toFixed(2)} / ${creditsInfo.limit}`
+                    } else if (typeof creditsInfo.limit !== 'undefined') {
+                      return `💳 ${creditsInfo.limit}`
+                    } else {
+                      return ''
+                    }
+                  })()}
+                </span>
+              )}
               <CustomSelect
                 value={agentModeOptions.find(option => option.value === forceAgentMode.toString())}
                 onChange={(option) => setForceAgentMode(option.value === 'true')}
@@ -887,6 +919,25 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
           </div>
           
           <div className="flex items-center space-x-1 ml-2">
+            {creditsInfo && typeof creditsInfo.remaining !== 'undefined' && (
+              <span className="text-sm text-gray-600 dark:text-gray-300">
+                {(() => {
+                  let used = null
+                  if (typeof creditsInfo.current !== 'undefined') {
+                    used = Number(creditsInfo.current)
+                  } else if (typeof creditsInfo.limit !== 'undefined' && typeof creditsInfo.remaining !== 'undefined') {
+                    used = Number(creditsInfo.limit) - Number(creditsInfo.remaining)
+                  }
+                  if (used !== null && typeof creditsInfo.limit !== 'undefined') {
+                    return `�� ${used.toFixed(2)} / ${creditsInfo.limit}`
+                  } else if (typeof creditsInfo.limit !== 'undefined') {
+                    return `💳 ${creditsInfo.limit}`
+                  } else {
+                    return ''
+                  }
+                })()}
+              </span>
+            )}
             <CustomSelect
               value={agentModeOptions.find(option => option.value === forceAgentMode.toString())}
               onChange={(option) => setForceAgentMode(option.value === 'true')}
@@ -996,7 +1047,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
                                   </span>
                                 )}
                               </div>
-                              <pre className="text-xs bg-gray-100 dark:bg-gray-900 p-2 rounded overflow-x-auto text-gray-800 dark:text-gray-200 font-mono">
+                              <pre className="text-xs bg-gray-100 dark:bg-gray-900 p-2 rounded overflow-x-auto break-all whitespace-pre-wrap text-gray-800 dark:text-gray-200 font-mono">
                                 {JSON.stringify(toolData.success ? toolData.result : toolData.error, null, 2)}
                               </pre>
                             </div>
@@ -1227,7 +1278,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
           showActions={false}
           maxWidth="max-w-2xl"
         >
-          <p className="text-sm text-gray-500 dark:text-gray-400">Settings content goes here.</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Settings will show up here.</p>
         </ConfirmationModal>
       )}
 
