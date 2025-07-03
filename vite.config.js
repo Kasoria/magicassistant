@@ -21,7 +21,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: './src/main.jsx',
-        admin: './src/admin.jsx'
+        admin: './src/admin.jsx',
+        debug: path.resolve(__dirname, 'src/debug.jsx')
       },
       output: {
         entryFileNames: '[name].js',
