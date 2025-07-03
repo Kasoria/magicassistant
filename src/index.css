@@ -723,3 +723,126 @@ input[type='checkbox']:not(.sr-only):checked {
   background-image: none;
   position: relative;
 }
+
+/* --- SplitPane Resizer styles --- */
+.Resizer {
+  background: #000;
+  opacity: 0.2;
+  z-index: 1;
+  box-sizing: border-box;
+  background-clip: padding-box;
+}
+
+.Resizer:hover {
+  transition: all 2s ease;
+}
+
+.Resizer.vertical {
+  width: 11px;
+  margin: 0 -5px;
+  border-left: 5px solid rgba(255,255,255,0);
+  border-right: 5px solid rgba(255,255,255,0);
+  cursor: col-resize;
+}
+
+.Resizer.vertical:hover {
+  border-left: 5px solid rgba(0,0,0,0.5);
+  border-right: 5px solid rgba(0,0,0,0.5);
+}
+
+.Resizer.horizontal {
+  height: 11px;
+  margin: -5px 0;
+  border-top: 5px solid rgba(255,255,255,0);
+  border-bottom: 5px solid rgba(255,255,255,0);
+  cursor: row-resize;
+  width: 100%;
+}
+
+.Resizer.horizontal:hover {
+  border-top: 5px solid rgba(0,0,0,0.5);
+  border-bottom: 5px solid rgba(0,0,0,0.5);
+}
+
+.Resizer.disabled {
+  cursor: not-allowed;
+}
+
+.Resizer.disabled:hover {
+  border-color: transparent;
+}
+
+/* Markdown styling for Debug View */
+.mat-markdown {
+  line-height: 1.7;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mat-markdown h1,
+.mat-markdown h2,
+.mat-markdown h3,
+.mat-markdown h4,
+.mat-markdown h5,
+.mat-markdown h6 {
+  margin-top: 0.5em !important;
+  margin-bottom: 0.5em !important;
+  font-weight: 700;
+  font-size: 20px;
+  color: #1e1e1e;
+}
+
+.mat-markdown p {
+  margin: 0 !important;
+}
+
+.mat-markdown ul,
+.mat-markdown ol {
+  display: flex;
+  gap: 5px;
+  flex-direction: column;
+  margin: 0 !important;
+  margin-left: 1em !important;
+}
+
+.mat-markdown li {
+  margin-bottom: 0.5em !important;
+}
+
+.mat-markdown code {
+  background: #111828;
+  color: rgb(0, 223, 0);
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+  font-size: 0.95em;
+}
+
+.mat-markdown pre {
+  background: #18181b;
+  color: #f3f4f6;
+  padding: .5em !important;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 0 !important;
+}
+
+.mat-markdown blockquote {
+  border-left: 4px solid #a78bfa;
+  background: #f5f3ff;
+  color: #1e1e1e;
+  padding: 0.5em 1em !important;
+  margin: 1em 0 !important;
+  border-radius: 4px;
+}
+
+.mat-markdown a {
+  color: #6366f1;
+  text-decoration: underline;
+}
+
+.mat-markdown hr {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: .5em 0 !important;
+}

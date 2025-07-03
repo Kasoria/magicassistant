@@ -11,7 +11,7 @@
  * Plugin Name:       MagicAssistant
  * Plugin URI:        https://magicplugins.io
  * Description:       Your personal AI assistant for WordPress websites.
- * Version:           0.1.0
+ * Version:           1.0.0
  * Requires PHP:      7.4
  * Author:            Christian Wenterodt
  * Author URI:        https://magicplugins.io
@@ -24,7 +24,7 @@
 if (!defined('ABSPATH')) exit;
 
 // Define plugin constants
-define('MAGIC_ASSISTANT_VERSION', '0.1.0');
+define('MAGIC_ASSISTANT_VERSION', '1.0.0');
 define('MAGIC_ASSISTANT_PLUGIN_FILE', __FILE__);
 define('MAGIC_ASSISTANT_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('MAGIC_ASSISTANT_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -44,6 +44,7 @@ class MagicAssistant {
   private $dataforseo;
   private $pagespeed_service;
   private $licensing_client;
+  private $debug_view_handler;
   
   public function __construct() {
     add_action('plugins_loaded', array($this, 'init'));
@@ -89,6 +90,9 @@ class MagicAssistant {
     
     // Initialize PageSpeed service
     $this->pagespeed_service = new MagicAssistant\PageSpeed_Service($this->ai_provider);
+    
+    // Initialize debug view handler
+    $this->debug_view_handler = new MagicAssistant\Debug_View_Handler();
     
     // Initialize admin functionality
     if (is_admin()) {

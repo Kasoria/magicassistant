@@ -56,6 +56,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         floating_chat_specific_admin_pages: settings.floating_chat_specific_admin_pages || [],
         enable_sql_queries: settings.enable_sql_queries === true,
         enable_dangerous_sql_queries: settings.enable_dangerous_sql_queries === true,
+        debug_view_enabled: settings.debug_view_enabled === true,
+        debug_view_file_editing: settings.debug_view_file_editing === true,
       })
       setHasUnsavedChanges(false)
     }
@@ -97,7 +99,17 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
       let settingsKey = ''
       if (provider === 'openai') settingsKey = 'openai_api_key'
       else if (provider === 'anthropic') settingsKey = 'anthropic_api_key'
-      onSaveSettings({ [settingsKey]: apiKey.trim() })
+      else if (provider === 'debug_view') settingsKey = 'debug_view_password'
+      
+      // For debug view password, also save the enabled state
+      if (provider === 'debug_view') {
+        onSaveSettings({ 
+          [settingsKey]: apiKey.trim(),
+          debug_view_enabled: localSettings.debug_view_enabled
+        })
+      } else {
+        onSaveSettings({ [settingsKey]: apiKey.trim() })
+      }
       setApiKey('')
     }
   }
@@ -270,7 +282,9 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
       case 'general':
         return {
           complete_data_removal: localSettings.complete_data_removal,
-          show_tips: localSettings.show_tips
+          show_tips: localSettings.show_tips,
+          debug_view_enabled: localSettings.debug_view_enabled,
+          debug_view_file_editing: localSettings.debug_view_file_editing,
         }
       case 'ai':
         return {
@@ -288,6 +302,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           conversation_history_limit: parseInt(localSettings.conversation_history_limit),
           enable_sql_queries: localSettings.enable_sql_queries,
           enable_dangerous_sql_queries: localSettings.enable_dangerous_sql_queries,
+          debug_view_enabled: localSettings.debug_view_enabled,
+          debug_view_file_editing: localSettings.debug_view_file_editing,
         }
       case 'seo':
         return {
@@ -441,6 +457,130 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                     </span>
                   </label>
                 </div>
+              </div>
+            </div>
+
+            {/* Debug View Settings */}
+            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
+              <h4 className="font-medium text-brand-dark dark:text-white mb-2">Emergency Debug View</h4>
+              <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+                Provides a standalone debug interface that works even when WordPress has fatal errors. When enabled, debug files are automatically copied to your WordPress root directory for emergency access.
+              </p>
+              
+              {localSettings.show_tips === true && (
+                <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                  <p className="text-sm text-blue-800 dark:text-blue-200">
+                    <strong>🛟 How it works:</strong> When you enable the debug view, the system automatically copies <code>debug-view.php</code> and <code>debug-api.php</code> from the plugin folder to your WordPress root directory. This allows access to debugging tools even when WordPress crashes with fatal errors.
+                  </p>
+                  <ul className="text-sm text-blue-800 dark:text-blue-200 mt-2 ml-4 list-disc">
+                    <li>Files are copied automatically when you save these settings</li>
+                    <li>Access via: <code>{window.location.origin}/mat-debugging/</code></li>
+                    <li>Files are removed automatically when you disable debug view</li>
+                    <li>Existing files are backed up before overwriting</li>
+                  </ul>
+                </div>
+              )}
+              
+              <div className="space-y-4">
+                {/* Enable debug view toggle */}
+                <label className="inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={localSettings.debug_view_enabled === true}
+                    onChange={(e) => handleLocalChange('debug_view_enabled', e.target.checked)}
+                    disabled={isSavingSettings}
+                    className="sr-only peer"
+                  />
+                  <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-accent/20 dark:peer-focus:ring-brand-accent/30 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-brand-accent dark:peer-checked:bg-brand-accent peer-disabled:opacity-50 peer-disabled:cursor-not-allowed"></div>
+                  <span className="ms-3 text-sm font-medium text-gray-900 dark:text-gray-300">
+                    Enable Debug View
+                  </span>
+                </label>
+
+                {/* File editing permission (only show when debug view is enabled) */}
+                {localSettings.debug_view_enabled === true && (
+                  <div className="ml-6 pl-4 border-l-2 border-gray-200 dark:border-gray-600">
+                    <label className="inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={localSettings.debug_view_file_editing === true}
+                        onChange={(e) => handleLocalChange('debug_view_file_editing', e.target.checked)}
+                        disabled={isSavingSettings}
+                        className="sr-only peer"
+                      />
+                      <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-red-500/20 dark:peer-focus:ring-red-500/30 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-red-600 dark:peer-checked:bg-red-600 peer-disabled:opacity-50 peer-disabled:cursor-not-allowed"></div>
+                      <span className="ms-3 text-sm font-medium text-gray-900 dark:text-gray-300">
+                        Allow File Editing (High Risk)
+                      </span>
+                    </label>
+                    <div className="mt-2 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+                      <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                        <strong>⚠️ Security Warning:</strong> When enabled, the debug view allows direct editing of PHP files on your server. 
+                        This is useful for emergency bug fixes but poses significant security risks if accessed by unauthorized users.
+                      </p>
+                      <ul className="text-sm text-yellow-800 dark:text-yellow-200 mt-2 ml-4 list-disc">
+                        <li>Only enable if you need to edit files during emergencies</li>
+                        <li>Ensure your debug view password is strong and secure</li>
+                        <li>Disable this feature when not actively debugging</li>
+                      </ul>
+                    </div>
+                  </div>
+                )}
+
+                {/* Password field (only show when enabled) */}
+                {localSettings.debug_view_enabled === true && (
+                  <div>
+                    <Label htmlFor="debug-view-password" value="Debug View Password" className="mb-2" />
+                    <div className="flex gap-2">
+                      <TextInput
+                        id="debug-view-password"
+                        type="password"
+                        placeholder="Enter password for debug view access"
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        className="flex-1"
+                        disabled={isSavingSettings}
+                      />
+                      <Button 
+                        onClick={() => handleApiKeySubmit('debug_view')}
+                        disabled={!apiKey.trim() || isSavingSettings}
+                        size="sm"
+                      >
+                        {isSavingSettings ? 'Saving...' : 'Save'}
+                      </Button>
+                    </div>
+                    {settings?.debug_view_password && (
+                      <p className="text-sm text-green-600 dark:text-green-400 mt-1">
+                        ✓ Password configured (encrypted in database)
+                      </p>
+                    )}
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      This password will be required to access the debug view interface.
+                    </p>
+                  </div>
+                )}
+
+                {/* Debug view access info */}
+                {localSettings.debug_view_enabled === true && settings?.debug_view_password && (
+                  <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                    <p className="text-sm text-blue-800 dark:text-blue-200">
+                      <strong>🔗 Debug View Access:</strong> Visit <code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">{window.location.origin}/mat-debugging/</code> to access the emergency debug interface.
+                    </p>
+                    <p className="text-sm text-blue-800 dark:text-blue-200 mt-1">
+                      <strong>📁 Files Location:</strong> Debug files are automatically placed in your WordPress root directory when you save these settings.
+                    </p>
+                    {localSettings.debug_view_file_editing === true && (
+                      <p className="text-sm text-red-800 dark:text-red-200 mt-2">
+                        <strong>🔒 File Editing:</strong> Enabled - Users can edit PHP files directly through the debug interface.
+                      </p>
+                    )}
+                    {localSettings.debug_view_file_editing !== true && (
+                      <p className="text-sm text-green-800 dark:text-green-200 mt-2">
+                        <strong>🛡️ File Editing:</strong> Disabled - Read-only mode for enhanced security.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 

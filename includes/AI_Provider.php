@@ -1335,6 +1335,9 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'floating_chat_admin_pages' => $this->settings['floating_chat_admin_pages'] ?? 'all',
             'floating_chat_specific_admin_pages' => isset($this->settings['floating_chat_specific_admin_pages']) ? json_decode($this->settings['floating_chat_specific_admin_pages'], true) : [],
             'enable_dangerous_sql_queries' => isset($this->settings['enable_dangerous_sql_queries']) ? (bool) $this->settings['enable_dangerous_sql_queries'] : false,
+            'debug_view_enabled' => isset($this->settings['debug_view_enabled']) ? (bool) $this->settings['debug_view_enabled'] : false,
+            'debug_view_file_editing' => isset($this->settings['debug_view_file_editing']) ? (bool) $this->settings['debug_view_file_editing'] : false,
+            'debug_view_password' => $this->db ? $this->db->has_api_key('debug_view_password') : false,
         );
     }
     
@@ -1521,6 +1524,46 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         // Dangerous SQL query execution toggle
         if (isset($data['enable_dangerous_sql_queries'])) {
             $this->db->save_setting('enable_dangerous_sql_queries', (bool) $data['enable_dangerous_sql_queries']);
+        }
+        
+        // Debug view settings
+        if (isset($data['debug_view_enabled'])) {
+            // Get current state before saving new value
+            $current_debug_enabled = $this->db->get_setting('debug_view_enabled', false);
+            $new_debug_enabled = (bool) $data['debug_view_enabled'];
+            
+            // Save the new setting
+            $this->db->save_setting('debug_view_enabled', $new_debug_enabled);
+            
+            // Handle file operations if the setting changed
+            if ($current_debug_enabled !== $new_debug_enabled) {
+                if ($new_debug_enabled) {
+                    // Debug view was enabled - copy files to WordPress root
+                    $copy_result = $this->copy_debug_files_to_root();
+                    if (!$copy_result['success']) {
+                        error_log('MagicAssistant: Failed to copy debug files: ' . $copy_result['message']);
+                        // Note: We don't fail the entire settings save if file copy fails
+                        // The user can manually copy the files if needed
+                    }
+                } else {
+                    // Debug view was disabled - remove files from WordPress root
+                    $remove_result = $this->remove_debug_files_from_root();
+                    if (!$remove_result['success']) {
+                        error_log('MagicAssistant: Failed to remove debug files: ' . $remove_result['message']);
+                        // Note: We don't fail the entire settings save if file removal fails
+                    }
+                }
+            }
+        }
+        
+        if (isset($data['debug_view_file_editing'])) {
+            $this->db->save_setting('debug_view_file_editing', (bool) $data['debug_view_file_editing']);
+        }
+        
+        // Debug view password (handled separately via API key mechanism)
+        if (isset($data['debug_view_password']) && !empty($data['debug_view_password'])) {
+            $password = sanitize_text_field($data['debug_view_password']);
+            $this->db->save_setting('debug_view_password', $password);
         }
         
         // Refresh settings from database
@@ -4378,6 +4421,283 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'message' => '.htaccess backup created successfully',
             'backup_file' => $backup_filename
         );
+    }
+
+    /**
+     * Copy debug files from plugin directory to WordPress root
+     */
+    private function copy_debug_files_to_root() {
+        try {
+            // Get WordPress root directory (where wp-config.php is located)
+            $wp_root = $this->get_wordpress_root();
+            if (!$wp_root) {
+                return array(
+                    'success' => false,
+                    'message' => 'Could not determine WordPress root directory'
+                );
+            }
+
+            // Get plugin directory
+            $plugin_dir = plugin_dir_path(dirname(__FILE__));
+            
+            // Define source and destination paths
+            $files_to_copy = array(
+                'debug-view.php' => array(
+                    'source' => $plugin_dir . 'assets/debug-view.php',
+                    'dest' => $wp_root . '/debug-view.php'
+                ),
+                'debug-api.php' => array(
+                    'source' => $plugin_dir . 'assets/debug-api.php', 
+                    'dest' => $wp_root . '/debug-api.php'
+                )
+            );
+
+            $copied_files = array();
+            $errors = array();
+
+            foreach ($files_to_copy as $file_name => $paths) {
+                // Check if source file exists
+                if (!file_exists($paths['source'])) {
+                    $errors[] = "Source file {$file_name} not found at {$paths['source']}";
+                    continue;
+                }
+
+                // Check if destination already exists and create backup if needed
+                if (file_exists($paths['dest'])) {
+                    $backup_path = $paths['dest'] . '.backup.' . date('Y-m-d-H-i-s');
+                    if (!copy($paths['dest'], $backup_path)) {
+                        $errors[] = "Failed to create backup of existing {$file_name}";
+                        continue;
+                    }
+                    error_log("MagicAssistant: Created backup of existing {$file_name} at {$backup_path}");
+                }
+
+                // Copy the file
+                if (copy($paths['source'], $paths['dest'])) {
+                    $copied_files[] = $file_name;
+                    error_log("MagicAssistant: Successfully copied {$file_name} to WordPress root");
+                } else {
+                    $errors[] = "Failed to copy {$file_name} to {$paths['dest']}";
+                }
+            }
+
+            // --- New: ensure /mat-debugging/ directory with stub index.php exists ---
+            $stub_dir = $wp_root . '/mat-debugging';
+            $stub_index = $stub_dir . '/index.php';
+
+            if (!is_dir($stub_dir)) {
+                if (!mkdir($stub_dir, 0755, true)) {
+                    $errors[] = 'Failed to create mat-debugging directory in WordPress root';
+                }
+            }
+
+            // Create or update stub index.php
+            $stub_code = "<?php\n/**\n * MagicAssistant Debug View Stub\n * Automatically generated by MagicAssistant.\n * Routes /mat-debugging/ to /debug-view.php even when WordPress is down.\n */\n\n// Redirect to parent debug-view.php (works even if WP is dead)\nrequire_once dirname(__DIR__) . '/debug-view.php';\n";
+            if (file_exists($stub_index)) {
+                // Backup existing stub if content differs
+                $existing_content = file_get_contents($stub_index);
+                if ($existing_content !== $stub_code) {
+                    $backup_path = $stub_index . '.backup.' . date('Y-m-d-H-i-s');
+                    copy($stub_index, $backup_path);
+                    error_log('MagicAssistant: Backed up existing mat-debugging/index.php to ' . $backup_path);
+                }
+            }
+            if (file_put_contents($stub_index, $stub_code) === false) {
+                $errors[] = 'Failed to write mat-debugging/index.php stub';
+            }
+
+            // -----------------------------------------------------------------------
+
+            if (!empty($errors)) {
+                return array(
+                    'success' => false,
+                    'message' => 'Some files failed to copy: ' . implode(', ', $errors),
+                    'copied_files' => $copied_files,
+                    'errors' => $errors
+                );
+            }
+
+            return array(
+                'success' => true,
+                'message' => 'Debug files successfully copied to WordPress root',
+                'copied_files' => $copied_files
+            );
+
+        } catch (Exception $e) {
+            error_log('MagicAssistant: Exception copying debug files: ' . $e->getMessage());
+            return array(
+                'success' => false,
+                'message' => 'Exception occurred: ' . $e->getMessage()
+            );
+        }
+    }
+
+    /**
+     * Remove debug files from WordPress root
+     */
+    private function remove_debug_files_from_root() {
+        try {
+            // Get WordPress root directory (where wp-config.php is located)
+            $wp_root = $this->get_wordpress_root();
+            if (!$wp_root) {
+                return array(
+                    'success' => false,
+                    'message' => 'Could not determine WordPress root directory'
+                );
+            }
+
+            // Define files to remove
+            $files_to_remove = array(
+                'debug-view.php' => $wp_root . '/debug-view.php',
+                'debug-api.php' => $wp_root . '/debug-api.php'
+            );
+
+            $removed_files = array();
+            $errors = array();
+
+            foreach ($files_to_remove as $file_name => $file_path) {
+                // Check if file exists
+                if (!file_exists($file_path)) {
+                    // File doesn't exist, which is fine - consider it "removed"
+                    $removed_files[] = $file_name . ' (was not present)';
+                    continue;
+                }
+
+                // Check if this is likely our file by comparing file size or basic content check
+                $is_our_file = $this->verify_debug_file_ownership($file_path, $file_name);
+                if (!$is_our_file) {
+                    $errors[] = "Skipped removing {$file_name} - appears to be modified or from different source";
+                    continue;
+                }
+
+                // Remove the file
+                if (unlink($file_path)) {
+                    $removed_files[] = $file_name;
+                    error_log("MagicAssistant: Successfully removed {$file_name} from WordPress root");
+                } else {
+                    $errors[] = "Failed to remove {$file_name} from {$file_path}";
+                }
+            }
+
+            // --- New: remove mat-debugging stub directory ---
+            $stub_dir = $wp_root . '/mat-debugging';
+            $stub_index = $stub_dir . '/index.php';
+            if (file_exists($stub_index)) {
+                if ($this->verify_debug_file_ownership($stub_index, 'mat-debugging/index.php')) { // verify stub
+                    if (!unlink($stub_index)) {
+                        $errors[] = 'Failed to remove mat-debugging/index.php stub';
+                    } else {
+                        $removed_files[] = 'mat-debugging/index.php';
+                    }
+                }
+            }
+            // Remove directory if empty
+            if (is_dir($stub_dir) && !(new \FilesystemIterator($stub_dir))->valid()) {
+                rmdir($stub_dir);
+            }
+            // ---------------------------------------------------
+
+            if (!empty($errors)) {
+                return array(
+                    'success' => false,
+                    'message' => 'Some files failed to remove: ' . implode(', ', $errors),
+                    'removed_files' => $removed_files,
+                    'errors' => $errors
+                );
+            }
+
+            return array(
+                'success' => true,
+                'message' => 'Debug files successfully removed from WordPress root',
+                'removed_files' => $removed_files
+            );
+
+        } catch (Exception $e) {
+            error_log('MagicAssistant: Exception removing debug files: ' . $e->getMessage());
+            return array(
+                'success' => false,
+                'message' => 'Exception occurred: ' . $e->getMessage()
+            );
+        }
+    }
+
+    /**
+     * Get WordPress root directory (where wp-config.php is located)
+     */
+    private function get_wordpress_root() {
+        // Start from plugin directory and work backwards
+        $current_dir = plugin_dir_path(dirname(__FILE__));
+        $attempts = 0;
+        $max_attempts = 10;
+
+        while ($attempts < $max_attempts) {
+            if (file_exists($current_dir . '/wp-config.php')) {
+                return realpath($current_dir);
+            }
+            
+            $parent_dir = dirname($current_dir);
+            if ($parent_dir === $current_dir) {
+                // Reached filesystem root
+                break;
+            }
+            
+            $current_dir = $parent_dir;
+            $attempts++;
+        }
+
+        // Fallback: try ABSPATH if defined
+        if (defined('ABSPATH')) {
+            $abspath = rtrim(ABSPATH, '/\\');
+            if (file_exists($abspath . '/wp-config.php')) {
+                return $abspath;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Verify that a file in WordPress root is likely our debug file
+     * This prevents removing files that may have been manually modified or from other sources
+     */
+    private function verify_debug_file_ownership($file_path, $file_name) {
+        try {
+            // Get the first few lines of the file to check for our signature
+            $file_handle = fopen($file_path, 'r');
+            if (!$file_handle) {
+                return false;
+            }
+
+            $header_lines = array();
+            for ($i = 0; $i < 10; $i++) {
+                $line = fgets($file_handle);
+                if ($line === false) break;
+                $header_lines[] = trim($line);
+            }
+            fclose($file_handle);
+
+            $header_content = implode("\n", $header_lines);
+
+            // Check for our specific signatures
+            if ($file_name === 'debug-view.php') {
+                return strpos($header_content, 'MagicAssistant Debug View') !== false &&
+                       strpos($header_content, '@package MagicAssistant') !== false;
+            } elseif ($file_name === 'debug-api.php') {
+                return strpos($header_content, 'MagicAssistant Debug API') !== false &&
+                       strpos($header_content, '@package MagicAssistant') !== false;
+            }
+
+            // Check for our specific signatures
+            if ($file_name === 'mat-debugging/index.php') {
+                return strpos($header_content, 'MagicAssistant Debug View Stub') !== false;
+            }
+
+            return false;
+
+        } catch (Exception $e) {
+            error_log('MagicAssistant: Error verifying debug file ownership: ' . $e->getMessage());
+            return false;
+        }
     }
 
 }
