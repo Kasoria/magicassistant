@@ -34,7 +34,7 @@ define('MAGIC_ASSISTANT_PLUGIN_BASENAME', plugin_basename(__FILE__));
 require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'vendor/autoload.php';
 
 class MagicAssistant {
-  
+
   private $react_dev;
   private $admin;
   private $mcp_server;
@@ -44,12 +44,11 @@ class MagicAssistant {
   private $dataforseo;
   private $pagespeed_service;
   private $licensing_client;
-  private $debug_view_handler;
-  
+
   public function __construct() {
     add_action('plugins_loaded', array($this, 'init'));
   }
-  
+
   public function init() {
     // Include SureCart Licensing (third-party, not using our autoloader)
     if (!class_exists('SureCart\Licensing\Client')) {
@@ -61,55 +60,52 @@ class MagicAssistant {
         require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'licensing/src/Client.php';
       }
     }
-    
+
     // Initialize database
     $this->db = new MagicAssistant\DB();
-    
+
     // Initialize React development environment
     $this->react_dev = new MagicAssistant\React_Dev();
-    
+
     // Initialize MCP server with database instance
     $this->mcp_server = new MagicAssistant\MCP_Server($this->db);
-    
+
     // Initialize AI provider
     $this->ai_provider = new MagicAssistant\AI_Provider();
     $this->ai_provider->set_mcp_server($this->mcp_server);
     $this->ai_provider->set_db($this->db);
-    
+
     // Set AI provider in MCP server for database access
     $this->mcp_server->set_ai_provider($this->ai_provider);
-    
+
     // Initialize public sharing
     $this->public_share = new MagicAssistant\Public_Share();
     $this->public_share->set_db($this->db);
-    
+
     // Initialize DataForSEO integration
     $this->dataforseo = new MagicAssistant\DataForSEO();
     $this->dataforseo->set_mcp_server($this->mcp_server);
     $this->dataforseo->set_ai_provider($this->ai_provider);
-    
+
     // Initialize PageSpeed service
     $this->pagespeed_service = new MagicAssistant\PageSpeed_Service($this->ai_provider);
-    
-    // Initialize debug view handler
-    $this->debug_view_handler = new MagicAssistant\Debug_View_Handler();
-    
+
     // Initialize admin functionality
     if (is_admin()) {
       $this->admin = new MagicAssistant\Admin();
     }
-    
+
     // Hook into WordPress
     add_action('init', array($this, 'setup'));
   }
-  
+
   public function setup() {
     load_plugin_textdomain('magic-assistant', false, dirname(plugin_basename(__FILE__)) . '/languages');
-    
+
     // Initialize licensing after textdomains are loaded
     $this->init_licensing();
   }
-  
+
   /**
    * Initialize SureCart Licensing
    */
@@ -124,42 +120,42 @@ class MagicAssistant {
     global $mat_licensing_client;
     $mat_licensing_client = $this->licensing_client;
   }
-  
+
   /**
    * Get the MCP server instance
    */
   public function get_mcp_server() {
     return $this->mcp_server;
   }
-  
+
   /**
    * Get the database instance
    */
   public function get_db() {
     return $this->db;
   }
-  
+
   /**
    * Get the DataForSEO instance
    */
   public function get_dataforseo() {
     return $this->dataforseo;
   }
-  
+
   /**
    * Get the PageSpeed service instance
    */
   public function get_pagespeed_service() {
     return $this->pagespeed_service;
   }
-  
+
   /**
    * Get the licensing client instance
    */
   public function get_licensing_client() {
     return $this->licensing_client;
   }
-  
+
   /**
    * Static instance getter
    */
