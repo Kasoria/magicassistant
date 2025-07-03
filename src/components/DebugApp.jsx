@@ -27,6 +27,7 @@ const DebugApp = () => {
   const searchInputRef = useRef(null)
   const editTextareaRef = useRef(null)
   const fetchController = useRef(null)
+  const aiAnalysisRef = useRef(null)
 
   // Get configuration from global variable
   const config = window.matDebugConfig || {}
@@ -502,6 +503,17 @@ ${contextCode}`,
     fetchLogs()
   }, [fetchLogs, page, perPage])
 
+  // Scroll to AI Analysis when it appears
+  useEffect(() => {
+    if (aiAnalysis && aiAnalysisRef.current) {
+      aiAnalysisRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      // After scroll, trigger a resize event to force SplitPane to recalculate layout
+      setTimeout(() => {
+        window.dispatchEvent(new Event('resize'))
+      }, 150)
+    }
+  }, [aiAnalysis])
+
   return (
     <div className={`h-screen bg-white dark:bg-gray-900 transition-colors duration-200 flex flex-col overflow-hidden ${darkMode ? 'dark' : ''}`}>
       {/* Header */}
@@ -816,7 +828,7 @@ ${contextCode}`,
                         />
                       ) : (
                         <div className="bg-gray-900 dark:bg-gray-800 rounded-lg p-4 overflow-x-auto">
-                          <code className="text-sm font-mono">
+                          <code className="text-sm font-mono block">
                             {fileContent.context_content.map((line, index) => (
                               <div
                                 key={index}
@@ -829,7 +841,7 @@ ${contextCode}`,
                                 <span className="text-gray-500 w-12 flex-shrink-0 text-right mr-4">
                                   {line.line_number}
                                 </span>
-                                <span className="flex-1 whitespace-pre">
+                                <span className="flex-1 whitespace-pre-wrap">
                                   {line.content}
                                 </span>
                               </div>
@@ -857,7 +869,7 @@ ${contextCode}`,
                 )}
                 {/* AI Analysis (appended, not modal) */}
                 {aiAnalysis && (
-                  <div className="mt-6">
+                  <div className="mt-6" ref={aiAnalysisRef}>
                     <h3 className="text-md font-semibold text-purple-700 dark:text-purple-300 mb-2 flex items-center">
                       <Bot className="w-5 h-5 mr-2 text-purple-500" />
                       AI Error Analysis
