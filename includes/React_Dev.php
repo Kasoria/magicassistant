@@ -32,13 +32,10 @@ class React_Dev {
     }
     
     public function __construct() {
-        // Decide whether we're in development mode.
-        // 1. Respect explicit override via constant first.
         if ( $this->is_dev_mode_forced() ) {
             $this->is_dev_mode = (bool) MAT_DEV_MODE;
         } else {
-            // 2. Otherwise auto-detect by pinging the dev-server (only when useful).
-            $this->is_dev_mode = $this->is_vite_dev_server_running();
+            $this->is_dev_mode = false;
         }
         
         // If in dev mode, inject React Refresh preamble into head for HMR support
