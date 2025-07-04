@@ -184,14 +184,45 @@ class DB {
             }
         }
         
-        // Also migrate user-specific theme settings
-        $users = get_users(array('fields' => 'ID'));
-        foreach ($users as $user_id) {
-            $theme = get_user_meta($user_id, 'mat_theme', true);
-            if (!empty($theme)) {
-                $this->save_user_setting('theme', $theme, $user_id);
-                delete_user_meta($user_id, 'mat_theme');
+        // Migrate theme settings from custom table back to WordPress user meta
+        $this->migrate_theme_settings_to_usermeta();
+    }
+    
+    /**
+     * Migrate theme settings from custom table to WordPress user meta
+     */
+    private function migrate_theme_settings_to_usermeta() {
+        global $wpdb;
+        
+        // Check if tables exist first
+        if (!$this->tables_exist()) {
+            return;
+        }
+        
+        // Get all theme settings from custom table
+        $theme_settings = $wpdb->get_results(
+            "SELECT user_id, setting_value FROM {$this->settings_table} WHERE setting_key = 'theme' AND user_id IS NOT NULL",
+            ARRAY_A
+        );
+        
+        if ($theme_settings) {
+            foreach ($theme_settings as $setting) {
+                $user_id = intval($setting['user_id']);
+                $theme_value = maybe_unserialize($setting['setting_value']);
+                
+                // Only migrate if user doesn't already have a theme in user meta
+                $existing_theme = get_user_meta($user_id, 'mat_theme', true);
+                if (empty($existing_theme) && !empty($theme_value)) {
+                    update_user_meta($user_id, 'mat_theme', $theme_value);
+                }
             }
+            
+            // Remove theme settings from custom table
+            $wpdb->delete(
+                $this->settings_table,
+                array('setting_key' => 'theme'),
+                array('%s')
+            );
         }
     }
     

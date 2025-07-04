@@ -161,7 +161,7 @@ class Admin {
         'email' => $current_user->user_email,
         'avatar' => get_avatar_url($current_user->ID),
       ),
-      'savedTheme' => MATDB() ? MATDB()->get_user_setting('theme', $current_user->ID, 'light') : 'light',
+      'savedTheme' => get_user_meta($current_user->ID, 'mat_theme', true) ?: 'light',
       'isAdmin' => current_user_can('manage_options'),
       'isDev' => defined('WP_DEBUG') && WP_DEBUG,
       'pluginUrl' => MAGIC_ASSISTANT_PLUGIN_URL,
@@ -700,11 +700,11 @@ class Admin {
       )));
     }
     
-    // Check user permissions
-    if (!current_user_can('manage_options')) {
+    // Check if user is logged in
+    if (!is_user_logged_in()) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('You do not have permission to perform this action.', 'magic-assistant')
+        'data' => __('You must be logged in to change theme preferences.', 'magic-assistant')
       )));
     }
     
@@ -717,13 +717,9 @@ class Admin {
       )));
     }
     
-    // Save the theme preference
+    // Save the theme preference to WordPress user meta
     $user_id = get_current_user_id();
-    if (MATDB()) {
-      MATDB()->save_user_setting('theme', $mode, $user_id);
-    } else {
-      update_user_meta($user_id, 'mat_theme', $mode);
-    }
+    update_user_meta($user_id, 'mat_theme', $mode);
     
     wp_die(json_encode(array(
       'success' => true,
