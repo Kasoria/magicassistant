@@ -983,7 +983,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 'model'      => $this->settings['openai_model'] ?? 'gpt-4.1-mini',
                 'messages'   => $messages,
                 'temperature'=> (strpos($this->settings['openai_model'] ?? '', 'o') === 0 && preg_match('/^o\d/', $this->settings['openai_model'] ?? '')) ? 1 : 0.7,
-                'max_tokens' => intval($this->settings['max_response_tokens'] ?? 1500),
+                'max_completion_tokens' => intval($this->settings['max_response_tokens'] ?? 1500),
                 'tools'      => $this->get_mcp_tools_for_openai(),
                 'tool_choice'=> 'auto'
             ),
@@ -1007,11 +1007,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
-        // DEBUG: Log the full response from MagicProxy
-        error_log('[MagicAssistant][DEBUG] OpenAI proxy raw response: ' . $body);
-        if (isset($data['credits'])) {
-            error_log('[MagicAssistant][DEBUG] OpenAI proxy credits: ' . print_r($data['credits'], true));
-        }
         if (empty($data['success']) || isset($data['error'])) {
             throw new Exception('OpenAI proxy error: ' . ($data['error'] ?? 'Unknown error'));
         }
@@ -1078,11 +1073,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
-        // DEBUG: Log the full response from MagicProxy
-        error_log('[MagicAssistant][DEBUG] Anthropic proxy raw response: ' . $body);
-        if (isset($data['credits'])) {
-            error_log('[MagicAssistant][DEBUG] Anthropic proxy credits: ' . print_r($data['credits'], true));
-        }
         if (empty($data['success']) || isset($data['error'])) {
             throw new Exception('Anthropic proxy error: ' . ($data['error'] ?? 'Unknown error'));
         }
@@ -1372,6 +1362,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'debug_view_file_editing' => isset($this->settings['debug_view_file_editing']) ? (bool) $this->settings['debug_view_file_editing'] : false,
             'debug_view_password' => $this->db ? $this->db->has_api_key('debug_view_password') : false,
             'current_credits' => isset($this->settings['current_credits']) ? $this->settings['current_credits'] : null,
+            'floating_chat_button_color' => $this->settings['floating_chat_button_color'] ?? 'blue',
+            'floating_chat_button_icon'  => $this->settings['floating_chat_button_icon']  ?? 'chat',
         );
         
         // Add comprehensive limit information if available
@@ -1643,6 +1635,15 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         // Refresh settings from database
         $this->settings = $this->db->get_all_settings();
+        
+        // Floating chat button customization
+        if (isset($data['floating_chat_button_color'])) {
+            $this->db->save_setting('floating_chat_button_color', sanitize_text_field($data['floating_chat_button_color']));
+        }
+
+        if (isset($data['floating_chat_button_icon'])) {
+            $this->db->save_setting('floating_chat_button_icon', sanitize_text_field($data['floating_chat_button_icon']));
+        }
         
         return array('success' => true);
     }
