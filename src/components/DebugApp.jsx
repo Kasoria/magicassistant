@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Search, Filter, Download, RefreshCw, Sun, Moon, Bot, Settings, AlertTriangle, Info, AlertCircle, X } from 'lucide-react'
-import SplitPane from 'react-split-pane'
+import SplitPane from 'react-split-pane-2'
 import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import { Kbd } from 'flowbite-react'
