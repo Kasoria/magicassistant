@@ -54,6 +54,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         floating_chat_frontend_urls: settings.floating_chat_frontend_urls || '',
         floating_chat_admin_pages: settings.floating_chat_admin_pages || 'all',
         floating_chat_specific_admin_pages: settings.floating_chat_specific_admin_pages || [],
+        floating_chat_button_color: settings.floating_chat_button_color || 'blue',
+        floating_chat_button_icon: settings.floating_chat_button_icon || 'chat',
         enable_sql_queries: settings.enable_sql_queries === true,
         enable_dangerous_sql_queries: settings.enable_dangerous_sql_queries === true,
         debug_view_enabled: settings.debug_view_enabled === true,
@@ -321,7 +323,9 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           floating_chat_frontend_pages: localSettings.floating_chat_frontend_pages,
           floating_chat_frontend_urls: localSettings.floating_chat_frontend_urls,
           floating_chat_admin_pages: localSettings.floating_chat_admin_pages,
-          floating_chat_specific_admin_pages: localSettings.floating_chat_specific_admin_pages
+          floating_chat_specific_admin_pages: localSettings.floating_chat_specific_admin_pages,
+          floating_chat_button_color: localSettings.floating_chat_button_color,
+          floating_chat_button_icon: localSettings.floating_chat_button_icon,
         }
       default:
         return {}
@@ -1643,6 +1647,197 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                     </p>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Button Customization */}
+            {localSettings.floating_chat_enabled && (
+              <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
+                <h4 className="font-medium text-brand-dark dark:text-white mb-3">Button Customization</h4>
+                {localSettings.show_tips === true && (
+                  <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                    <p className="text-sm text-blue-800 dark:text-blue-200">
+                      <strong>🎨 Customization:</strong> Personalize the appearance of your floating chat button to match your website's design. 
+                      The button is draggable by users and they can position it anywhere on the screen.
+                    </p>
+                  </div>
+                )}
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Background Color Selection */}
+                  <div>
+                    <Label value="Background Color" className="mb-3 block font-medium" />
+                    <div className="grid grid-cols-4 gap-3">
+                      {[
+                        { value: 'blue', label: 'Blue', class: 'bg-blue-600' },
+                        { value: 'purple', label: 'Purple', class: 'bg-purple-600' },
+                        { value: 'green', label: 'Green', class: 'bg-green-600' },
+                        { value: 'red', label: 'Red', class: 'bg-red-600' },
+                        { value: 'orange', label: 'Orange', class: 'bg-orange-600' },
+                        { value: 'pink', label: 'Pink', class: 'bg-pink-600' },
+                        { value: 'indigo', label: 'Indigo', class: 'bg-indigo-600' },
+                        { value: 'teal', label: 'Teal', class: 'bg-teal-600' }
+                      ].map(color => (
+                        <button
+                          key={color.value}
+                          type="button"
+                          className={`w-12 h-12 rounded-full border-4 transition-all transform hover:scale-110 ${
+                            localSettings.floating_chat_button_color === color.value 
+                              ? 'border-gray-900 dark:border-white scale-110 ring-4 ring-gray-300 dark:ring-gray-600' 
+                              : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
+                          } ${color.class}`}
+                          onClick={() => {
+                            handleLocalChange('floating_chat_button_color', color.value)
+                            // Trigger immediate update to FloatingChat component
+                            setTimeout(() => {
+                              window.dispatchEvent(new CustomEvent('matFloatingChatCustomizationUpdate', {
+                                detail: {
+                                  backgroundColor: color.value,
+                                  icon: localSettings.floating_chat_button_icon
+                                }
+                              }))
+                            }, 0)
+                          }}
+                          title={color.label}
+                          disabled={isSavingSettings}
+                        />
+                      ))}
+                    </div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                      Current: <span className="font-medium capitalize">{localSettings.floating_chat_button_color}</span>
+                    </p>
+                  </div>
+
+                  {/* Icon Selection */}
+                  <div>
+                    <Label value="Icon Style" className="mb-3 block font-medium" />
+                    <div className="grid grid-cols-3 gap-3">
+                      {[
+                        { 
+                          value: 'chat', 
+                          label: 'Chat Bubble',
+                          path: 'M7.5 8.25h9m-9 3h5.25M21 12a9 9 0 11-18 0 9 9 0 0118 0z'
+                        },
+                        { 
+                          value: 'message', 
+                          label: 'Message',
+                          path: 'M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-8.25L8.25 21l-3-1.5v-12a2.25 2.25 0 012.25-2.25h12a2.25 2.25 0 012.25 2.25z'
+                        },
+                        { 
+                          value: 'support', 
+                          label: 'Support',
+                          path: 'M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z'
+                        },
+                        { 
+                          value: 'help', 
+                          label: 'Help',
+                          path: 'M8.25 9.75h4.875a2.625 2.625 0 010 5.25H8.25m0-10.5h4.875a2.625 2.625 0 010 5.25H8.25m0 0V21m0-12v-3'
+                        },
+                        { 
+                          value: 'assistant', 
+                          label: 'AI Assistant',
+                          path: 'M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.847a4.5 4.5 0 003.09 3.09L15.75 12l-2.847.813a4.5 4.5 0 00-3.09 3.09z'
+                        }
+                      ].map(icon => (
+                        <button
+                          key={icon.value}
+                          type="button"
+                          className={`p-3 rounded-lg border-2 transition-all transform hover:scale-105 ${
+                            localSettings.floating_chat_button_icon === icon.value
+                              ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 scale-105 ring-2 ring-blue-300 dark:ring-blue-600'
+                              : 'border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 hover:border-gray-400 dark:hover:border-gray-500'
+                          }`}
+                          onClick={() => {
+                            handleLocalChange('floating_chat_button_icon', icon.value)
+                            // Trigger immediate update to FloatingChat component
+                            setTimeout(() => {
+                              window.dispatchEvent(new CustomEvent('matFloatingChatCustomizationUpdate', {
+                                detail: {
+                                  backgroundColor: localSettings.floating_chat_button_color,
+                                  icon: icon.value
+                                }
+                              }))
+                            }, 0)
+                          }}
+                          title={icon.label}
+                          disabled={isSavingSettings}
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            strokeWidth={1.5}
+                            stroke="currentColor"
+                            className="w-6 h-6 text-gray-600 dark:text-gray-400"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d={icon.path}
+                            />
+                          </svg>
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                      Current: <span className="font-medium capitalize">{localSettings.floating_chat_button_icon.replace('_', ' ')}</span>
+                    </p>
+                  </div>
+                </div>
+
+                {/* Preview */}
+                <div className="mt-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h5 className="font-medium text-gray-900 dark:text-white mb-1">Live Preview</h5>
+                      <p className="text-sm text-gray-600 dark:text-gray-300">
+                        This shows how your floating chat button will appear to users
+                      </p>
+                    </div>
+                    <div className="flex items-center space-x-4">
+                      {/* Preview Button */}
+                      <div
+                        className={`flex items-center justify-center h-14 w-14 rounded-full shadow-lg text-white transition-colors ${
+                          {
+                            blue: 'bg-blue-600',
+                            purple: 'bg-purple-600',
+                            green: 'bg-green-600',
+                            red: 'bg-red-600',
+                            orange: 'bg-orange-600',
+                            pink: 'bg-pink-600',
+                            indigo: 'bg-indigo-600',
+                            teal: 'bg-teal-600'
+                          }[localSettings.floating_chat_button_color]
+                        }`}
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          strokeWidth={1.5}
+                          stroke="currentColor"
+                          className="w-6 h-6"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d={{
+                              chat: 'M7.5 8.25h9m-9 3h5.25M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+                              message: 'M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-8.25L8.25 21l-3-1.5v-12a2.25 2.25 0 012.25-2.25h12a2.25 2.25 0 012.25 2.25z',
+                              support: 'M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z',
+                              help: 'M8.25 9.75h4.875a2.625 2.625 0 010 5.25H8.25m0-10.5h4.875a2.625 2.625 0 010 5.25H8.25m0 0V21m0-12v-3',
+                              assistant: 'M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.847a4.5 4.5 0 003.09 3.09L15.75 12l-2.847.813a4.5 4.5 0 00-3.09 3.09z'
+                            }[localSettings.floating_chat_button_icon]}
+                          />
+                        </svg>
+                      </div>
+                      <div className="text-sm text-gray-600 dark:text-gray-300">
+                        <div className="font-medium">Floating Chat Button</div>
+                        <div className="text-xs">Draggable by users</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 
