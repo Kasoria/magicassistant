@@ -6,7 +6,7 @@ import ConfirmationModal from './ConfirmationModal'
 import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 
-const ChatInterface = ({ adminData, isDrawerMode = false }) => {
+const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) => {
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
@@ -36,6 +36,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
   const [shareExpiry, setShareExpiry] = useState(30)
   const [isCreatingShare, setIsCreatingShare] = useState(false)
   const [creditsInfo, setCreditsInfo] = useState(null)
+  // Helper: detect Bricks editor
+  const isBricksEditor = new URLSearchParams(window.location.search).get('bricks') === 'run';
 
   // Agent mode options for react-select
   const agentModeOptions = [
@@ -45,6 +47,40 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
 
   // Determine if we're in dark mode by checking the document class
   const isDarkMode = document.documentElement.classList.contains('dark')
+
+  // Helper: extract main textual content from various response formats (Anthropic, OpenAI, etc.)
+  const getTextFromResponse = (resp) => {
+    if (resp == null) return ''
+    // Simple string response
+    if (typeof resp === 'string') return resp
+    // Anthropic messages come as an array of {type: 'text', text: '...'}
+    if (Array.isArray(resp)) {
+      return resp.map(chunk => {
+        if (typeof chunk === 'string') return chunk
+        if (chunk && typeof chunk === 'object') {
+          return chunk.text || chunk.message || chunk.content || ''
+        }
+        return ''
+      }).join('')
+    }
+    // Generic object – try common keys
+    if (typeof resp === 'object') {
+      return resp.message || resp.text || resp.content || resp.html || ''
+    }
+    return ''
+  }
+
+  // Helper: grab any html/css/js blocks if they exist
+  const getPartsFromResponse = (resp) => {
+    if (resp && typeof resp === 'object') {
+      return {
+        html: resp.html || '',
+        css: resp.css || '',
+        js: resp.js || ''
+      }
+    }
+    return { html: '', css: '', js: '' }
+  }
 
   // Helper: save last opened session ID to usermeta via REST
   const saveLastSession = async (sessionId) => {
@@ -257,24 +293,34 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
           saveLastSession(data.session_id)
         }
         
+        const responseContent = data.response;
+        const chatContent = getTextFromResponse(responseContent)
+        const { html: extractedHtml, css: extractedCss, js: extractedJs } = getPartsFromResponse(responseContent)
+
         const assistantMessage = {
           role: 'assistant',
-          content: data.response,
+          content: chatContent,
           timestamp: new Date(),
           provider: data.provider,
-          model: data.model,
-          agent_mode: data.agent_mode,
-          reasoning: data.reasoning,
-          tool_calls_count: data.tool_calls_count,
-          debug_tool_data: data.debug_tool_data,
-          tokens_used: data.tokens_used,
-          cost: data.cost,
-          response_time: data.response_time
+          agent_mode: forceAgentMode,
+          tool_calls_count: data.tool_calls_count || 0,
+          isError: false,
+          html: extractedHtml,
+          css: extractedCss,
+          js: extractedJs
         }
         setMessages(prev => [...prev, assistantMessage])
         // Update credit info from response
         if (data.credits) {
           setCreditsInfo(data.credits)
+        }
+        // Provide HTML back to parent (e.g., drawer) if present
+        if (onAiResponseUpdate && extractedHtml) {
+          onAiResponseUpdate({
+            html: extractedHtml,
+            css: extractedCss,
+            js: extractedJs
+          });
         }
       } else {
         const errorMessage = {
@@ -311,19 +357,31 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
   }
 
   const formatMessage = (content) => {
+    // Ensure we always pass a string to ReactMarkdown to avoid warnings
+    let safeContent = ''
+    if (typeof content === 'string') {
+      safeContent = content
+    } else if (Array.isArray(content)) {
+      safeContent = getTextFromResponse(content)
+    } else if (content && typeof content === 'object') {
+      safeContent = content.message || content.html || JSON.stringify(content)
+    } else if (content != null) {
+      safeContent = String(content)
+    }
+
     return (
       <ReactMarkdown
         remarkPlugins={[remarkBreaks]}
         components={{
           // Customize how different elements are rendered
-          p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+          p: ({ children }) => <p className="mb-2 last:mb-0 text-gray-900 dark:text-gray-100">{children}</p>,
           strong: ({ children }) => <strong className="font-semibold text-gray-900 dark:text-white">{children}</strong>,
-          em: ({ children }) => <em className="italic">{children}</em>,
-          code: ({ children }) => <code className="bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded text-sm font-mono">{children}</code>,
-          pre: ({ children }) => <pre className="bg-gray-100 dark:bg-gray-700 p-3 rounded-lg overflow-x-auto text-sm font-mono">{children}</pre>,
-          ul: ({ children }) => <ul className="list-disc pl-5 mb-2 space-y-1">{children}</ul>,
-          ol: ({ children }) => <ol className="list-decimal pl-5 mb-2 space-y-1">{children}</ol>,
-          li: ({ children }) => <li className="mb-1">{children}</li>,
+          em: ({ children }) => <em className="italic text-gray-900 dark:text-gray-100">{children}</em>,
+          code: ({ children }) => <code className="leading-[1.5] bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded text-sm font-mono text-gray-900 dark:text-gray-100">{children}</code>,
+          pre: ({ children }) => <pre className="bg-gray-100 dark:bg-gray-700 p-3 rounded-lg overflow-x-auto overflow-y-auto max-h-[500px] text-sm font-mono text-gray-900 dark:text-gray-100 max-w-full break-all">{children}</pre>,
+          ul: ({ children }) => <ul className="list-disc pl-5 mb-2 space-y-1 text-gray-900 dark:text-gray-100">{children}</ul>,
+          ol: ({ children }) => <ol className="list-decimal pl-5 mb-2 space-y-1 text-gray-900 dark:text-gray-100">{children}</ol>,
+          li: ({ children }) => <li className="mb-1 text-gray-900 dark:text-gray-100">{children}</li>,
           blockquote: ({ children }) => <blockquote className="border-l-4 border-gray-300 dark:border-gray-600 pl-4 italic text-gray-700 dark:text-gray-300 my-2">{children}</blockquote>,
           h1: ({ children }) => <h1 className="text-xl font-bold mb-2 text-gray-900 dark:text-white">{children}</h1>,
           h2: ({ children }) => <h2 className="text-lg font-bold mb-2 text-gray-900 dark:text-white">{children}</h2>,
@@ -332,7 +390,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
           br: () => <br className="block" />,
         }}
       >
-        {content}
+        {safeContent}
       </ReactMarkdown>
     )
   }
@@ -615,19 +673,21 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
       const data = await response.json()
 
       if (data.success) {
+        const responseContent = data.response;
+        const chatContent = getTextFromResponse(responseContent)
+        const { html: extractedHtml, css: extractedCss, js: extractedJs } = getPartsFromResponse(responseContent)
+
         const assistantMessage = {
           role: 'assistant',
-          content: data.response,
+          content: chatContent,
           timestamp: new Date(),
           provider: data.provider,
-          model: data.model,
           agent_mode: data.agent_mode,
-          reasoning: data.reasoning,
-          tool_calls_count: data.tool_calls_count,
-          debug_tool_data: data.debug_tool_data,
-          tokens_used: data.tokens_used,
-          cost: data.cost,
-          response_time: data.response_time
+          tool_calls_count: data.tool_calls_count || 0,
+          isError: false,
+          html: extractedHtml,
+          css: extractedCss,
+          js: extractedJs
         }
         setMessages(prev => [...prev, assistantMessage])
       } else {
@@ -827,6 +887,17 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
     setIsCreatingShare(false)
   }
 
+  const insertMessageHtml = (msg) => {
+    const html = msg.html || (typeof msg.content === 'string' && msg.content.includes('<') ? msg.content : '');
+    if (typeof window.magicAssistantInsertHTML === 'function' && html) {
+      window.magicAssistantInsertHTML(html, msg.css || '', msg.js || '');
+    } else if (!html) {
+      alert('No HTML found in this message.');
+    } else {
+      alert('MagicAssistant Bricks integration not found!');
+    }
+  };
+
   return (
     
     <div className={`h-[calc(100vh-7.4rem)] mx-auto flex flex-col ${isDrawerMode ? 'h-full' : ''}`}>
@@ -978,7 +1049,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
           ? 'h-[calc(100%-190px)]' 
           : 'h-[calc(100vh-18.7rem)] sm:h-[calc(100vh-15.4rem)]'
       }`}>
-        <div className="max-w-4xl mx-auto py-4 lg:py-6 space-y-6 px-4 lg:px-6">
+        <div className="max-w-6xl mx-auto py-4 lg:py-6 space-y-6 px-4 lg:px-6">
           {messages.map((message, index) => (
             <div
               key={index}
@@ -1010,7 +1081,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
               </div>
 
               {/* Message Content */}
-              <div className="format dark:format-invert format-blue flex-1">
+              <div className="format dark:format-invert format-blue flex-1 text-gray-900 dark:text-gray-100 overflow-x-auto">
                 {editingMessageIndex === index ? (
                   <div className="space-y-2">
                     <textarea
@@ -1037,7 +1108,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
                     </div>
                   </div>
                 ) : (
-                  <div className={`${message.isError ? 'text-red-600 dark:text-red-400' : ''}`}>
+                  <div className={`${message.isError ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
                     {formatMessage(message.content)}
                   </div>
                 )}
@@ -1123,17 +1194,14 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
                       <span>{message.provider}</span>
                     </>
                   )}
-                  {message.role === 'assistant' && !message.isError && (
+                  {message.role === 'assistant' && typeof window.magicAssistantInsertHTML === 'function' && (message.html || (typeof message.content === 'string' && message.content.includes('<'))) && (
                     <button
                       type="button"
-                      onClick={() => copyToClipboard(message.content)}
-                      className="inline-flex cursor-pointer justify-center rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-600 dark:hover:text-white transition-colors ml-1"
-                      title="Copy message"
+                      onClick={() => insertMessageHtml(message)}
+                      className="inline-flex cursor-pointer justify-center rounded p-1 text-white bg-green-600 hover:bg-green-700 transition-colors ml-1 text-xs"
+                      title="Insert this HTML into Bricks"
                     >
-                      <svg className="w-3 h-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 24 24">
-                        <path fillRule="evenodd" d="M8 3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1h2a2 2 0 0 1 2 2v15a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h2Zm6 1h-4v2H9a1 1 0 0 0 0 2h6a1 1 0 1 0 0-2h-1V4Zm-6 8a1 1 0 0 1 1-1h6a1 1 0 1 1 0 2H9a1 1 0 0 1-1-1Zm1 3a1 1 0 1 0 0 2h6a1 1 0 1 0 0-2H9Z" clipRule="evenodd"/>
-                      </svg>
-                      <span className="sr-only">Copy text</span>
+                      Insert into Bricks
                     </button>
                   )}
                   {message.agent_mode && (
