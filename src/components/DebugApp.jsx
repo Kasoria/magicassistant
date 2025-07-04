@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Search, Filter, Download, RefreshCw, Sun, Moon, Bot, Settings, AlertTriangle, Info, AlertCircle, X } from 'lucide-react'
-import SplitPane from 'react-split-pane-2'
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import { Kbd } from 'flowbite-react'
@@ -597,15 +597,9 @@ ${contextCode}`,
       </header>
 
       {/* Main Content */}
-      <SplitPane
-        split="vertical"
-        minSize={250}
-        defaultSize="50%"
-        className="flex-1 min-h-0"
-        style={{ position: 'relative', height: '100%', display: 'flex' }}
-      >
+      <PanelGroup direction="horizontal" className="flex-1 min-h-0" style={{ height: '100%' }}>
         {/* Logs List */}
-        <div className="h-full overflow-hidden border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex flex-col">
+        <Panel defaultSize={50} minSize={20} className="h-full overflow-hidden border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex flex-col">
           <div className="flex-1 overflow-y-auto">
             <div className="p-4">
               <div className="flex items-center justify-between mb-4">
@@ -711,10 +705,10 @@ ${contextCode}`,
               )}
             </div>
           </div>
-        </div>
-
+        </Panel>
+        <PanelResizeHandle className="w-1 bg-gray-200 dark:bg-gray-700 cursor-col-resize" />
         {/* Log Details */}
-        <div className="h-full overflow-hidden bg-white dark:bg-gray-900 flex flex-col">
+        <Panel defaultSize={50} className="h-full overflow-hidden bg-white dark:bg-gray-900 flex flex-col">
           <div className="flex-1 overflow-y-auto">
             {selectedLog ? (
               <div className="p-4">
@@ -891,8 +885,8 @@ ${contextCode}`,
               </div>
             )}
           </div>
-        </div>
-      </SplitPane>
+        </Panel>
+      </PanelGroup>
     </div>
   )
 }

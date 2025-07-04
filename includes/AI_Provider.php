@@ -4642,7 +4642,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 // Copy the file
                 if (copy($paths['source'], $paths['dest'])) {
                     $copied_files[] = $file_name;
-                    error_log("MagicAssistant: Successfully copied {$file_name} to WordPress root");
                 } else {
                     $errors[] = "Failed to copy {$file_name} to {$paths['dest']}";
                 }

@@ -329,7 +329,6 @@ function get_debug_view_file_editing_setting() {
         // Convert to boolean
         $file_editing_enabled = (bool) $setting_value;
         
-        error_log('Debug View: File editing setting: ' . ($file_editing_enabled ? 'enabled' : 'disabled'));
         return $file_editing_enabled;
         
     } catch (Exception $e) {
