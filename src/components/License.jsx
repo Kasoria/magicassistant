@@ -235,43 +235,120 @@ const License = ({ adminData }) => {
                     </div>
                   </div>
                 )}
-                {typeof licenseData.current_credits !== 'undefined' && licenseData.current_credits && typeof licenseData.current_credits.limit !== 'undefined' ? (
+                {/* Display limits based on license type */}
+                {licenseData.limit_type === 'requests' && licenseData.request_limits ? (
                   <div>
                     <Label className="text-green-800 dark:text-green-200 font-medium">
-                      Credits
+                      Request Limits
                     </Label>
-                    <div className="mt-1 text-green-700 dark:text-green-300">
-                      {(() => {
-                        const credits = licenseData.current_credits
-                        console.log(credits)
-                        let used = null
-                        if (typeof credits.current !== 'undefined') {
-                          used = Number(credits.current)
-                        } else if (typeof credits.limit !== 'undefined' && typeof credits.remaining !== 'undefined') {
-                          used = Number(credits.limit) - Number(credits.remaining)
-                        }
-                        if (used !== null && typeof credits.limit !== 'undefined') {
-                          console.log(credits)
-                          return `💳 ${used.toFixed(2)} / ${credits.limit}`
-                        } else if (typeof credits.limit !== 'undefined') {
-                          return `💳 ${credits.limit}`
-                        } else {
-                          return ''
-                        }
-                      })()}
+                    <div className="mt-1 text-green-700 dark:text-green-300 space-y-1">
+                      {licenseData.request_limits.hourly && (
+                        <div className="text-sm">
+                          <strong>Hourly:</strong> {licenseData.request_limits.hourly.used || 0} / {licenseData.request_limits.hourly.limit} 
+                          {licenseData.request_limits.hourly.remaining !== undefined && (
+                            <span className="text-xs text-green-600 dark:text-green-400 ml-1">
+                              ({licenseData.request_limits.hourly.remaining} remaining)
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {licenseData.request_limits.daily && (
+                        <div className="text-sm">
+                          <strong>Daily:</strong> {licenseData.request_limits.daily.used || 0} / {licenseData.request_limits.daily.limit}
+                          {licenseData.request_limits.daily.remaining !== undefined && (
+                            <span className="text-xs text-green-600 dark:text-green-400 ml-1">
+                              ({licenseData.request_limits.daily.remaining} remaining)
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {licenseData.request_limits.monthly && (
+                        <div className="text-sm">
+                          <strong>Monthly:</strong> {licenseData.request_limits.monthly.used || 0} / {licenseData.request_limits.monthly.limit}
+                          {licenseData.request_limits.monthly.remaining !== undefined && (
+                            <span className="text-xs text-green-600 dark:text-green-400 ml-1">
+                              ({licenseData.request_limits.monthly.remaining} remaining)
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
-                ) : (typeof licenseData.credits_remaining !== 'undefined' && (
-                  <div>
-                    <Label className="text-green-800 dark:text-green-200 font-medium">
-                      Credits Remaining
-                    </Label>
-                    <div className="mt-1 text-green-700 dark:text-green-300">
-                      {licenseData.credits_remaining}
-                      {licenseData.credit_limit ? ` / ${licenseData.credit_limit}` : ''}
+                ) : licenseData.limit_type === 'credits' ? (
+                  // Credit-based display for starter, pro, expert tiers
+                  typeof licenseData.current_credits !== 'undefined' && licenseData.current_credits && typeof licenseData.current_credits.limit !== 'undefined' ? (
+                    <div>
+                      <Label className="text-green-800 dark:text-green-200 font-medium">
+                        Credits
+                      </Label>
+                      <div className="mt-1 text-green-700 dark:text-green-300">
+                        {(() => {
+                          const credits = licenseData.current_credits
+                          let used = null
+                          if (typeof credits.current !== 'undefined') {
+                            used = Number(credits.current)
+                          } else if (typeof credits.limit !== 'undefined' && typeof credits.remaining !== 'undefined') {
+                            used = Number(credits.limit) - Number(credits.remaining)
+                          }
+                          if (used !== null && typeof credits.limit !== 'undefined') {
+                            return `💳 ${used.toFixed(2)} / ${credits.limit}`
+                          } else if (typeof credits.limit !== 'undefined') {
+                            return `💳 ${credits.limit}`
+                          } else {
+                            return ''
+                          }
+                        })()}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ) : (typeof licenseData.credits_remaining !== 'undefined' && (
+                    <div>
+                      <Label className="text-green-800 dark:text-green-200 font-medium">
+                        Credits Remaining
+                      </Label>
+                      <div className="mt-1 text-green-700 dark:text-green-300">
+                        {licenseData.credits_remaining}
+                        {licenseData.credit_limit ? ` / ${licenseData.credit_limit}` : ''}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  // Fallback for legacy credit display
+                  typeof licenseData.current_credits !== 'undefined' && licenseData.current_credits && typeof licenseData.current_credits.limit !== 'undefined' ? (
+                    <div>
+                      <Label className="text-green-800 dark:text-green-200 font-medium">
+                        Credits
+                      </Label>
+                      <div className="mt-1 text-green-700 dark:text-green-300">
+                        {(() => {
+                          const credits = licenseData.current_credits
+                          let used = null
+                          if (typeof credits.current !== 'undefined') {
+                            used = Number(credits.current)
+                          } else if (typeof credits.limit !== 'undefined' && typeof credits.remaining !== 'undefined') {
+                            used = Number(credits.limit) - Number(credits.remaining)
+                          }
+                          if (used !== null && typeof credits.limit !== 'undefined') {
+                            return `💳 ${used.toFixed(2)} / ${credits.limit}`
+                          } else if (typeof credits.limit !== 'undefined') {
+                            return `💳 ${credits.limit}`
+                          } else {
+                            return ''
+                          }
+                        })()}
+                      </div>
+                    </div>
+                  ) : (typeof licenseData.credits_remaining !== 'undefined' && (
+                    <div>
+                      <Label className="text-green-800 dark:text-green-200 font-medium">
+                        Credits Remaining
+                      </Label>
+                      <div className="mt-1 text-green-700 dark:text-green-300">
+                        {licenseData.credits_remaining}
+                        {licenseData.credit_limit ? ` / ${licenseData.credit_limit}` : ''}
+                      </div>
+                    </div>
+                  ))
+                )}
                 {licenseData.activated_at && (
                   <div className="md:col-span-3">
                     <Label className="text-green-800 dark:text-green-200 font-medium">

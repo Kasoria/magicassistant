@@ -1373,7 +1373,48 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'debug_view_password' => $this->db ? $this->db->has_api_key('debug_view_password') : false,
             'current_credits' => isset($this->settings['current_credits']) ? $this->settings['current_credits'] : null,
         );
+        
+        // Add comprehensive limit information if available
+        $response = $this->add_limit_information_to_settings($response);
+        
+        return $response;
     }
+    
+    /**
+     * Add comprehensive limit information to settings response
+     * This includes both credit and request limit information based on the user's tier
+     */
+    private function add_limit_information_to_settings($settings) {
+        // Get the license key from licensing client
+        $licensing_client = $this->get_licensing_client();
+        if (!$licensing_client || !method_exists($licensing_client, 'settings') || !$licensing_client->settings()) {
+            return $settings;
+        }
+        
+        $license_key = $licensing_client->settings()->license_key ?? null;
+        if (empty($license_key)) {
+            return $settings;
+        }
+        
+        // Get comprehensive limits from MagicProxy
+        $comprehensive_limits = $this->get_comprehensive_limits_from_magicproxy($license_key);
+        if ($comprehensive_limits) {
+            $settings['license_limits'] = array(
+                'tier' => $comprehensive_limits['tier'],
+                'type' => $comprehensive_limits['type']
+            );
+            
+            if ($comprehensive_limits['type'] === 'credits' && isset($comprehensive_limits['credits'])) {
+                // Credit-based tier information
+                $settings['license_limits']['credits'] = $comprehensive_limits['credits'];
+            } elseif ($comprehensive_limits['type'] === 'requests' && isset($comprehensive_limits['requests'])) {
+                // Request-based tier information
+                $settings['license_limits']['requests'] = $comprehensive_limits['requests'];
+            }
+        }
+        
+                 return $settings;
+     }
     
     public function save_settings($request) {
         $data = $request->get_json_params();
@@ -3929,14 +3970,35 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 $status['tier'] = $tier;
             }
             
-            // Fetch credit information from MagicProxy (remaining & limit)
-            $credits = $this->get_credits_from_magicproxy( $license_key );
-            if ( $credits && isset( $credits['remaining'] ) ) {
-                $status['credits_remaining'] = intval( $credits['remaining'] );
-                if ( isset( $credits['limit'] ) ) {
-                    $status['credit_limit'] = intval( $credits['limit'] );
+            // Fetch comprehensive limit information from MagicProxy (credits or requests)
+            $comprehensive_limits = $this->get_comprehensive_limits_from_magicproxy( $license_key );
+            if ( $comprehensive_limits ) {
+                $status['limit_type'] = $comprehensive_limits['type'];
+                
+                if ( $comprehensive_limits['type'] === 'credits' && isset( $comprehensive_limits['credits'] ) ) {
+                    // Credit-based tier (starter, pro, expert)
+                    $credits = $comprehensive_limits['credits'];
+                    if ( isset( $credits['remaining'] ) ) {
+                        $status['credits_remaining'] = intval( $credits['remaining'] );
+                    }
+                    if ( isset( $credits['limit'] ) ) {
+                        $status['credit_limit'] = intval( $credits['limit'] );
+                    }
+                } elseif ( $comprehensive_limits['type'] === 'requests' && isset( $comprehensive_limits['requests'] ) ) {
+                    // Request-based tier (free, byok, lifetime)
+                    $status['request_limits'] = $comprehensive_limits['requests'];
+                }
+            } else {
+                // Fallback to legacy credit fetching for backward compatibility
+                $credits = $this->get_credits_from_magicproxy( $license_key );
+                if ( $credits && isset( $credits['remaining'] ) ) {
+                    $status['credits_remaining'] = intval( $credits['remaining'] );
+                    if ( isset( $credits['limit'] ) ) {
+                        $status['credit_limit'] = intval( $credits['limit'] );
+                    }
                 }
             }
+            
             // Always include current_credits from the DB if present
             if ($this->db) {
                 $settings = $this->db->get_all_settings();
@@ -4801,6 +4863,130 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         } catch (Exception $e) {
             error_log('MagicAssistant: Error verifying debug file ownership: ' . $e->getMessage());
             return false;
+        }
+    }
+
+    /**
+     * Get comprehensive limit information for this license from MagicProxy
+     * This includes both credit limits (for paid tiers) and request limits (for free/BYOK/lifetime tiers)
+     *
+     * @param string $license_key
+     * @return array|null Array with comprehensive limit information, or null on failure
+     */
+    private function get_comprehensive_limits_from_magicproxy( $license_key ) {
+        if ( empty( $license_key ) ) {
+            return null;
+        }
+
+        try {
+            // Get tier information first to determine what type of limits to fetch
+            $tier = $this->get_tier_from_magicproxy( $license_key );
+            if ( empty( $tier ) ) {
+                return null;
+            }
+
+            $limit_info = array(
+                'tier' => $tier,
+                'type' => 'unknown'
+            );
+
+            // Determine if this is a credit-based tier or request-based tier
+            $credit_based_tiers = array( 'starter', 'pro', 'expert' );
+            $request_based_tiers = array( 'free', 'byok', 'lifetime' );
+
+            if ( in_array( $tier, $credit_based_tiers ) ) {
+                // For credit-based tiers, fetch credit information
+                $limit_info['type'] = 'credits';
+                $credits = $this->get_credits_from_magicproxy( $license_key );
+                if ( $credits ) {
+                    $limit_info['credits'] = $credits;
+                }
+            } elseif ( in_array( $tier, $request_based_tiers ) ) {
+                // For request-based tiers, fetch request limit information
+                $limit_info['type'] = 'requests';
+                $request_limits = $this->get_request_limits_from_magicproxy( $license_key );
+                if ( $request_limits ) {
+                    $limit_info['requests'] = $request_limits;
+                }
+            }
+
+            return $limit_info;
+        } catch ( Exception $e ) {
+            error_log( 'MagicAssistant Comprehensive Limits Error: ' . $e->getMessage() );
+            return null;
+        }
+    }
+
+    /**
+     * Get request limit information for this license from MagicProxy
+     * This is used for free, BYOK, and lifetime tiers that use request limits instead of credits
+     *
+     * @param string $license_key
+     * @return array|null Array with request limit information, or null on failure
+     */
+    private function get_request_limits_from_magicproxy( $license_key ) {
+        if ( empty( $license_key ) ) {
+            return null;
+        }
+
+        try {
+            // Use a new endpoint for request limits or enhance the existing credits endpoint
+            $url = 'https://proxy.magicplugins.io/api/proxy/license-limits';
+
+            $response = wp_remote_get( $url, array(
+                'headers' => array(
+                    'X-License-Key' => $license_key,
+                    'Content-Type'   => 'application/json',
+                ),
+                'timeout' => 10,
+            ) );
+
+            if ( is_wp_error( $response ) ) {
+                return null;
+            }
+
+            $code = wp_remote_retrieve_response_code( $response );
+            $body = wp_remote_retrieve_body( $response );
+
+            if ( $code !== 200 ) {
+                error_log( 'MagicAssistant Request Limits Error: HTTP ' . $code . ' - ' . $body );
+                return null;
+            }
+
+            $data = json_decode( $body, true );
+
+            if ( json_last_error() !== JSON_ERROR_NONE || ! is_array( $data ) ) {
+                return null;
+            }
+
+            // Format request limit information
+            if ( isset( $data['requestLimits'] ) ) {
+                return array(
+                    'hourly' => array(
+                        'limit' => $data['requestLimits']['hourly']['limit'] ?? 0,
+                        'used' => $data['requestLimits']['hourly']['used'] ?? 0,
+                        'remaining' => $data['requestLimits']['hourly']['remaining'] ?? 0,
+                        'resetTime' => $data['requestLimits']['hourly']['resetTime'] ?? null
+                    ),
+                    'daily' => array(
+                        'limit' => $data['requestLimits']['daily']['limit'] ?? 0,
+                        'used' => $data['requestLimits']['daily']['used'] ?? 0,
+                        'remaining' => $data['requestLimits']['daily']['remaining'] ?? 0,
+                        'resetTime' => $data['requestLimits']['daily']['resetTime'] ?? null
+                    ),
+                    'monthly' => array(
+                        'limit' => $data['requestLimits']['monthly']['limit'] ?? 0,
+                        'used' => $data['requestLimits']['monthly']['used'] ?? 0,
+                        'remaining' => $data['requestLimits']['monthly']['remaining'] ?? 0,
+                        'resetTime' => $data['requestLimits']['monthly']['resetTime'] ?? null
+                    )
+                );
+            }
+
+            return null;
+        } catch ( Exception $e ) {
+            error_log( 'MagicAssistant Request Limits Exception: ' . $e->getMessage() );
+            return null;
         }
     }
 

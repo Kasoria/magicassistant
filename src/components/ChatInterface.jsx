@@ -116,14 +116,63 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
       if (response.ok) {
         const data = await response.json()
         setSettings(data)
-        // Always set creditsInfo from settings.current_credits
+        // Always set creditsInfo from settings.current_credits or license_limits
         if (data.current_credits) {
           setCreditsInfo(data.current_credits)
+        } else if (data.license_limits) {
+          // Handle comprehensive license limits
+          setCreditsInfo(data.license_limits)
         }
       }
     } catch (error) {
       console.error('Failed to load settings:', error)
     }
+  }
+
+  // Helper function to format limit display text
+  const formatLimitDisplay = (limitInfo) => {
+    if (!limitInfo) return ''
+    
+    // Handle credit-based limits
+    if (limitInfo.type === 'credits' || limitInfo.limit !== undefined) {
+      let used = null
+      if (typeof limitInfo.current !== 'undefined') {
+        used = Number(limitInfo.current)
+      } else if (typeof limitInfo.limit !== 'undefined' && typeof limitInfo.remaining !== 'undefined') {
+        used = Number(limitInfo.limit) - Number(limitInfo.remaining)
+      }
+      
+      if (used !== null && typeof limitInfo.limit !== 'undefined') {
+        return `💳 ${used.toFixed(2)} / ${limitInfo.limit}`
+      } else if (typeof limitInfo.limit !== 'undefined') {
+        return `💳 ${limitInfo.limit}`
+      }
+    }
+    
+    // Handle request-based limits (show most relevant limit)
+    if (limitInfo.type === 'requests' && limitInfo.requests) {
+      const requests = limitInfo.requests
+      
+      // Prioritize showing the most constrained limit
+      if (requests.daily) {
+        const used = requests.daily.used || 0
+        const limit = requests.daily.limit
+        const remaining = requests.daily.remaining !== undefined ? requests.daily.remaining : (limit - used)
+        return `📊 ${used}/${limit} daily (${remaining} left)`
+      } else if (requests.hourly) {
+        const used = requests.hourly.used || 0
+        const limit = requests.hourly.limit
+        const remaining = requests.hourly.remaining !== undefined ? requests.hourly.remaining : (limit - used)
+        return `📊 ${used}/${limit} hourly (${remaining} left)`
+      } else if (requests.monthly) {
+        const used = requests.monthly.used || 0
+        const limit = requests.monthly.limit
+        const remaining = requests.monthly.remaining !== undefined ? requests.monthly.remaining : (limit - used)
+        return `📊 ${used}/${limit} monthly (${remaining} left)`
+      }
+    }
+    
+    return ''
   }
 
   const loadChatSessions = async (shouldAutoLoadLastSession = false) => {
@@ -840,23 +889,9 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
           </div>
           
             <div className="flex items-center space-x-2 shrink-0">
-              {creditsInfo && typeof creditsInfo.remaining !== 'undefined' && (
+              {creditsInfo && formatLimitDisplay(creditsInfo) && (
                 <span className="text-sm text-gray-600 dark:text-gray-300">
-                  {(() => {
-                    let used = null
-                    if (typeof creditsInfo.current !== 'undefined') {
-                      used = Number(creditsInfo.current)
-                    } else if (typeof creditsInfo.limit !== 'undefined' && typeof creditsInfo.remaining !== 'undefined') {
-                      used = Number(creditsInfo.limit) - Number(creditsInfo.remaining)
-                    }
-                    if (used !== null && typeof creditsInfo.limit !== 'undefined') {
-                      return `💳 ${used.toFixed(2)} / ${creditsInfo.limit}`
-                    } else if (typeof creditsInfo.limit !== 'undefined') {
-                      return `💳 ${creditsInfo.limit}`
-                    } else {
-                      return ''
-                    }
-                  })()}
+                  {formatLimitDisplay(creditsInfo)}
                 </span>
               )}
               <CustomSelect
@@ -919,23 +954,9 @@ const ChatInterface = ({ adminData, isDrawerMode = false }) => {
           </div>
           
           <div className="flex items-center space-x-1 ml-2">
-            {creditsInfo && typeof creditsInfo.remaining !== 'undefined' && (
-              <span className="text-sm text-gray-600 dark:text-gray-300">
-                {(() => {
-                  let used = null
-                  if (typeof creditsInfo.current !== 'undefined') {
-                    used = Number(creditsInfo.current)
-                  } else if (typeof creditsInfo.limit !== 'undefined' && typeof creditsInfo.remaining !== 'undefined') {
-                    used = Number(creditsInfo.limit) - Number(creditsInfo.remaining)
-                  }
-                  if (used !== null && typeof creditsInfo.limit !== 'undefined') {
-                    return `�� ${used.toFixed(2)} / ${creditsInfo.limit}`
-                  } else if (typeof creditsInfo.limit !== 'undefined') {
-                    return `💳 ${creditsInfo.limit}`
-                  } else {
-                    return ''
-                  }
-                })()}
+            {creditsInfo && formatLimitDisplay(creditsInfo) && (
+              <span className="text-xs text-gray-600 dark:text-gray-300 truncate max-w-24">
+                {formatLimitDisplay(creditsInfo)}
               </span>
             )}
             <CustomSelect
