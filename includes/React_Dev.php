@@ -48,6 +48,10 @@ class React_Dev {
         add_action( 'admin_enqueue_scripts', array( $this, 'maybe_enqueue_react_scripts' ), 10 );
         add_action( 'wp_enqueue_scripts', array( $this, 'maybe_enqueue_react_scripts' ), 10 );
         
+        // Enqueue Bricks integration script
+        add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_bricks_scripts' ) );
+        add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_bricks_scripts' ) );
+        
         // Add React root elements to both frontend and admin
         add_action( 'wp_footer', array( $this, 'add_react_root_elements' ) );
         add_action( 'admin_footer', array( $this, 'add_react_root_elements' ) );
@@ -411,41 +415,63 @@ class React_Dev {
         return $vendor_handles;
     }
     
-      /**
-   * Localize data for admin React apps
-   */
-  private function localize_admin_data() {
-    // Only localize if the script hasn't been localized yet by the admin class
-    $handle = $this->is_dev_mode ? 'mat-react-admin-dev' : 'mat-react-admin';
-    
-    // Check if already localized by checking if the global variable exists
-    if (wp_script_is($handle, 'enqueued') && !wp_script_is($handle, 'done') && empty(wp_scripts()->get_data($handle, 'data'))) {
-      wp_localize_script( $handle, 'matAdminData', array(
-        'ajaxurl' => admin_url( 'admin-ajax.php' ),
-        'restUrl' => rest_url( 'magicassistant/v1/' ),
-        'nonces' => array(
-          'wp_rest' => wp_create_nonce( 'wp_rest' ),
-          'mat_admin' => wp_create_nonce( 'mat_admin_nonce' ),
-          'mat_ajax' => wp_create_nonce( 'mat_ajax_nonce' ),
-        ),
-        'currentUser' => wp_get_current_user()->ID,
-        'savedTheme' => get_user_meta( get_current_user_id(), 'mat_theme', true ),
-        'isAdmin' => is_admin(),
-        'isDev' => $this->is_dev_mode,
-        'pluginUrl' => MAGIC_ASSISTANT_PLUGIN_URL,
-        'admin_url' => admin_url(),
-        'dashboard_url' => admin_url('index.php'),
-        'i18n' => array(
-          'loading' => __( 'Loading...', 'magic-assistant' ),
-          'error' => __( 'An error occurred', 'magic-assistant' ),
-          'save' => __( 'Save', 'magic-assistant' ),
-          'cancel' => __( 'Cancel', 'magic-assistant' ),
-          'delete' => __( 'Delete', 'magic-assistant' ),
-          'edit' => __( 'Edit', 'magic-assistant' ),
-        )
-      ));
+    /**
+     * Enqueue Bricks integration scripts if Bricks editor is active
+     */
+    public function enqueue_bricks_scripts() {
+        if ( isset( $_GET['bricks'] ) && $_GET['bricks'] === 'run' ) {
+            $this->enqueue_bricks_integration_scripts();
+        }
     }
-  }
+
+    /**
+     * Enqueue the bricks.js for Bricks Builder integration
+     */
+    private function enqueue_bricks_integration_scripts() {
+        $handle = 'mat-bricks-integration';
+        $src = MAGIC_ASSISTANT_PLUGIN_URL . 'assets/js/bricks.js';
+        $deps = array('jquery'); 
+        $version = MAGIC_ASSISTANT_VERSION;
+        $in_footer = true;
+    
+        wp_enqueue_script($handle, $src, $deps, $version, $in_footer);
+    }
+    
+    /**
+     * Localize data for admin React apps
+     */
+    private function localize_admin_data() {
+        // Only localize if the script hasn't been localized yet by the admin class
+        $handle = $this->is_dev_mode ? 'mat-react-admin-dev' : 'mat-react-admin';
+        
+        // Check if already localized by checking if the global variable exists
+        if (wp_script_is($handle, 'enqueued') && !wp_script_is($handle, 'done') && empty(wp_scripts()->get_data($handle, 'data'))) {
+          wp_localize_script( $handle, 'matAdminData', array(
+            'ajaxurl' => admin_url( 'admin-ajax.php' ),
+            'restUrl' => rest_url( 'magicassistant/v1/' ),
+            'nonces' => array(
+              'wp_rest' => wp_create_nonce( 'wp_rest' ),
+              'mat_admin' => wp_create_nonce( 'mat_admin_nonce' ),
+              'mat_ajax' => wp_create_nonce( 'mat_ajax_nonce' ),
+            ),
+            'currentUser' => wp_get_current_user()->ID,
+            'savedTheme' => get_user_meta( get_current_user_id(), 'mat_theme', true ),
+            'isAdmin' => is_admin(),
+            'isDev' => $this->is_dev_mode,
+            'pluginUrl' => MAGIC_ASSISTANT_PLUGIN_URL,
+            'admin_url' => admin_url(),
+            'dashboard_url' => admin_url('index.php'),
+            'i18n' => array(
+              'loading' => __( 'Loading...', 'magic-assistant' ),
+              'error' => __( 'An error occurred', 'magic-assistant' ),
+              'save' => __( 'Save', 'magic-assistant' ),
+              'cancel' => __( 'Cancel', 'magic-assistant' ),
+              'delete' => __( 'Delete', 'magic-assistant' ),
+              'edit' => __( 'Edit', 'magic-assistant' ),
+            )
+          ));
+        }
+    }
     
     /**
      * Localize data for public React apps
@@ -455,6 +481,12 @@ class React_Dev {
         
         // Get current page/post information
         $current_post_info = $this->get_current_post_info();
+        
+        // Fetch plugin settings for default button customization
+        $settings = array();
+        if ( function_exists( 'MATDB' ) && MATDB() ) {
+            $settings = MATDB()->get_all_settings();
+        }
         
         wp_localize_script( $handle, 'matPublicData', array(
             'ajaxurl' => admin_url( 'admin-ajax.php' ),
@@ -470,6 +502,9 @@ class React_Dev {
             'isDev' => $this->is_dev_mode,
             'pluginUrl' => MAGIC_ASSISTANT_PLUGIN_URL,
             'currentPost' => $current_post_info,
+            // Floating chat default customization coming from server-side settings
+            'floatingChatButtonColor' => isset( $settings['floating_chat_button_color'] ) ? $settings['floating_chat_button_color'] : 'blue',
+            'floatingChatButtonIcon'  => isset( $settings['floating_chat_button_icon'] )  ? $settings['floating_chat_button_icon']  : 'chat',
             'i18n' => array(
                 'loading' => __( 'Loading...', 'magic-assistant' ),
                 'error' => __( 'An error occurred', 'magic-assistant' ),
@@ -650,42 +685,42 @@ class React_Dev {
         echo '</script>';
     }
     
-      /**
-   * Add React root element to the DOM
-   */
-  public function add_react_root_elements() {
-    if ( ! is_admin() ) {
-      // Add public root element on frontend pages only if floating chat should be shown
-      if ( $this->should_show_floating_chat() ) {
-        echo '<div id="mat-public-root"></div>';
-      }
-    } else {
-      // Check if this is a plugin admin page
-      $screen = get_current_screen();
-      if ( $screen ) {
-        $plugin_pages = array(
-          'toplevel_page_magic_plugins',            // MagicPlugins landing page
-          'magicplugins_page_magicassistant',       // Main MagicAssistant page
-        );
-        
-        if ( in_array( $screen->id, $plugin_pages ) ) {
-          // These are our main plugin admin pages - they need the admin root
-          // The admin root is already added by the admin_page() method in MAT_Admin class
-          // Don't add any additional roots here to avoid conflicts
+    /**
+     * Add React root element to the DOM
+     */
+    public function add_react_root_elements() {
+        if ( ! is_admin() ) {
+            // Add public root element on frontend pages only if floating chat should be shown
+            if ( $this->should_show_floating_chat() ) {
+                echo '<div id="mat-public-root"></div>';
+            }
         } else {
-          // Other admin pages - add public root for floating components only if should be shown
-          if ( $this->should_show_floating_chat() ) {
-            echo '<div id="mat-public-root"></div>';
-          }
+            // Check if this is a plugin admin page
+            $screen = get_current_screen();
+            if ( $screen ) {
+                $plugin_pages = array(
+                    'toplevel_page_magic_plugins',            // MagicPlugins landing page
+                    'magicplugins_page_magicassistant',       // Main MagicAssistant page
+                );
+                
+                if ( in_array( $screen->id, $plugin_pages ) ) {
+                    // These are our main plugin admin pages - they need the admin root
+                    // The admin root is already added by the admin_page() method in MAT_Admin class
+                    // Don't add any additional roots here to avoid conflicts
+                } else {
+                    // Other admin pages - add public root for floating components only if should be shown
+                    if ( $this->should_show_floating_chat() ) {
+                        echo '<div id="mat-public-root"></div>';
+                    }
+                }
+            } else {
+                // Fallback - add public root only if should be shown
+                if ( $this->should_show_floating_chat() ) {
+                    echo '<div id="mat-public-root"></div>';
+                }
+            }
         }
-      } else {
-        // Fallback - add public root only if should be shown
-        if ( $this->should_show_floating_chat() ) {
-          echo '<div id="mat-public-root"></div>';
-        }
-      }
     }
-  }
     
     /**
      * Add admin styles for React integration
