@@ -637,7 +637,7 @@ ${contextCode}`,
                   <select
                     value={perPage}
                     onChange={e => { setPerPage(Number(e.target.value)); setPage(1); }}
-                    className="ml-2 px-2 py-1 text-xs border rounded"
+                    className="ml-2 px-2 py-1 text-xs dark:text-white dark:bg-gray-700 border rounded"
                   >
                     {[25, 50, 100, 200, 500].map(n => (
                       <option key={n} value={n}>{n} per page</option>
