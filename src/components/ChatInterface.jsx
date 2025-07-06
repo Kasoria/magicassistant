@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { Button, Card, Textarea, Spinner, Drawer } from 'flowbite-react'
 import CustomSelect from './CustomSelect'
 import { useToast } from './Toast'
@@ -36,6 +36,93 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
   const [shareExpiry, setShareExpiry] = useState(30)
   const [isCreatingShare, setIsCreatingShare] = useState(false)
   const [creditsInfo, setCreditsInfo] = useState(null)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
+  const [lightboxImages, setLightboxImages] = useState([])
+  const [currentImageIndex, setCurrentImageIndex] = useState(0)
+  const [lightboxZoom, setLightboxZoom] = useState(1)
+  const [lightboxPosition, setLightboxPosition] = useState({ x: 0, y: 0 })
+  const [isDragging, setIsDragging] = useState(false)
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
+  const [hasDragged, setHasDragged] = useState(false)
+  const [showPostSelector, setShowPostSelector] = useState(false)
+  const [pendingFeaturedImage, setPendingFeaturedImage] = useState(null)
+  const [availablePosts, setAvailablePosts] = useState([])
+  const [loadingPosts, setLoadingPosts] = useState(false)
+  
+  // Helper: reset lightbox state when opening
+  const resetLightboxState = () => {
+    setLightboxZoom(1)
+    setLightboxPosition({ x: 0, y: 0 })
+    setIsDragging(false)
+  }
+  
+  // Helper: handle zoom
+  const handleLightboxZoom = (delta, event) => {
+    if (event.cancelable) {
+      event.preventDefault()
+    }
+    const newZoom = Math.min(Math.max(lightboxZoom + delta, 0.5), 3)
+    setLightboxZoom(newZoom)
+    if (newZoom === 1) {
+      setLightboxPosition({ x: 0, y: 0 })
+    }
+  }
+  
+  // Helper: handle drag
+  const handleMouseDown = (event) => {
+    if (lightboxZoom > 1) {
+      setIsDragging(true)
+      setHasDragged(false)
+      setDragStart({ x: event.clientX - lightboxPosition.x, y: event.clientY - lightboxPosition.y })
+    }
+  }
+  
+  const handleMouseMove = (event) => {
+    if (isDragging && lightboxZoom > 1) {
+      setHasDragged(true)
+      setLightboxPosition({
+        x: event.clientX - dragStart.x,
+        y: event.clientY - dragStart.y
+      })
+    }
+  }
+  
+  const handleMouseUp = () => {
+    setIsDragging(false)
+  }
+  
+  // Helper: handle keyboard events
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (lightboxOpen && event.key === 'Escape') {
+        setLightboxOpen(false)
+      }
+    }
+    
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [lightboxOpen])
+  
+  // Helper: fetch available posts and pages
+  const fetchAvailablePosts = async () => {
+    setLoadingPosts(true)
+    try {
+      const response = await fetch(`${adminData.restUrl}posts-and-pages`, {
+        headers: {
+          'X-WP-Nonce': adminData.nonces.wp_rest,
+        }
+      })
+      const data = await response.json()
+      if (data.success) {
+        setAvailablePosts(data.posts)
+      }
+    } catch (error) {
+      console.error('Failed to fetch posts:', error)
+    } finally {
+      setLoadingPosts(false)
+    }
+  }
+  
   // Helper: detect Bricks editor
   const isBricksEditor = new URLSearchParams(window.location.search).get('bricks') === 'run';
 
@@ -304,6 +391,10 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
           provider: data.provider,
           agent_mode: forceAgentMode,
           tool_calls_count: data.tool_calls_count || 0,
+          debug_tool_data: data.debug_tool_data || [],
+          tokens_used: data.tokens_used,
+          cost: data.cost,
+          response_time: data.response_time,
           isError: false,
           html: extractedHtml,
           css: extractedCss,
@@ -372,9 +463,32 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
     return (
       <ReactMarkdown
         remarkPlugins={[remarkBreaks]}
+        skipHtml={false}
         components={{
-          // Customize how different elements are rendered
-          p: ({ children }) => <p className="mb-2 last:mb-0 text-gray-900 dark:text-gray-100">{children}</p>,
+          // Prevent wrapping of images in p tags
+          p: ({ children }) => {
+            const childrenArray = React.Children.toArray(children)
+            
+            // Check if any child is the custom img component (React element with function type that has src prop)
+            const hasImageComponent = childrenArray.some(child => 
+              React.isValidElement(child) && 
+              typeof child.type === 'function' &&
+              child.props?.src
+            )
+            
+            // Check if any child is an img element
+            const hasImage = childrenArray.some(child => 
+              React.isValidElement(child) && 
+              child.type === 'img'
+            )
+            
+            const shouldRenderAsDiv = hasImage || hasImageComponent
+            if (shouldRenderAsDiv) {
+              return <div className="mb-2 last:mb-0 text-gray-900 dark:text-gray-100">{children}</div>
+            }
+            
+            return <p className="mb-2 last:mb-0 text-gray-900 dark:text-gray-100">{children}</p>
+          },
           strong: ({ children }) => <strong className="font-semibold text-gray-900 dark:text-white">{children}</strong>,
           em: ({ children }) => <em className="italic text-gray-900 dark:text-gray-100">{children}</em>,
           code: ({ children }) => <code className="leading-[1.5] bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded text-sm font-mono text-gray-900 dark:text-gray-100">{children}</code>,
@@ -388,6 +502,189 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
           h3: ({ children }) => <h3 className="text-base font-bold mb-2 text-gray-900 dark:text-white">{children}</h3>,
           a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline hover:text-blue-800 dark:hover:text-blue-300 transition-colors">{children}</a>,
           br: () => <br className="block" />,
+          img: ({ src, alt }) => {
+            const isUnsplash = src && src.includes('images.unsplash.com')
+            
+            const handleImageClick = () => {
+              // Get higher resolution version of current image
+              let highResSrc = src
+              if (src.includes('images.unsplash.com')) {
+                // Try to get the url_full from the image data if available
+                const imageData = findUnsplashImageData(src)
+                if (imageData && imageData.url_full) {
+                  highResSrc = imageData.url_full
+                } else {
+                  // Fallback: Replace dimensions with higher resolution params
+                  highResSrc = src.replace(/w=\d+/, 'w=1920').replace(/h=\d+/, 'h=1080')
+                }
+              }
+              
+              // For now, just show the single image (simplified for better performance)
+              setLightboxImages([{ src: highResSrc, alt: alt || '' }])
+              setCurrentImageIndex(0)
+              resetLightboxState()
+              setLightboxOpen(true)
+            }
+
+            if (!isUnsplash) {
+              const handleSaveAsFeatured = () => {
+                saveAsFeaturedImage(src, '', alt || 'AI Generated Image', '', '')
+              }
+              
+              return (
+                <div className="inline-block my-4">
+                  <img 
+                    src={src} 
+                    alt={alt || ''} 
+                    className="rounded-lg shadow max-w-full block cursor-pointer hover:opacity-75 transition-opacity" 
+                    onClick={handleImageClick}
+                  />
+                  <button
+                    onClick={handleSaveAsFeatured}
+                    className="mt-2 inline-flex items-center gap-1 text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded"
+                  >
+                    Set as Featured
+                  </button>
+                </div>
+              )
+            }
+
+            const handleSave = () => {
+              // Use alt text if available, otherwise extract a meaningful title from the URL
+              const effectiveAlt = alt || extractTitleFromUnsplashUrl(src) || 'Unsplash Image'
+              // Extract metadata from the image URL or find it in the debug data
+              const imageData = findUnsplashImageData(src)
+              
+              // Ensure we have the correct download_location for this specific image
+              const downloadLocation = imageData?.download_location || ''
+              
+              // Log the download action for debugging
+              console.log('Saving Unsplash image:', {
+                src,
+                downloadLocation,
+                effectiveAlt,
+                imageId: imageData?.id || '',
+                photographer: imageData?.photographer || ''
+              })
+              
+              if (!downloadLocation) {
+                console.warn('No download_location found for image:', src)
+                showError('Unable to find download location for this image. Image metadata may be missing.')
+                return
+              }
+              
+              saveUnsplashImage(
+                src, 
+                downloadLocation, 
+                effectiveAlt,
+                imageData?.id || '',
+                imageData?.photographer || ''
+              )
+            }
+
+            const handleSaveAsFeatured = () => {
+              // Use alt text if available, otherwise extract a meaningful title from the URL
+              const effectiveAlt = alt || extractTitleFromUnsplashUrl(src) || 'Unsplash Image'
+              // Extract metadata from the image URL or find it in the debug data
+              const imageData = findUnsplashImageData(src)
+              
+              // Ensure we have the correct download_location for this specific image
+              const downloadLocation = imageData?.download_location || ''
+              
+              // Log the featured image action for debugging
+              console.log('Setting Unsplash image as featured:', {
+                src,
+                downloadLocation,
+                effectiveAlt,
+                imageId: imageData?.id || '',
+                photographer: imageData?.photographer || ''
+              })
+              
+              if (!downloadLocation) {
+                console.warn('No download_location found for featured image:', src)
+                showError('Unable to find download location for this image. Image metadata may be missing.')
+                return
+              }
+              
+              saveAsFeaturedImage(
+                src, 
+                downloadLocation, 
+                effectiveAlt,
+                imageData?.id || '',
+                imageData?.photographer || ''
+              )
+            }
+
+            // Get image data for photographer attribution and links
+            const imageData = findUnsplashImageData(src)
+            
+            return (
+              <div className="inline-block my-4">
+                {imageData && (
+                  <div className="mb-2 text-xs text-gray-600 dark:text-gray-400">
+                    {imageData.photographer && imageData.photographer_url && (
+                      <span>
+                        Photographer:{' '}
+                        <a 
+                          href={imageData.photographer_url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:text-blue-800 underline"
+                        >
+                          {imageData.photographer}
+                        </a>
+                        {imageData.unsplash_link && (
+                          <span>
+                            {' • '}
+                            <a 
+                              href={imageData.unsplash_link} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-800 underline"
+                            >
+                              View on Unsplash
+                            </a>
+                          </span>
+                        )}
+                      </span>
+                    )}
+                    {!imageData.photographer && imageData.unsplash_link && (
+                      <span>
+                        <a 
+                          href={imageData.unsplash_link} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:text-blue-800 underline"
+                        >
+                          View on Unsplash
+                        </a>
+                      </span>
+                    )}
+                  </div>
+                )}
+                <img 
+                  src={src} 
+                  alt={alt || ''} 
+                  className="rounded-lg shadow max-w-full block cursor-pointer hover:opacity-75 transition-opacity" 
+                  onClick={handleImageClick}
+                />
+                <div className="mt-2 flex gap-2">
+                  <button
+                    onClick={handleSave}
+                    className="inline-flex items-center gap-1 text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded"
+                  >
+                    Save to Library
+                  </button>
+                  <button
+                    onClick={handleSaveAsFeatured}
+                    className="inline-flex items-center gap-1 text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded"
+                  >
+                    Set as Featured
+                  </button>
+                </div>
+              </div>
+            )
+          },
         }}
       >
         {safeContent}
@@ -684,6 +981,10 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
           provider: data.provider,
           agent_mode: data.agent_mode,
           tool_calls_count: data.tool_calls_count || 0,
+          debug_tool_data: data.debug_tool_data || [],
+          tokens_used: data.tokens_used,
+          cost: data.cost,
+          response_time: data.response_time,
           isError: false,
           html: extractedHtml,
           css: extractedCss,
@@ -898,6 +1199,148 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
     }
   };
 
+  const extractTitleFromUnsplashUrl = (url) => {
+    if (!url || !url.includes('images.unsplash.com')) return ''
+    
+    try {
+      // Try to extract meaningful info from URL structure
+      // Example: https://images.unsplash.com/photo-1234567890123-abcdef123456?...
+      const urlParts = url.split('/')
+      const photoId = urlParts[urlParts.length - 1]?.split('?')[0]
+      
+      if (photoId && photoId.startsWith('photo-')) {
+        // Extract the date and hash from photo ID for a basic title
+        const idParts = photoId.replace('photo-', '').split('-')
+        if (idParts.length >= 2) {
+          return `Unsplash Photo ${idParts[0]}`
+        }
+      }
+      
+      return 'Unsplash Image'
+    } catch (error) {
+      return 'Unsplash Image'
+    }
+  }
+
+  const findUnsplashImageData = (imageUrl) => {
+    // Search through all messages for debug_tool_data containing unsplash_search_images or unsplash_get_random_images
+    for (const message of messages) {
+      if (message.debug_tool_data && Array.isArray(message.debug_tool_data)) {
+        for (const toolData of message.debug_tool_data) {
+          if ((toolData.tool === 'unsplash_search_images' || toolData.tool === 'unsplash_get_random_images') && toolData.success && toolData.result) {
+            const images = Array.isArray(toolData.result) ? toolData.result : []
+            // Find the image that matches the URL (compare url_small, url_full, or url_regular)
+            const matchingImage = images.find(img => {
+              // Check all possible URL variations to ensure we find the correct image
+              return img.url_small === imageUrl || 
+                     img.url_full === imageUrl || 
+                     img.url_regular === imageUrl ||
+                     // Also check for URL with different query parameters
+                     (img.url_small && img.url_small.split('?')[0] === imageUrl.split('?')[0]) ||
+                     (img.url_full && img.url_full.split('?')[0] === imageUrl.split('?')[0]) ||
+                     (img.url_regular && img.url_regular.split('?')[0] === imageUrl.split('?')[0])
+            })
+            if (matchingImage) {
+              // Log successful match for debugging
+              console.log('Found matching Unsplash image data:', {
+                imageUrl,
+                matchedImage: matchingImage,
+                downloadLocation: matchingImage.download_location
+              })
+              return matchingImage
+            }
+          }
+        }
+      }
+    }
+    
+    // Log when no match is found for debugging
+    console.warn('No Unsplash image data found for URL:', imageUrl)
+    return null
+  }
+
+  const saveUnsplashImage = async (imgUrl, downloadLoc = '', altText = '', unsplashId = '', photographer = '') => {
+    try {
+      const resp = await fetch(`${adminData.restUrl}unsplash-save-image`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-WP-Nonce': adminData.nonces.wp_rest,
+        },
+        body: JSON.stringify({
+          image_url: imgUrl,
+          download_location: downloadLoc,
+          alt: altText,
+          title: altText || 'Unsplash Image',
+          unsplash_id: unsplashId,
+          photographer,
+        }),
+      })
+      const data = await resp.json()
+      if (data.success) {
+        showSuccess('Image saved to media library!')
+      } else {
+        showError(data.message || 'Failed to save image')
+      }
+    } catch (err) {
+      console.error('Save image error', err)
+      showError('Failed to save image')
+    }
+  }
+
+  const saveAsFeaturedImage = async (imgUrl, downloadLoc = '', altText = '', unsplashId = '', photographer = '', postId = null) => {
+    // If no postId provided, show post selector
+    if (!postId) {
+      // Get current post info from adminData
+      const currentPost = adminData?.currentPost || {}
+      const currentPostId = currentPost.id
+      
+      if (!currentPostId) {
+        // No current post, show post selector
+        setPendingFeaturedImage({
+          imgUrl,
+          downloadLoc,
+          altText,
+          unsplashId,
+          photographer
+        })
+        await fetchAvailablePosts()
+        setShowPostSelector(true)
+        return
+      }
+      
+      postId = currentPostId
+    }
+    
+    try {
+      const resp = await fetch(`${adminData.restUrl}save-as-featured-image`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-WP-Nonce': adminData.nonces.wp_rest,
+        },
+        body: JSON.stringify({
+          image_url: imgUrl,
+          download_location: downloadLoc,
+          alt: altText,
+          title: altText || 'AI Generated Image',
+          unsplash_id: unsplashId,
+          photographer,
+          post_id: postId
+        }),
+      })
+      const data = await resp.json()
+      if (data.success) {
+        showSuccess(data.message || 'Image set as featured image!')
+      } else {
+        showError(data.message || 'Failed to set featured image')
+      }
+    } catch (err) {
+      console.error('Save as featured image error', err)
+      showError('Failed to set featured image')
+    }
+  }
+
   return (
     
     <div className={`h-[calc(100vh-7.4rem)] mx-auto flex flex-col ${isDrawerMode ? 'h-full' : ''}`}>
@@ -1053,6 +1496,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
           {messages.map((message, index) => (
             <div
               key={index}
+              data-message-index={index}
               className={`p-6 shadow-xs rounded-lg flex items-start gap-6 group relative pe-14 ${
                 message.role === 'user'
                   ? 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700'
@@ -1572,6 +2016,202 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
             </div>
           </div>
         </ConfirmationModal>
+      )}
+
+      {/* Post Selector Modal */}
+      {showPostSelector && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Select Post or Page</h3>
+              <button
+                onClick={() => setShowPostSelector(false)}
+                className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            {loadingPosts ? (
+              <div className="flex items-center justify-center py-8">
+                <Spinner size="md" />
+                <span className="ml-2 text-gray-600 dark:text-gray-300">Loading posts...</span>
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                {availablePosts.map((post) => (
+                  <button
+                    key={post.id}
+                    onClick={() => {
+                      if (pendingFeaturedImage) {
+                        saveAsFeaturedImage(
+                          pendingFeaturedImage.imgUrl,
+                          pendingFeaturedImage.downloadLoc,
+                          pendingFeaturedImage.altText,
+                          pendingFeaturedImage.unsplashId,
+                          pendingFeaturedImage.photographer,
+                          post.id
+                        )
+                      }
+                      setShowPostSelector(false)
+                      setPendingFeaturedImage(null)
+                    }}
+                    className="w-full text-left p-3 rounded-lg border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                  >
+                    <div className="font-medium text-gray-900 dark:text-white">
+                      {post.title}
+                    </div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400">
+                      {post.type === 'post' ? 'Post' : 'Page'} • {post.status}
+                    </div>
+                  </button>
+                ))}
+                {availablePosts.length === 0 && (
+                  <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                    No posts or pages found
+                  </div>
+                )}
+              </div>
+            )}
+            
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={() => setShowPostSelector(false)}
+                className="px-4 py-2 bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-500 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Image Lightbox */}
+      {lightboxOpen && (
+        <div 
+          className="fixed bg-black bg-opacity-90" 
+          style={{ 
+            zIndex: 999999,
+            top: window.innerWidth > 782 ? '32px' : '46px', // WordPress admin bar height
+            left: window.innerWidth > 960 ? '160px' : '0', // WordPress sidebar width
+            right: '0',
+            bottom: '0'
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setLightboxOpen(false)
+            }
+          }}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+        >
+          <div className="relative w-full h-full flex items-center justify-center p-6 overflow-hidden">
+            <img
+              src={lightboxImages[currentImageIndex]?.src}
+              alt={lightboxImages[currentImageIndex]?.alt || ''}
+              className="max-w-full max-h-full object-contain rounded-lg shadow-2xl transition-transform duration-200"
+              style={{
+                transform: `scale(${lightboxZoom}) translate(${lightboxPosition.x / lightboxZoom}px, ${lightboxPosition.y / lightboxZoom}px)`,
+                cursor: isDragging ? 'grabbing' : (lightboxZoom > 1 ? 'zoom-out' : 'zoom-in')
+              }}
+              onMouseDown={handleMouseDown}
+              onWheel={(e) => handleLightboxZoom(e.deltaY > 0 ? -0.2 : 0.2, e)}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                // Only zoom if we haven't been dragging
+                if (!hasDragged) {
+                  // Click to zoom in if not zoomed, zoom out if zoomed
+                  if (lightboxZoom === 1) {
+                    handleLightboxZoom(1, e); // Zoom to 2x
+                  } else {
+                    setLightboxZoom(1);
+                    setLightboxPosition({ x: 0, y: 0 });
+                  }
+                }
+                // Reset drag state for next interaction
+                setHasDragged(false);
+              }}
+              draggable={false}
+            />
+            
+            {/* Close button */}
+            <button
+              onClick={() => setLightboxOpen(false)}
+              className="absolute top-2 right-2 w-8 h-8 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition-opacity"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            
+            {/* Zoom controls */}
+            <div className="absolute top-2 left-2 flex flex-col gap-2">
+              <button
+                onClick={(e) => handleLightboxZoom(0.2, e)}
+                className="w-8 h-8 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition-opacity"
+                title="Zoom in"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+              </button>
+              <button
+                onClick={(e) => handleLightboxZoom(-0.2, e)}
+                className="w-8 h-8 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition-opacity"
+                title="Zoom out"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                </svg>
+              </button>
+              <button
+                onClick={(e) => { e.preventDefault(); setLightboxZoom(1); setLightboxPosition({ x: 0, y: 0 }); }}
+                className="w-8 h-8 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition-opacity text-xs"
+                title="Reset zoom"
+              >
+                1:1
+              </button>
+            </div>
+            
+            {/* Navigation arrows - only show if multiple images */}
+            {lightboxImages.length > 1 && (
+              <>
+                <button
+                  onClick={() => { setCurrentImageIndex(currentImageIndex > 0 ? currentImageIndex - 1 : lightboxImages.length - 1); resetLightboxState(); }}
+                  className="absolute left-2 top-1/2 transform -translate-y-1/2 w-10 h-10 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition-opacity"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => { setCurrentImageIndex(currentImageIndex < lightboxImages.length - 1 ? currentImageIndex + 1 : 0); resetLightboxState(); }}
+                  className="absolute right-2 top-1/2 transform -translate-y-1/2 w-10 h-10 bg-black bg-opacity-50 text-white rounded-full flex items-center justify-center hover:bg-opacity-70 transition-opacity"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+                
+                {/* Image counter */}
+                <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-50 text-white px-3 py-1 rounded-full text-sm">
+                  {currentImageIndex + 1} / {lightboxImages.length}
+                </div>
+              </>
+            )}
+            
+            {/* Zoom indicator */}
+            {lightboxZoom !== 1 && (
+              <div className="absolute bottom-4 right-4 bg-black bg-opacity-50 text-white px-3 py-1 rounded-full text-sm">
+                {Math.round(lightboxZoom * 100)}%
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   )

@@ -309,6 +309,27 @@ class AI_Provider {
             'callback' => array($this, 'backup_htaccess'),
             'permission_callback' => array($this, 'check_permissions'),
         ));
+        
+        // UNSPLASH SAVE IMAGE ENDPOINT
+        register_rest_route('magicassistant/v1', '/unsplash-save-image', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'save_unsplash_image'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        // SAVE IMAGE AS FEATURED IMAGE ENDPOINT
+        register_rest_route('magicassistant/v1', '/save-as-featured-image', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'save_as_featured_image'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        // GET POSTS AND PAGES ENDPOINT
+        register_rest_route('magicassistant/v1', '/posts-and-pages', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_posts_and_pages'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
     }
     
     public function handle_chat($request) {
@@ -419,7 +440,11 @@ class AI_Provider {
                     $model,
                     $result['tokens_used'] ?? null,
                     $response_time,
-                    $result['cost'] ?? null
+                    $result['cost'] ?? null,
+                    $result['debug_tool_data'] ?? null,
+                    $agent_mode,
+                    $result['reasoning'] ?? null,
+                    $result['tool_calls_count'] ?? null
                 );
                 
                 // Persist the latest credit info globally if present
@@ -473,7 +498,12 @@ class AI_Provider {
                     $provider ?? 'unknown',
                     $model ?? null,
                     null,
-                    $error_response_time
+                    $error_response_time,
+                    null, // cost
+                    null, // debug_tool_data
+                    null, // agent_mode
+                    null, // reasoning
+                    null  // tool_calls_count
                 );
                 
                 // Log the API error for analytics
@@ -926,6 +956,7 @@ AVAILABLE CAPABILITIES:
 - SEO analysis and optimization (SERP analysis, keyword research, competitor analysis, technical audits)
 - Site administration and settings management
 - WooCommerce support (if available)
+- Get images from Unsplash API. Strictly don't add any attribution to the images. We handle this server-side.
 
 IMPORTANT - SEO Tool Usage:
 When using DataForSEO tools, ALWAYS consider the language and geographic context:
@@ -4209,7 +4240,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         return substr($license_key, 0, 5) . str_repeat('X', $length - 10) . substr($license_key, -5);
     }
 
-    private function get_license_headers( $debug = false ) {
+    public function get_license_headers( $debug = false ) {
         // Build headers containing license information for MagicProxy
         $headers         = array();
         $licensing_client = $this->get_licensing_client();
@@ -4988,6 +5019,378 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             error_log( 'MagicAssistant Request Limits Exception: ' . $e->getMessage() );
             return null;
         }
+    }
+
+    public function save_unsplash_image($request) {
+        $data = $request->get_json_params();
+        
+        // Debug log the incoming request data
+        error_log('[MagicAssistant] Unsplash Image Save Request: ' . json_encode($data));
+        
+        $image_url        = isset($data['image_url']) ? esc_url_raw($data['image_url']) : '';
+        $download_location = isset($data['download_location']) ? esc_url_raw($data['download_location']) : '';
+        $title            = sanitize_text_field($data['title'] ?? $data['alt'] ?? 'Unsplash Image');
+        $alt              = sanitize_text_field($data['alt'] ?? $title);
+        $photographer     = sanitize_text_field($data['photographer'] ?? '');
+        $unsplash_id      = sanitize_text_field($data['unsplash_id'] ?? '');
+
+        if (empty($image_url)) {
+            return new WP_Error('missing_url', 'Image URL required', array('status' => 400));
+        }
+
+        // Validate download_location for Unsplash images
+        if (strpos($image_url, 'images.unsplash.com') !== false) {
+            if (empty($download_location)) {
+                error_log('[MagicAssistant] Warning: Unsplash image save attempted without download_location - this may violate Unsplash API terms');
+                return new WP_Error('missing_download_location', 'Download location is required for Unsplash images to comply with API terms', array('status' => 400));
+            }
+            
+            // Validate download_location format
+            if (!filter_var($download_location, FILTER_VALIDATE_URL)) {
+                error_log('[MagicAssistant] Invalid download_location format: ' . $download_location);
+                return new WP_Error('invalid_download_location', 'Invalid download location URL format', array('status' => 400));
+            }
+        }
+
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        require_once ABSPATH . 'wp-admin/includes/media.php';
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+
+        // Download the file to a temp location
+        $tmp = download_url($image_url);
+        if (is_wp_error($tmp)) {
+            return new WP_Error('download_failed', $tmp->get_error_message(), array('status' => 500));
+        }
+
+        // Create filename from title with proper format (e.g., "Venice Beach" -> "venice-beach.jpg")
+        $filename = !empty($title) ? $title : 'unsplash-image-' . uniqid();
+        $filename = strtolower(trim($filename));
+        $filename = preg_replace('/[^a-z0-9]+/', '-', $filename);
+        $filename = trim($filename, '-');
+        
+        // Get extension from URL or default to jpg
+        $path_info = pathinfo(parse_url($image_url, PHP_URL_PATH));
+        $extension = $path_info['extension'] ?? 'jpg';
+        
+        // Ensure we have a valid image extension
+        if (!in_array(strtolower($extension), array('jpg', 'jpeg', 'png', 'gif', 'webp'))) {
+            $extension = 'jpg';
+        }
+        
+        $file_array = array(
+            'name'     => sanitize_file_name($filename . '.' . $extension),
+            'tmp_name' => $tmp,
+        );
+
+        // Upload into media library (attachment ID)
+        $attachment_id = media_handle_sideload($file_array, 0, $alt);
+
+        // If error storing permanently, cleanup.
+        if (is_wp_error($attachment_id)) {
+            @unlink($tmp);
+            return new WP_Error('media_error', $attachment_id->get_error_message(), array('status' => 500));
+        }
+
+        // Set the WordPress alt text meta field
+        if (!empty($alt)) {
+            update_post_meta($attachment_id, '_wp_attachment_image_alt', $alt);
+        }
+        
+        // Store additional meta
+        if (!empty($photographer)) {
+            update_post_meta($attachment_id, '_unsplash_photographer', $photographer);
+        }
+        if (!empty($download_location)) {
+            update_post_meta($attachment_id, '_unsplash_download_location', $download_location);
+        }
+        if (!empty($unsplash_id)) {
+            update_post_meta($attachment_id, '_unsplash_id', $unsplash_id);
+        }
+
+        // Notify MagicProxy about the download for tracking (MagicProxy will handle Unsplash API auth)
+        if (!empty($download_location)) {
+            // Log the download notification attempt
+            error_log('[MagicAssistant] Unsplash Download Notification: ' . json_encode(array(
+                'download_location' => $download_location,
+                'unsplash_id' => $unsplash_id,
+                'photographer' => $photographer,
+                'attachment_id' => $attachment_id,
+                'image_url' => $image_url,
+                'timestamp' => current_time('mysql')
+            )));
+            
+            // Send to MagicProxy instead of directly to Unsplash API with retry mechanism
+            $magicproxy_url = 'https://proxy.magicplugins.io/api/proxy/unsplash/download';
+            $max_retries = 3;
+            $retry_count = 0;
+            $notification_success = false;
+            
+            while ($retry_count < $max_retries && !$notification_success) {
+                $response = wp_remote_post($magicproxy_url, array(
+                    'timeout' => 10,
+                    'blocking' => true, // Make blocking for retry logic
+                    'headers' => array(
+                        'Content-Type' => 'application/json',
+                    ),
+                    'body' => json_encode(array(
+                        'download_location' => $download_location,
+                        'unsplash_id' => $unsplash_id,
+                        'photographer' => $photographer,
+                        'site_url' => home_url(),
+                        'plugin_version' => defined('MAGICASSISTANT_VERSION') ? MAGICASSISTANT_VERSION : '1.0.0',
+                        'retry_attempt' => $retry_count + 1
+                    ))
+                ));
+                
+                if (is_wp_error($response)) {
+                    $retry_count++;
+                    error_log('[MagicAssistant] MagicProxy Download Notification Error (Attempt ' . $retry_count . '/' . $max_retries . '): ' . $response->get_error_message());
+                    if ($retry_count < $max_retries) {
+                        sleep(1); // Wait 1 second before retry
+                    }
+                } else {
+                    $response_code = wp_remote_retrieve_response_code($response);
+                    if ($response_code >= 200 && $response_code < 300) {
+                        $notification_success = true;
+                        error_log('[MagicAssistant] MagicProxy Download Notification Sent Successfully to: ' . $magicproxy_url . ' (Attempt ' . ($retry_count + 1) . ')');
+                    } else {
+                        $retry_count++;
+                        error_log('[MagicAssistant] MagicProxy Download Notification Failed with HTTP ' . $response_code . ' (Attempt ' . $retry_count . '/' . $max_retries . ')');
+                        if ($retry_count < $max_retries) {
+                            sleep(1); // Wait 1 second before retry
+                        }
+                    }
+                }
+            }
+            
+            if (!$notification_success) {
+                error_log('[MagicAssistant] Failed to notify MagicProxy after ' . $max_retries . ' attempts - download tracking may be incomplete');
+            }
+        } else {
+            error_log('[MagicAssistant] Warning: No download_location provided for Unsplash image save - download not tracked');
+        }
+
+        $url = wp_get_attachment_url($attachment_id);
+
+        return array(
+            'success' => true,
+            'attachment_id' => $attachment_id,
+            'url' => $url,
+        );
+    }
+
+    public function save_as_featured_image($request) {
+        $data = $request->get_json_params();
+        
+        // Debug log the incoming request data
+        error_log('[MagicAssistant] Save as Featured Image Request: ' . json_encode($data));
+        
+        $image_url        = isset($data['image_url']) ? esc_url_raw($data['image_url']) : '';
+        $download_location = isset($data['download_location']) ? esc_url_raw($data['download_location']) : '';
+        $title            = sanitize_text_field($data['title'] ?? $data['alt'] ?? 'AI Generated Image');
+        $alt              = sanitize_text_field($data['alt'] ?? $title);
+        $photographer     = sanitize_text_field($data['photographer'] ?? '');
+        $unsplash_id      = sanitize_text_field($data['unsplash_id'] ?? '');
+        $post_id          = intval($data['post_id'] ?? 0);
+
+        if (empty($image_url)) {
+            return new WP_Error('missing_url', 'Image URL required', array('status' => 400));
+        }
+
+        if (empty($post_id)) {
+            return new WP_Error('missing_post_id', 'Post ID required', array('status' => 400));
+        }
+
+        // Validate download_location for Unsplash images
+        if (strpos($image_url, 'images.unsplash.com') !== false) {
+            if (empty($download_location)) {
+                error_log('[MagicAssistant] Warning: Unsplash featured image save attempted without download_location - this may violate Unsplash API terms');
+                return new WP_Error('missing_download_location', 'Download location is required for Unsplash images to comply with API terms', array('status' => 400));
+            }
+            
+            // Validate download_location format
+            if (!filter_var($download_location, FILTER_VALIDATE_URL)) {
+                error_log('[MagicAssistant] Invalid download_location format for featured image: ' . $download_location);
+                return new WP_Error('invalid_download_location', 'Invalid download location URL format', array('status' => 400));
+            }
+        }
+
+        // Check if post exists and user has permission to edit it
+        $post = get_post($post_id);
+        if (!$post) {
+            return new WP_Error('post_not_found', 'Post not found', array('status' => 404));
+        }
+
+        if (!current_user_can('edit_post', $post_id)) {
+            return new WP_Error('insufficient_permissions', 'You do not have permission to edit this post', array('status' => 403));
+        }
+
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        require_once ABSPATH . 'wp-admin/includes/media.php';
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+
+        // Download the file to a temp location
+        $tmp = download_url($image_url);
+        if (is_wp_error($tmp)) {
+            return new WP_Error('download_failed', $tmp->get_error_message(), array('status' => 500));
+        }
+
+        // Create filename from title with proper format
+        $filename = !empty($title) ? $title : 'featured-image-' . uniqid();
+        $filename = strtolower(trim($filename));
+        $filename = preg_replace('/[^a-z0-9]+/', '-', $filename);
+        $filename = trim($filename, '-');
+        
+        // Get extension from URL or default to jpg
+        $path_info = pathinfo(parse_url($image_url, PHP_URL_PATH));
+        $extension = $path_info['extension'] ?? 'jpg';
+        
+        // Ensure we have a valid image extension
+        if (!in_array(strtolower($extension), array('jpg', 'jpeg', 'png', 'gif', 'webp'))) {
+            $extension = 'jpg';
+        }
+        
+        $file_array = array(
+            'name'     => sanitize_file_name($filename . '.' . $extension),
+            'tmp_name' => $tmp,
+        );
+
+        // Upload into media library (attachment ID)
+        $attachment_id = media_handle_sideload($file_array, $post_id, $alt);
+
+        // If error storing permanently, cleanup.
+        if (is_wp_error($attachment_id)) {
+            @unlink($tmp);
+            return new WP_Error('media_error', $attachment_id->get_error_message(), array('status' => 500));
+        }
+
+        // Set the WordPress alt text meta field
+        if (!empty($alt)) {
+            update_post_meta($attachment_id, '_wp_attachment_image_alt', $alt);
+        }
+        
+        // Store additional meta for Unsplash images
+        if (!empty($photographer)) {
+            update_post_meta($attachment_id, '_unsplash_photographer', $photographer);
+        }
+        if (!empty($download_location)) {
+            update_post_meta($attachment_id, '_unsplash_download_location', $download_location);
+        }
+        if (!empty($unsplash_id)) {
+            update_post_meta($attachment_id, '_unsplash_id', $unsplash_id);
+        }
+
+        // Set as featured image
+        $featured_set = set_post_thumbnail($post_id, $attachment_id);
+        
+        if (!$featured_set) {
+            return new WP_Error('featured_image_failed', 'Failed to set featured image', array('status' => 500));
+        }
+
+        // Notify MagicProxy about the download for tracking (for Unsplash images)
+        if (!empty($download_location)) {
+            // Log the featured image download notification attempt
+            error_log('[MagicAssistant] Unsplash Featured Image Download Notification: ' . json_encode(array(
+                'download_location' => $download_location,
+                'unsplash_id' => $unsplash_id,
+                'photographer' => $photographer,
+                'attachment_id' => $attachment_id,
+                'post_id' => $post_id,
+                'post_title' => $post->post_title,
+                'image_url' => $image_url,
+                'timestamp' => current_time('mysql')
+            )));
+            
+            // Send to MagicProxy with retry mechanism (same as save_unsplash_image)
+            $magicproxy_url = 'https://proxy.magicplugins.io/api/proxy/unsplash/download';
+            $max_retries = 3;
+            $retry_count = 0;
+            $notification_success = false;
+            
+            while ($retry_count < $max_retries && !$notification_success) {
+                $response = wp_remote_post($magicproxy_url, array(
+                    'timeout' => 10,
+                    'blocking' => true, // Make blocking for retry logic
+                    'headers' => array(
+                        'Content-Type' => 'application/json',
+                    ),
+                    'body' => json_encode(array(
+                        'download_location' => $download_location,
+                        'unsplash_id' => $unsplash_id,
+                        'photographer' => $photographer,
+                        'site_url' => home_url(),
+                        'plugin_version' => defined('MAGICASSISTANT_VERSION') ? MAGICASSISTANT_VERSION : '1.0.0',
+                        'context' => 'featured_image',
+                        'post_id' => $post_id,
+                        'retry_attempt' => $retry_count + 1
+                    ))
+                ));
+                
+                if (is_wp_error($response)) {
+                    $retry_count++;
+                    error_log('[MagicAssistant] MagicProxy Featured Image Download Notification Error (Attempt ' . $retry_count . '/' . $max_retries . '): ' . $response->get_error_message());
+                    if ($retry_count < $max_retries) {
+                        sleep(1); // Wait 1 second before retry
+                    }
+                } else {
+                    $response_code = wp_remote_retrieve_response_code($response);
+                    if ($response_code >= 200 && $response_code < 300) {
+                        $notification_success = true;
+                        error_log('[MagicAssistant] MagicProxy Featured Image Download Notification Sent Successfully to: ' . $magicproxy_url . ' (Attempt ' . ($retry_count + 1) . ')');
+                    } else {
+                        $retry_count++;
+                        error_log('[MagicAssistant] MagicProxy Featured Image Download Notification Failed with HTTP ' . $response_code . ' (Attempt ' . $retry_count . '/' . $max_retries . ')');
+                        if ($retry_count < $max_retries) {
+                            sleep(1); // Wait 1 second before retry
+                        }
+                    }
+                }
+            }
+            
+            if (!$notification_success) {
+                error_log('[MagicAssistant] Failed to notify MagicProxy for featured image after ' . $max_retries . ' attempts - download tracking may be incomplete');
+            }
+        }
+
+        $url = wp_get_attachment_url($attachment_id);
+
+        return array(
+            'success' => true,
+            'attachment_id' => $attachment_id,
+            'url' => $url,
+            'post_id' => $post_id,
+            'post_title' => $post->post_title,
+            'message' => 'Image saved and set as featured image for "' . $post->post_title . '"'
+        );
+    }
+    
+    public function get_posts_and_pages($request) {
+        $posts = get_posts(array(
+            'post_type' => array('post', 'page'),
+            'post_status' => array('publish', 'draft', 'private'),
+            'numberposts' => 100,
+            'orderby' => 'date',
+            'order' => 'DESC'
+        ));
+        
+        $formatted_posts = array();
+        foreach ($posts as $post) {
+            // Only include posts the user can edit
+            if (current_user_can('edit_post', $post->ID)) {
+                $formatted_posts[] = array(
+                    'id' => $post->ID,
+                    'title' => $post->post_title ?: '(No title)',
+                    'type' => $post->post_type,
+                    'status' => $post->post_status,
+                    'date' => $post->post_date
+                );
+            }
+        }
+        
+        return array(
+            'success' => true,
+            'posts' => $formatted_posts
+        );
     }
 
 }

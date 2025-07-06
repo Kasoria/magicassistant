@@ -181,6 +181,12 @@ class MCP_Server {
                 case 'security/htaccess_protection':
                     $result = $this->security_htaccess_protection($params);
                     break;
+                case 'unsplash_search_images':
+                    $result = $this->unsplash_search_images($params);
+                    break;
+                case 'unsplash_get_random_images':
+                    $result = $this->unsplash_random_images($params);
+                    break;
                 default:
                     throw new Exception('Method not found: ' . $method);
             }
@@ -332,6 +338,9 @@ class MCP_Server {
         // Register SEO analysis tools
         $this->register_seo_analysis_tools();
         
+        // Register Unsplash tools for image search
+        $this->register_unsplash_tools();
+        
         // Register Database tools
         $this->register_database_tools();
 
@@ -444,6 +453,26 @@ class MCP_Server {
                 'required' => array('id')
             ),
             'callback' => array($this, 'wp_delete_media')
+        ));
+        
+        // wp_set_featured_image - Download an image from URL and set it as featured image for a post
+        $this->register_tool(array(
+            'name' => 'wp_set_featured_image',
+            'description' => 'Download an image from URL and set it as featured image for a post or page. Supports both regular images and Unsplash images with proper attribution.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'post_id' => array('type' => 'integer', 'description' => 'The ID of the post or page to set featured image for'),
+                    'image_url' => array('type' => 'string', 'description' => 'The URL of the image to download and set as featured'),
+                    'alt_text' => array('type' => 'string', 'description' => 'Alt text for the image'),
+                    'title' => array('type' => 'string', 'description' => 'Title for the image'),
+                    'unsplash_id' => array('type' => 'string', 'description' => 'Unsplash ID if this is an Unsplash image'),
+                    'photographer' => array('type' => 'string', 'description' => 'Photographer name if this is an Unsplash image'),
+                    'download_location' => array('type' => 'string', 'description' => 'Unsplash download location URL for tracking (if applicable)')
+                ),
+                'required' => array('post_id', 'image_url')
+            ),
+            'callback' => array($this, 'wp_set_featured_image')
         ));
         
         // wp_search_media - Search WordPress media items by title, caption, or description
@@ -1177,6 +1206,64 @@ class MCP_Server {
             'current_page' => $query_args['paged'],
             'search_term' => $search_term
         );
+    }
+    
+    public function wp_set_featured_image($args) {
+        $post_id = intval($args['post_id']);
+        $image_url = esc_url_raw($args['image_url']);
+        $alt_text = sanitize_text_field($args['alt_text'] ?? '');
+        $title = sanitize_text_field($args['title'] ?? $alt_text ?: 'AI Generated Image');
+        $unsplash_id = sanitize_text_field($args['unsplash_id'] ?? '');
+        $photographer = sanitize_text_field($args['photographer'] ?? '');
+        $download_location = esc_url_raw($args['download_location'] ?? '');
+        
+        if (empty($post_id) || empty($image_url)) {
+            throw new Exception('Post ID and image URL are required');
+        }
+        
+        // Check if post exists and user has permission to edit it
+        $post = get_post($post_id);
+        if (!$post) {
+            throw new Exception('Post not found');
+        }
+        
+        if (!current_user_can('edit_post', $post_id)) {
+            throw new Exception('You do not have permission to edit this post');
+        }
+        
+        // Use the AI_Provider method to handle the featured image setting
+        if ($this->ai_provider) {
+            $request_data = array(
+                'image_url' => $image_url,
+                'download_location' => $download_location,
+                'alt' => $alt_text,
+                'title' => $title,
+                'unsplash_id' => $unsplash_id,
+                'photographer' => $photographer,
+                'post_id' => $post_id
+            );
+            
+            // Create a mock request object
+            $mock_request = new class($request_data) {
+                private $data;
+                public function __construct($data) {
+                    $this->data = $data;
+                }
+                public function get_json_params() {
+                    return $this->data;
+                }
+            };
+            
+            $result = $this->ai_provider->save_as_featured_image($mock_request);
+            
+            if (is_wp_error($result)) {
+                throw new Exception($result->get_error_message());
+            }
+            
+            return $result;
+        } else {
+            throw new Exception('AI Provider not available');
+        }
     }
     
     // Custom Post Type Tool implementations
@@ -8609,6 +8696,43 @@ class MCP_Server {
     }
 
     /**
+     * Register Unsplash tools for image search via MagicProxy
+     */
+    private function register_unsplash_tools() {
+        require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'includes/Unsplash_Service.php';
+        $unsplash_service = new Unsplash_Service($this->ai_provider);
+
+        $this->register_tool(array(
+            'name' => 'unsplash_search_images',
+            'description' => 'Search images using the Unsplash API via MagicProxy',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'query' => array('type' => 'string', 'description' => 'Search query for images'),
+                    'per_page' => array('type' => 'integer', 'description' => 'Number of images per page', 'default' => 10),
+                    'orientation' => array('type' => 'string', 'description' => 'Image orientation (landscape, portrait, squarish)', 'enum' => array('landscape', 'portrait', 'squarish'), 'default' => 'landscape'),
+                ),
+                'required' => array('query')
+            ),
+            'callback' => array($unsplash_service, 'search_images')
+        ));
+
+        $this->register_tool(array(
+            'name' => 'unsplash_get_random_images',
+            'description' => 'Get random images from Unsplash API via MagicProxy',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'count' => array('type' => 'integer', 'description' => 'Number of random images to fetch', 'default' => 1),
+                    'orientation' => array('type' => 'string', 'description' => 'Image orientation (landscape, portrait, squarish)', 'enum' => array('landscape', 'portrait', 'squarish'), 'default' => 'landscape'),
+                    'query' => array('type' => 'string', 'description' => 'Optional search keyword'),
+                )
+            ),
+            'callback' => array($unsplash_service, 'get_random_images')
+        ));
+    }
+
+    /**
      * Register SEO analysis tools for direct site inspection
      */
     private function register_seo_analysis_tools() {
@@ -10206,8 +10330,79 @@ class MCP_Server {
         if (strpos($tool_name, 'security_') === 0) {
             return 'security';
         }
+
+        if (strpos($tool_name, 'unsplash_') === 0) {
+            return 'unsplash';
+        }
         
         return 'other';
+    }
+
+    /**
+     * Wrapper method for unsplash_search_images that formats response with photographer attribution
+     */
+    private function unsplash_search_images($params) {
+        require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'includes/Unsplash_Service.php';
+        $unsplash_service = new Unsplash_Service($this->ai_provider);
+        
+        $raw_result = $unsplash_service->search_images($params);
+        
+        // Format the response to include photographer attribution for the AI
+        if (isset($raw_result['results']) && is_array($raw_result['results'])) {
+            $formatted_response = "I found " . count($raw_result['results']) . " images";
+            if (isset($params['query'])) {
+                $formatted_response .= " for \"" . $params['query'] . "\"";
+            }
+            $formatted_response .= ":\n\n";
+            
+            foreach ($raw_result['results'] as $index => $image) {
+                $num = $index + 1;
+                $formatted_response .= "{$num}. " . ($image['alt'] ?: 'Image of ' . ($params['query'] ?? 'untitled')) . "\n\n";
+                $formatted_response .= "![" . ($image['alt'] ?: 'Image') . "](" . $image['url_small'] . ")\n\n";
+            }
+            
+            $formatted_response .= "Note: Photographer attribution is automatically handled by the interface - do not include additional photographer or attribution information in your response.";
+            
+            // Add the formatted response as a display_content field while preserving raw data
+            $raw_result['display_content'] = $formatted_response;
+        }
+        
+        return $raw_result;
+    }
+
+    /**
+     * Wrapper method for unsplash_random_images that formats response with photographer attribution
+     */
+    private function unsplash_random_images($params) {
+        require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'includes/Unsplash_Service.php';
+        $unsplash_service = new Unsplash_Service($this->ai_provider);
+        
+        $raw_result = $unsplash_service->get_random_images($params);
+        
+        // Format the response to include photographer attribution for the AI
+        if (is_array($raw_result)) {
+            // Handle both single image and array of images
+            $images = isset($raw_result[0]) ? $raw_result : array($raw_result);
+            
+            $count = count($images);
+            $formatted_response = "I found {$count} random image" . ($count > 1 ? 's' : '') . ":\n\n";
+            
+            foreach ($images as $index => $image) {
+                if ($count > 1) {
+                    $num = $index + 1;
+                    $formatted_response .= "{$num}. ";
+                }
+                $formatted_response .= ($image['alt'] ?: 'Image') . "\n\n";
+                $formatted_response .= "![" . ($image['alt'] ?: 'Image') . "](" . $image['url_small'] . ")\n\n";
+            }
+            
+            $formatted_response .= "Note: Photographer attribution is automatically handled by the interface - do not include additional photographer or attribution information in your response.";
+            
+            // Add the formatted response as a display_content field while preserving raw data
+            $raw_result['display_content'] = $formatted_response;
+        }
+        
+        return $raw_result;
     }
 }
 

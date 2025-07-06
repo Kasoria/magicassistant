@@ -473,7 +473,7 @@ class DB {
     /**
      * Save or update a chat session with new message
      */
-    public function save_chat_message($user_id, $session_id, $role, $content, $provider = null, $model = null, $tokens_used = null, $response_time = null, $cost = null) {
+    public function save_chat_message($user_id, $session_id, $role, $content, $provider = null, $model = null, $tokens_used = null, $response_time = null, $cost = null, $debug_tool_data = null, $agent_mode = null, $reasoning = null, $tool_calls_count = null) {
         global $wpdb;
         
         // Get existing session
@@ -506,6 +506,23 @@ class DB {
             'response_time' => $response_time,
             'cost' => $cost
         );
+        
+        // Add additional fields if they exist
+        if ($debug_tool_data !== null) {
+            $new_message['debug_tool_data'] = $debug_tool_data;
+        }
+        
+        if ($agent_mode !== null) {
+            $new_message['agent_mode'] = $agent_mode;
+        }
+        
+        if ($reasoning !== null) {
+            $new_message['reasoning'] = $reasoning;
+        }
+        
+        if ($tool_calls_count !== null) {
+            $new_message['tool_calls_count'] = $tool_calls_count;
+        }
         
         // Add user info for user messages
         if (!empty($user_info)) {
