@@ -1240,22 +1240,11 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                      (img.url_full && img.url_full.split('?')[0] === imageUrl.split('?')[0]) ||
                      (img.url_regular && img.url_regular.split('?')[0] === imageUrl.split('?')[0])
             })
-            if (matchingImage) {
-              // Log successful match for debugging
-              console.log('Found matching Unsplash image data:', {
-                imageUrl,
-                matchedImage: matchingImage,
-                downloadLocation: matchingImage.download_location
-              })
-              return matchingImage
-            }
           }
         }
       }
     }
     
-    // Log when no match is found for debugging
-    console.warn('No Unsplash image data found for URL:', imageUrl)
     return null
   }
 
