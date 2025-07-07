@@ -7,6 +7,12 @@ import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 
 const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) => {
+  // Helper function to add UTM parameters to Unsplash links
+  const addUnsplashUTMParams = (url) => {
+    if (!url) return url
+    const separator = url.includes('?') ? '&' : '?'
+    return `${url}${separator}utm_source=magicassistant&utm_medium=referral`
+  }
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
@@ -617,7 +623,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                       <span>
                         Photographer:{' '}
                         <a 
-                          href={imageData.photographer_url} 
+                          href={addUnsplashUTMParams(imageData.photographer_url)} 
                           target="_blank" 
                           rel="noopener noreferrer"
                           className="text-blue-600 hover:text-blue-800 underline"
@@ -628,7 +634,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                           <span>
                             {' • '}
                             <a 
-                              href={imageData.unsplash_link} 
+                              href={addUnsplashUTMParams(imageData.unsplash_link)} 
                               target="_blank" 
                               rel="noopener noreferrer"
                               className="text-blue-600 hover:text-blue-800 underline"
@@ -642,7 +648,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                     {!imageData.photographer && imageData.unsplash_link && (
                       <span>
                         <a 
-                          href={imageData.unsplash_link} 
+                          href={addUnsplashUTMParams(imageData.unsplash_link)} 
                           target="_blank" 
                           rel="noopener noreferrer"
                           className="text-blue-600 hover:text-blue-800 underline"
