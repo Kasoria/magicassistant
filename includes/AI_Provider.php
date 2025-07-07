@@ -14,6 +14,7 @@ class AI_Provider {
     private $settings;
     private $mcp_server;
     private $db;
+    private $current_session_id = null;
     // Add proxy endpoints for AI
     private $openai_proxy_url = 'https://proxy.magicplugins.io/api/proxy/openai';
     private $anthropic_proxy_url = 'https://proxy.magicplugins.io/api/proxy/anthropic';
@@ -342,6 +343,14 @@ class AI_Provider {
         $truncate_at_message = $data['truncate_at_message'] ?? null;
         $page_url = $data['page_url'] ?? '';
         $page_context = $data['page_context'] ?? null;
+        
+        // Reset tool discovery flag for new sessions
+        if ($this->current_session_id !== $session_id) {
+            $this->current_session_id = $session_id;
+            if ($this->mcp_server) {
+                $this->mcp_server->reset_tools_discovered();
+            }
+        }
         
         // Optional debug logging of user request
         $debug_request = array(
@@ -1135,17 +1144,28 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             return [];
         }
 
-        // Only return the dynamic tool discovery tool to reduce token usage
-        // The AI will call this tool first to get the complete list of available tools
         $registered_tools = $this->mcp_server->get_registered_tools();
         
-        // Fallback to all tools if dynamic discovery tool missing or already used
-        if (!isset($registered_tools['get_available_tools']) || ($this->mcp_server && $this->mcp_server->get_tools_discovered())) {
+        // Check if tools have been discovered via the discovery tool
+        if ($this->mcp_server->get_tools_discovered()) {
+            // After discovery, provide all tools but limit to stay under OpenAI's 128 tool limit
             $openai_tools = [];
+            $tool_count = 0;
+            $max_tools = 120; // Leave some buffer under 128
+            
             foreach ($registered_tools as $name => $tool) {
+                // Skip the discovery tool itself once it's been used
+                if ($name === 'get_available_tools') {
+                    continue;
+                }
+                
+                if ($tool_count >= $max_tools) {
+                    break; // Stop adding tools once we reach the limit
+                }
+                
                 $description = isset($tool['description']) ? mb_substr($tool['description'], 0, 160) : '';
-                $schema      = $tool['inputSchema'] ?? array('type' => 'object');
-                $schema      = $this->compress_tool_schema($schema);
+                $schema = $tool['inputSchema'] ?? array('type' => 'object');
+                $schema = $this->compress_tool_schema($schema);
 
                 $openai_tools[] = array(
                     'type'     => 'function',
@@ -1155,10 +1175,37 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         'parameters'  => $schema,
                     ),
                 );
+                $tool_count++;
+            }
+            return $openai_tools;
+        }
+        
+        // Check if the dynamic discovery tool exists
+        if (!isset($registered_tools['get_available_tools'])) {
+            // If discovery tool is missing, return a very limited set of essential tools
+            $essential_tools = ['wp_get_page', 'wp_get_post', 'wp_list_media', 'wp_posts_search', 'wp_pages_search'];
+            $openai_tools = [];
+            foreach ($essential_tools as $name) {
+                if (isset($registered_tools[$name])) {
+                    $tool = $registered_tools[$name];
+                    $description = isset($tool['description']) ? mb_substr($tool['description'], 0, 160) : '';
+                    $schema = $tool['inputSchema'] ?? array('type' => 'object');
+                    $schema = $this->compress_tool_schema($schema);
+
+                    $openai_tools[] = array(
+                        'type'     => 'function',
+                        'function' => array(
+                            'name'        => $name,
+                            'description' => $description,
+                            'parameters'  => $schema,
+                        ),
+                    );
+                }
             }
             return $openai_tools;
         }
 
+        // Initially, return only the discovery tool
         $tool = $registered_tools['get_available_tools'];
         $description = isset($tool['description']) ? $tool['description'] : '';
         $schema = $tool['inputSchema'] ?? array('type' => 'object');
@@ -1179,17 +1226,22 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             return [];
         }
 
-        // Only return the dynamic tool discovery tool to reduce token usage
-        // The AI will call this tool first to get the complete list of available tools
         $registered_tools = $this->mcp_server->get_registered_tools();
         
-        // Fallback to all tools if dynamic discovery tool missing or already used
-        if (!isset($registered_tools['get_available_tools']) || ($this->mcp_server && $this->mcp_server->get_tools_discovered())) {
+        // Check if tools have been discovered via the discovery tool
+        if ($this->mcp_server->get_tools_discovered()) {
+            // After discovery, provide all tools (Anthropic doesn't have the same 128 tool limit)
             $anthropic_tools = [];
+            
             foreach ($registered_tools as $name => $tool) {
+                // Skip the discovery tool itself once it's been used
+                if ($name === 'get_available_tools') {
+                    continue;
+                }
+                
                 $description = isset($tool['description']) ? mb_substr($tool['description'], 0, 160) : '';
-                $schema      = $tool['inputSchema'] ?? array('type' => 'object');
-                $schema      = $this->compress_tool_schema($schema);
+                $schema = $tool['inputSchema'] ?? array('type' => 'object');
+                $schema = $this->compress_tool_schema($schema);
 
                 $anthropic_tools[] = array(
                     'name'         => $name,
@@ -1199,7 +1251,30 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             }
             return $anthropic_tools;
         }
+        
+        // Check if the dynamic discovery tool exists
+        if (!isset($registered_tools['get_available_tools'])) {
+            // If discovery tool is missing, return a very limited set of essential tools
+            $essential_tools = ['wp_get_page', 'wp_get_post', 'wp_list_media', 'wp_posts_search', 'wp_pages_search'];
+            $anthropic_tools = [];
+            foreach ($essential_tools as $name) {
+                if (isset($registered_tools[$name])) {
+                    $tool = $registered_tools[$name];
+                    $description = isset($tool['description']) ? mb_substr($tool['description'], 0, 160) : '';
+                    $schema = $tool['inputSchema'] ?? array('type' => 'object');
+                    $schema = $this->compress_tool_schema($schema);
 
+                    $anthropic_tools[] = array(
+                        'name'         => $name,
+                        'description'  => $description,
+                        'input_schema' => $schema,
+                    );
+                }
+            }
+            return $anthropic_tools;
+        }
+
+        // Initially, return only the discovery tool
         $tool = $registered_tools['get_available_tools'];
         $description = isset($tool['description']) ? $tool['description'] : '';
         $schema = $tool['inputSchema'] ?? array('type' => 'object');

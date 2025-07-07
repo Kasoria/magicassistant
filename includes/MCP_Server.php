@@ -294,7 +294,7 @@ class MCP_Server {
                     'category' => array(
                         'type' => 'string',
                         'description' => 'Optional category filter (media, posts, pages, users, woocommerce, seo, etc.)',
-                        'enum' => array('all', 'media', 'posts', 'pages', 'users', 'woocommerce', 'seo', 'repository', 'rest_api', 'site_info', 'dataforseo', 'pagespeed', 'database', 'security')
+                        'enum' => array('all', 'media', 'posts', 'pages', 'meta_fields', 'users', 'woocommerce', 'seo', 'repository', 'rest_api', 'site_info', 'dataforseo', 'pagespeed', 'database', 'security')
                     )
                 ),
                 'additionalProperties' => false
@@ -313,6 +313,9 @@ class MCP_Server {
         
         // Register Posts Tools (from wordpress-mcp)
         $this->register_posts_tools();
+        
+        // Register Meta Field Tools
+        $this->register_meta_field_tools();
         
         // Register Settings Tools (from wordpress-mcp)
         $this->register_settings_tools();
@@ -7137,6 +7140,10 @@ class MCP_Server {
     public function get_tools_discovered() {
         return $this->tools_discovered;
     }
+    
+    public function reset_tools_discovered() {
+        $this->tools_discovered = false;
+    }
 
     private function register_rest_api_tools() {
         // list_api_functions - List all available WordPress REST API endpoints
@@ -10252,7 +10259,7 @@ class MCP_Server {
             'category_filter' => $category,
             'total_tools' => count($all_tools),
             'tools' => $all_tools,
-            'categories_available' => array('all', 'media', 'posts', 'pages', 'users', 'woocommerce', 'seo', 'repository', 'rest_api', 'site_info', 'dataforseo', 'pagespeed', 'database', 'security'),
+            'categories_available' => array('all', 'media', 'posts', 'pages', 'meta_fields', 'users', 'woocommerce', 'seo', 'repository', 'rest_api', 'site_info', 'dataforseo', 'pagespeed', 'database', 'security'),
             'message' => 'Complete list of available tools loaded. You can now use any of these tools to help the user with their WordPress site.'
         );
     }
@@ -10279,6 +10286,13 @@ class MCP_Server {
             strpos($tool_name, 'wp_add_page') === 0 || strpos($tool_name, 'wp_update_page') === 0 || 
             strpos($tool_name, 'wp_delete_page') === 0) {
             return 'pages';
+        }
+        
+        if (strpos($tool_name, 'wp_get_meta_field') === 0 || strpos($tool_name, 'wp_update_meta_field') === 0 || 
+            strpos($tool_name, 'wp_delete_meta_field') === 0 || strpos($tool_name, 'wp_list_meta_fields') === 0 || 
+            strpos($tool_name, 'wp_bulk_update_meta') === 0 || strpos($tool_name, 'wp_search_by_meta') === 0 || 
+            strpos($tool_name, 'wp_get_meta_keys') === 0) {
+            return 'meta_fields';
         }
         
         if (strpos($tool_name, 'wp_users_') === 0 || strpos($tool_name, 'wp_get_user') === 0 || 
@@ -10356,6 +10370,599 @@ class MCP_Server {
         $unsplash_service = new Unsplash_Service($this->ai_provider);
         
         return $unsplash_service->get_random_images($params);
+    }
+
+    // Meta Field Tool implementations
+    public function wp_get_meta_field($args) {
+        $post_id = intval($args['post_id']);
+        $meta_key = sanitize_text_field($args['meta_key']);
+        $single = isset($args['single']) ? (bool) $args['single'] : true;
+        
+        $post = get_post($post_id);
+        if (!$post) {
+            throw new Exception('Post not found: ' . $post_id);
+        }
+        
+        $meta_value = get_post_meta($post_id, $meta_key, $single);
+        
+        return array(
+            'post_id' => $post_id,
+            'meta_key' => $meta_key,
+            'meta_value' => $meta_value,
+            'single' => $single,
+            'post_type' => $post->post_type,
+            'post_title' => $post->post_title
+        );
+    }
+    
+    public function wp_update_meta_field($args) {
+        if (!current_user_can('edit_posts')) {
+            throw new Exception('Insufficient permissions to update meta fields');
+        }
+        
+        $post_id = intval($args['post_id']);
+        $meta_key = sanitize_text_field($args['meta_key']);
+        $meta_value = $args['meta_value'];
+        
+        $post = get_post($post_id);
+        if (!$post) {
+            throw new Exception('Post not found: ' . $post_id);
+        }
+        
+        // Sanitize meta value based on its type
+        if (is_array($meta_value)) {
+            $meta_value = array_map('sanitize_text_field', $meta_value);
+        } elseif (is_string($meta_value)) {
+            $meta_value = sanitize_text_field($meta_value);
+        }
+        
+        $result = update_post_meta($post_id, $meta_key, $meta_value);
+        
+        if ($result === false) {
+            throw new Exception('Failed to update meta field');
+        }
+        
+        return array(
+            'success' => true,
+            'post_id' => $post_id,
+            'meta_key' => $meta_key,
+            'meta_value' => $meta_value,
+            'post_type' => $post->post_type,
+            'post_title' => $post->post_title
+        );
+    }
+    
+    public function wp_delete_meta_field($args) {
+        if (!current_user_can('edit_posts')) {
+            throw new Exception('Insufficient permissions to delete meta fields');
+        }
+        
+        $post_id = intval($args['post_id']);
+        $meta_key = sanitize_text_field($args['meta_key']);
+        $meta_value = isset($args['meta_value']) ? $args['meta_value'] : '';
+        
+        $post = get_post($post_id);
+        if (!$post) {
+            throw new Exception('Post not found: ' . $post_id);
+        }
+        
+        $result = delete_post_meta($post_id, $meta_key, $meta_value);
+        
+        if ($result === false) {
+            throw new Exception('Failed to delete meta field');
+        }
+        
+        return array(
+            'success' => true,
+            'post_id' => $post_id,
+            'meta_key' => $meta_key,
+            'deleted' => true,
+            'post_type' => $post->post_type,
+            'post_title' => $post->post_title
+        );
+    }
+    
+    public function wp_list_meta_fields($args) {
+        global $wpdb;
+        
+        $post_id = intval($args['post_id']);
+        $include_private = isset($args['include_private']) ? (bool) $args['include_private'] : false;
+        
+        $post = get_post($post_id);
+        if (!$post) {
+            throw new Exception('Post not found: ' . $post_id);
+        }
+        
+        // Get ALL meta fields directly from the database to ensure we don't miss any
+        $query = $wpdb->prepare(
+            "SELECT meta_key, meta_value FROM {$wpdb->postmeta} WHERE post_id = %d ORDER BY meta_key",
+            $post_id
+        );
+        
+        $raw_meta = $wpdb->get_results($query);
+        
+        // Group meta fields by key (handle multiple values for the same key)
+        $meta_fields = array();
+        foreach ($raw_meta as $meta) {
+            if (!isset($meta_fields[$meta->meta_key])) {
+                $meta_fields[$meta->meta_key] = array();
+            }
+            $meta_fields[$meta->meta_key][] = maybe_unserialize($meta->meta_value);
+        }
+        
+        // Add ACF fields using their API to get formatted values
+        if (function_exists('get_fields')) {
+            $acf_fields = get_fields($post_id);
+            if ($acf_fields) {
+                foreach ($acf_fields as $key => $value) {
+                    // ACF fields might not be in postmeta if they use different storage
+                    // or if they have complex formatting, so we add them here
+                    if (!isset($meta_fields[$key])) {
+                        $meta_fields[$key] = array($value);
+                    } else {
+                        // Replace with ACF formatted value if it exists
+                        $meta_fields[$key] = array($value);
+                    }
+                }
+            }
+        }
+        
+        // Add Meta Box fields using their API
+        if (function_exists('rwmb_get_value')) {
+            // Get all registered meta boxes for this post type
+            $meta_boxes = apply_filters('rwmb_meta_boxes', array());
+            foreach ($meta_boxes as $meta_box) {
+                if (isset($meta_box['post_types']) && in_array($post->post_type, $meta_box['post_types'])) {
+                    if (isset($meta_box['fields'])) {
+                        foreach ($meta_box['fields'] as $field) {
+                            $field_id = $field['id'];
+                            $value = rwmb_get_value($field_id, array(), $post_id);
+                            if ($value !== '' && $value !== null) {
+                                $meta_fields[$field_id] = array($value);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Add CMB2 fields
+        if (class_exists('CMB2_Boxes')) {
+            $cmb2_boxes = CMB2_Boxes::get_all();
+            foreach ($cmb2_boxes as $cmb_id => $cmb) {
+                $object_types = $cmb->prop('object_types');
+                if ($object_types && in_array($post->post_type, $object_types)) {
+                    $fields = $cmb->prop('fields');
+                    foreach ($fields as $field_id => $field_args) {
+                        $value = get_post_meta($post_id, $field_id, true);
+                        if ($value !== '' && $value !== null) {
+                            if (!isset($meta_fields[$field_id])) {
+                                $meta_fields[$field_id] = array($value);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Add Pods fields if Pods is active
+        if (function_exists('pods')) {
+            try {
+                $pod = pods($post->post_type, $post_id);
+                if ($pod && $pod->exists()) {
+                    $pod_fields = $pod->fields();
+                    foreach ($pod_fields as $field_name => $field_data) {
+                        $value = $pod->field($field_name);
+                        if ($value !== '' && $value !== null && !isset($meta_fields[$field_name])) {
+                            $meta_fields[$field_name] = array($value);
+                        }
+                    }
+                }
+            } catch (Exception $e) {
+                // Ignore Pods errors
+            }
+        }
+        
+        // Filter out private meta fields if requested
+        if (!$include_private) {
+            $meta_fields = array_filter($meta_fields, function($key) {
+                return strpos($key, '_') !== 0;
+            }, ARRAY_FILTER_USE_KEY);
+        }
+        
+        // Format meta fields for better readability and expand special field types
+        $formatted_meta = array();
+        foreach ($meta_fields as $key => $values) {
+            $formatted_value = count($values) === 1 ? $values[0] : $values;
+            $field_type = 'text'; // Default type
+            $expanded_data = null;
+            
+            // Check if this is an image/attachment field
+            if (count($values) === 1 && is_numeric($values[0]) && $values[0] > 0) {
+                $attachment_id = intval($values[0]);
+                $post_type = get_post_type($attachment_id);
+                
+                if ($post_type === 'attachment') {
+                    $field_type = 'attachment';
+                    $attachment_data = array(
+                        'id' => $attachment_id,
+                        'url' => wp_get_attachment_url($attachment_id),
+                        'title' => get_the_title($attachment_id),
+                        'alt' => get_post_meta($attachment_id, '_wp_attachment_image_alt', true),
+                        'mime_type' => get_post_mime_type($attachment_id),
+                        'file_size' => size_format(filesize(get_attached_file($attachment_id))),
+                    );
+                    
+                    // Get image metadata if it's an image
+                    $mime_type = get_post_mime_type($attachment_id);
+                    if (strpos($mime_type, 'image/') === 0) {
+                        $field_type = 'image';
+                        $image_meta = wp_get_attachment_metadata($attachment_id);
+                        if ($image_meta) {
+                            $attachment_data['width'] = $image_meta['width'] ?? null;
+                            $attachment_data['height'] = $image_meta['height'] ?? null;
+                            $attachment_data['sizes'] = array();
+                            
+                            // Get different image sizes
+                            $image_sizes = get_intermediate_image_sizes();
+                            foreach ($image_sizes as $size) {
+                                $image_src = wp_get_attachment_image_src($attachment_id, $size);
+                                if ($image_src) {
+                                    $attachment_data['sizes'][$size] = array(
+                                        'url' => $image_src[0],
+                                        'width' => $image_src[1],
+                                        'height' => $image_src[2]
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    
+                    $expanded_data = $attachment_data;
+                }
+            }
+            
+            // Check if this might be a serialized array (like ACF repeater fields)
+            if (is_array($formatted_value) && count($formatted_value) > 1) {
+                $field_type = 'array';
+            } elseif (is_string($formatted_value) && (
+                strpos($formatted_value, 'a:') === 0 || 
+                strpos($formatted_value, 's:') === 0 || 
+                strpos($formatted_value, 'O:') === 0
+            )) {
+                $field_type = 'serialized';
+                // Try to unserialize for better display
+                $unserialized = maybe_unserialize($formatted_value);
+                if ($unserialized !== $formatted_value) {
+                    $expanded_data = $unserialized;
+                }
+            }
+            
+            // Check for URLs
+            if (is_string($formatted_value) && filter_var($formatted_value, FILTER_VALIDATE_URL)) {
+                $field_type = 'url';
+            }
+            
+            // Check for email addresses
+            if (is_string($formatted_value) && filter_var($formatted_value, FILTER_VALIDATE_EMAIL)) {
+                $field_type = 'email';
+            }
+            
+            // Check for dates (basic check for common date formats)
+            if (is_string($formatted_value) && preg_match('/^\d{4}-\d{2}-\d{2}/', $formatted_value)) {
+                $field_type = 'date';
+            }
+            
+            $field_data = array(
+                'meta_key' => $key,
+                'meta_value' => $formatted_value,
+                'field_type' => $field_type,
+                'is_private' => strpos($key, '_') === 0,
+                'count' => count($values)
+            );
+            
+            // Add expanded data if available
+            if ($expanded_data !== null) {
+                $field_data['expanded_data'] = $expanded_data;
+            }
+            
+            $formatted_meta[] = $field_data;
+        }
+        
+        return array(
+            'post_id' => $post_id,
+            'post_type' => $post->post_type,
+            'post_title' => $post->post_title,
+            'meta_fields' => $formatted_meta,
+            'total_fields' => count($formatted_meta),
+            'include_private' => $include_private
+        );
+    }
+    
+    public function wp_bulk_update_meta($args) {
+        if (!current_user_can('edit_posts')) {
+            throw new Exception('Insufficient permissions to update meta fields');
+        }
+        
+        $post_id = intval($args['post_id']);
+        $meta_updates = $args['meta_updates'];
+        
+        if (!is_array($meta_updates)) {
+            throw new Exception('meta_updates must be an array');
+        }
+        
+        $post = get_post($post_id);
+        if (!$post) {
+            throw new Exception('Post not found: ' . $post_id);
+        }
+        
+        $results = array();
+        $errors = array();
+        
+        foreach ($meta_updates as $update) {
+            if (!isset($update['meta_key']) || !isset($update['meta_value'])) {
+                $errors[] = 'Missing meta_key or meta_value in update';
+                continue;
+            }
+            
+            $meta_key = sanitize_text_field($update['meta_key']);
+            $meta_value = $update['meta_value'];
+            
+            // Sanitize meta value based on its type
+            if (is_array($meta_value)) {
+                $meta_value = array_map('sanitize_text_field', $meta_value);
+            } elseif (is_string($meta_value)) {
+                $meta_value = sanitize_text_field($meta_value);
+            }
+            
+            $result = update_post_meta($post_id, $meta_key, $meta_value);
+            
+            if ($result === false) {
+                $errors[] = 'Failed to update meta field: ' . $meta_key;
+            } else {
+                $results[] = array(
+                    'meta_key' => $meta_key,
+                    'meta_value' => $meta_value,
+                    'success' => true
+                );
+            }
+        }
+        
+        return array(
+            'post_id' => $post_id,
+            'post_type' => $post->post_type,
+            'post_title' => $post->post_title,
+            'results' => $results,
+            'errors' => $errors,
+            'total_updates' => count($meta_updates),
+            'successful_updates' => count($results),
+            'failed_updates' => count($errors)
+        );
+    }
+    
+    public function wp_search_by_meta($args) {
+        $meta_key = sanitize_text_field($args['meta_key']);
+        $meta_value = isset($args['meta_value']) ? $args['meta_value'] : '';
+        $meta_compare = isset($args['meta_compare']) ? sanitize_text_field($args['meta_compare']) : '=';
+        $post_type = isset($args['post_type']) ? sanitize_text_field($args['post_type']) : 'any';
+        $per_page = isset($args['per_page']) ? intval($args['per_page']) : 10;
+        $page = isset($args['page']) ? intval($args['page']) : 1;
+        
+        $query_args = array(
+            'post_type' => $post_type,
+            'posts_per_page' => $per_page,
+            'paged' => $page,
+            'meta_query' => array(
+                array(
+                    'key' => $meta_key,
+                    'value' => $meta_value,
+                    'compare' => $meta_compare
+                )
+            )
+        );
+        
+        // Remove meta value from query if searching for existence only
+        if ($meta_compare === 'EXISTS' || $meta_compare === 'NOT EXISTS') {
+            unset($query_args['meta_query'][0]['value']);
+        }
+        
+        $query = new WP_Query($query_args);
+        $posts = array();
+        
+        foreach ($query->posts as $post) {
+            $posts[] = array(
+                'id' => $post->ID,
+                'title' => $post->post_title,
+                'post_type' => $post->post_type,
+                'status' => $post->post_status,
+                'date' => $post->post_date,
+                'permalink' => get_permalink($post->ID),
+                'meta_value' => get_post_meta($post->ID, $meta_key, true)
+            );
+        }
+        
+        return array(
+            'posts' => $posts,
+            'total' => $query->found_posts,
+            'pages' => $query->max_num_pages,
+            'current_page' => $page,
+            'per_page' => $per_page,
+            'meta_key' => $meta_key,
+            'meta_value' => $meta_value,
+            'meta_compare' => $meta_compare,
+            'post_type' => $post_type
+        );
+    }
+    
+    public function wp_get_meta_keys($args) {
+        $post_type = isset($args['post_type']) ? sanitize_text_field($args['post_type']) : 'any';
+        $include_private = isset($args['include_private']) ? (bool) $args['include_private'] : false;
+        
+        global $wpdb;
+        
+        $where_clause = '';
+        if ($post_type !== 'any') {
+            $where_clause = $wpdb->prepare(' AND p.post_type = %s', $post_type);
+        }
+        
+        $query = "
+            SELECT DISTINCT pm.meta_key, COUNT(*) as count
+            FROM {$wpdb->postmeta} pm
+            JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+            WHERE p.post_status = 'publish'
+            {$where_clause}
+            GROUP BY pm.meta_key
+            ORDER BY count DESC, pm.meta_key ASC
+        ";
+        
+        $meta_keys = $wpdb->get_results($query);
+        
+        // Filter out private meta keys if requested
+        if (!$include_private) {
+            $meta_keys = array_filter($meta_keys, function($meta) {
+                return strpos($meta->meta_key, '_') !== 0;
+            });
+        }
+        
+        $formatted_keys = array();
+        foreach ($meta_keys as $meta) {
+            $formatted_keys[] = array(
+                'meta_key' => $meta->meta_key,
+                'usage_count' => intval($meta->count),
+                'is_private' => strpos($meta->meta_key, '_') === 0
+            );
+        }
+        
+        return array(
+            'meta_keys' => $formatted_keys,
+            'total_keys' => count($formatted_keys),
+            'post_type' => $post_type,
+            'include_private' => $include_private
+        );
+    }
+    
+    private function register_meta_field_tools() {
+        // wp_get_meta_field - Get a specific meta field value
+        $this->register_tool(array(
+            'name' => 'wp_get_meta_field',
+            'description' => 'Get a specific meta field value for a post, page, or custom post type by post ID and meta key',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'post_id' => array('type' => 'integer', 'description' => 'The ID of the post/page/custom post type'),
+                    'meta_key' => array('type' => 'string', 'description' => 'The meta field key to retrieve'),
+                    'single' => array('type' => 'boolean', 'description' => 'Whether to return a single value or array. Defaults to true.')
+                ),
+                'required' => array('post_id', 'meta_key')
+            ),
+            'callback' => array($this, 'wp_get_meta_field')
+        ));
+        
+        // wp_update_meta_field - Update or create a meta field
+        $this->register_tool(array(
+            'name' => 'wp_update_meta_field',
+            'description' => 'Update or create a meta field value for a post, page, or custom post type',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'post_id' => array('type' => 'integer', 'description' => 'The ID of the post/page/custom post type'),
+                    'meta_key' => array('type' => 'string', 'description' => 'The meta field key to update'),
+                    'meta_value' => array('type' => 'string', 'description' => 'The meta field value to set (can be string, number, array, or object)')
+                ),
+                'required' => array('post_id', 'meta_key', 'meta_value')
+            ),
+            'callback' => array($this, 'wp_update_meta_field')
+        ));
+        
+        // wp_delete_meta_field - Delete a meta field
+        $this->register_tool(array(
+            'name' => 'wp_delete_meta_field',
+            'description' => 'Delete a meta field from a post, page, or custom post type',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'post_id' => array('type' => 'integer', 'description' => 'The ID of the post/page/custom post type'),
+                    'meta_key' => array('type' => 'string', 'description' => 'The meta field key to delete'),
+                    'meta_value' => array('type' => 'string', 'description' => 'Optional. The specific meta value to delete. If not provided, all values for the key will be deleted.')
+                ),
+                'required' => array('post_id', 'meta_key')
+            ),
+            'callback' => array($this, 'wp_delete_meta_field')
+        ));
+        
+        // wp_list_meta_fields - List all meta fields for a post
+        $this->register_tool(array(
+            'name' => 'wp_list_meta_fields',
+            'description' => 'List all meta fields for a specific post, page, or custom post type',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'post_id' => array('type' => 'integer', 'description' => 'The ID of the post/page/custom post type'),
+                    'include_private' => array('type' => 'boolean', 'description' => 'Whether to include private meta fields (starting with _). Defaults to false.')
+                ),
+                'required' => array('post_id')
+            ),
+            'callback' => array($this, 'wp_list_meta_fields')
+        ));
+        
+        // wp_bulk_update_meta - Update multiple meta fields in one operation
+        $this->register_tool(array(
+            'name' => 'wp_bulk_update_meta',
+            'description' => 'Update multiple meta fields for a post, page, or custom post type in one operation',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'post_id' => array('type' => 'integer', 'description' => 'The ID of the post/page/custom post type'),
+                    'meta_updates' => array(
+                        'type' => 'array',
+                        'description' => 'Array of meta field updates',
+                        'items' => array(
+                            'type' => 'object',
+                            'properties' => array(
+                                'meta_key' => array('type' => 'string', 'description' => 'The meta field key'),
+                                'meta_value' => array('type' => 'string', 'description' => 'The meta field value')
+                            ),
+                            'required' => array('meta_key', 'meta_value')
+                        )
+                    )
+                ),
+                'required' => array('post_id', 'meta_updates')
+            ),
+            'callback' => array($this, 'wp_bulk_update_meta')
+        ));
+        
+        // wp_search_by_meta - Search posts by meta field values
+        $this->register_tool(array(
+            'name' => 'wp_search_by_meta',
+            'description' => 'Search posts, pages, or custom post types by meta field values',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'meta_key' => array('type' => 'string', 'description' => 'The meta field key to search by'),
+                    'meta_value' => array('type' => 'string', 'description' => 'The meta field value to search for'),
+                    'meta_compare' => array('type' => 'string', 'description' => 'Comparison operator: =, !=, >, >=, <, <=, LIKE, NOT LIKE, IN, NOT IN, BETWEEN, NOT BETWEEN, EXISTS, NOT EXISTS. Defaults to =.'),
+                    'post_type' => array('type' => 'string', 'description' => 'Post type to search in. Defaults to any.'),
+                    'per_page' => array('type' => 'integer', 'description' => 'Number of results per page. Defaults to 10.'),
+                    'page' => array('type' => 'integer', 'description' => 'Page number. Defaults to 1.')
+                ),
+                'required' => array('meta_key')
+            ),
+            'callback' => array($this, 'wp_search_by_meta')
+        ));
+        
+        // wp_get_meta_keys - Get all available meta keys for a post type
+        $this->register_tool(array(
+            'name' => 'wp_get_meta_keys',
+            'description' => 'Get all available meta keys for a specific post type or all post types',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'post_type' => array('type' => 'string', 'description' => 'Post type to get meta keys for. Use "any" for all post types. Defaults to any.'),
+                    'include_private' => array('type' => 'boolean', 'description' => 'Whether to include private meta keys (starting with _). Defaults to false.')
+                )
+            ),
+            'callback' => array($this, 'wp_get_meta_keys')
+        ));
     }
 }
 
