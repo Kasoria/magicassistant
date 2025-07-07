@@ -389,6 +389,17 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     { id: 'sharing', label: 'Shared Conversations', icon: 'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z' }
   ]
 
+  const getTabColors = (tabId) => {
+    const colors = {
+      'general': { border: 'border-blue-500', text: 'text-blue-600', darkText: 'dark:text-blue-400' },
+      'ai': { border: 'border-green-500', text: 'text-green-600', darkText: 'dark:text-green-400' },
+      'seo': { border: 'border-purple-500', text: 'text-purple-600', darkText: 'dark:text-purple-400' },
+      'floating-chat': { border: 'border-orange-500', text: 'text-orange-600', darkText: 'dark:text-orange-400' },
+      'sharing': { border: 'border-pink-500', text: 'text-pink-600', darkText: 'dark:text-pink-400' }
+    }
+    return colors[tabId] || { border: 'border-brand-accent', text: 'text-brand-accent', darkText: 'dark:text-brand-accent' }
+  }
+
   const renderTabContent = () => {
     switch (activeTab) {
       case 'general':
@@ -1890,31 +1901,34 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
       {/* Tab Navigation */}
       <div className="border-b border-gray-200 dark:border-gray-700">
         <nav className="-mb-px flex space-x-8">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
-                activeTab === tab.id
-                  ? 'border-brand-accent text-brand-accent dark:text-brand-accent'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
-              }`}
-            >
-              <svg
-                className={`w-5 h-5 mr-2 ${
+          {tabs.map((tab) => {
+            const colors = getTabColors(tab.id)
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
                   activeTab === tab.id
-                    ? 'text-brand-accent'
-                    : 'text-gray-400'
+                    ? `${colors.border} ${colors.text} ${colors.darkText}`
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
                 }`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
               >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={tab.icon} />
-              </svg>
-              {tab.label}
-            </button>
-          ))}
+                <svg
+                  className={`w-5 h-5 mr-2 ${
+                    activeTab === tab.id
+                      ? `${colors.text} ${colors.darkText}`
+                      : 'text-gray-400'
+                  }`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={tab.icon} />
+                </svg>
+                {tab.label}
+              </button>
+            )
+          })}
         </nav>
       </div>
 
