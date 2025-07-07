@@ -558,15 +558,6 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
               // Ensure we have the correct download_location for this specific image
               const downloadLocation = imageData?.download_location || ''
               
-              // Log the download action for debugging
-              console.log('Saving Unsplash image:', {
-                src,
-                downloadLocation,
-                effectiveAlt,
-                imageId: imageData?.id || '',
-                photographer: imageData?.photographer || ''
-              })
-              
               if (!downloadLocation) {
                 console.warn('No download_location found for image:', src)
                 showError('Unable to find download location for this image. Image metadata may be missing.')
@@ -1240,11 +1231,16 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                      (img.url_full && img.url_full.split('?')[0] === imageUrl.split('?')[0]) ||
                      (img.url_regular && img.url_regular.split('?')[0] === imageUrl.split('?')[0])
             })
+            if (matchingImage) {
+              return matchingImage
+            }
           }
         }
       }
     }
     
+    // Log when no match is found for debugging
+    console.warn('No Unsplash image data found for URL:', imageUrl)
     return null
   }
 
