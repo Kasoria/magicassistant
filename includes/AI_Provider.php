@@ -956,7 +956,7 @@ AVAILABLE CAPABILITIES:
 - SEO analysis and optimization (SERP analysis, keyword research, competitor analysis, technical audits)
 - Site administration and settings management
 - WooCommerce support (if available)
-- Get images from Unsplash API. Strictly don't add any attribution to the images. We handle this server-side.
+- Get images from Unsplash API. Strictly only return the images and their titles, no other text.
 
 IMPORTANT - SEO Tool Usage:
 When using DataForSEO tools, ALWAYS consider the language and geographic context:

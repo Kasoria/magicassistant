@@ -10339,70 +10339,23 @@ class MCP_Server {
     }
 
     /**
-     * Wrapper method for unsplash_search_images that formats response with photographer attribution
+     * Wrapper method for unsplash_search_images
      */
     private function unsplash_search_images($params) {
         require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'includes/Unsplash_Service.php';
         $unsplash_service = new Unsplash_Service($this->ai_provider);
         
-        $raw_result = $unsplash_service->search_images($params);
-        
-        // Format the response to include photographer attribution for the AI
-        if (isset($raw_result['results']) && is_array($raw_result['results'])) {
-            $formatted_response = "I found " . count($raw_result['results']) . " images";
-            if (isset($params['query'])) {
-                $formatted_response .= " for \"" . $params['query'] . "\"";
-            }
-            $formatted_response .= ":\n\n";
-            
-            foreach ($raw_result['results'] as $index => $image) {
-                $num = $index + 1;
-                $formatted_response .= "{$num}. " . ($image['alt'] ?: 'Image of ' . ($params['query'] ?? 'untitled')) . "\n\n";
-                $formatted_response .= "![" . ($image['alt'] ?: 'Image') . "](" . $image['url_small'] . ")\n\n";
-            }
-            
-            $formatted_response .= "Note: Photographer attribution is automatically handled by the interface - do not include additional photographer or attribution information in your response.";
-            
-            // Add the formatted response as a display_content field while preserving raw data
-            $raw_result['display_content'] = $formatted_response;
-        }
-        
-        return $raw_result;
+        return $unsplash_service->search_images($params);
     }
 
     /**
-     * Wrapper method for unsplash_random_images that formats response with photographer attribution
+     * Wrapper method for unsplash_random_images
      */
     private function unsplash_random_images($params) {
         require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'includes/Unsplash_Service.php';
         $unsplash_service = new Unsplash_Service($this->ai_provider);
         
-        $raw_result = $unsplash_service->get_random_images($params);
-        
-        // Format the response to include photographer attribution for the AI
-        if (is_array($raw_result)) {
-            // Handle both single image and array of images
-            $images = isset($raw_result[0]) ? $raw_result : array($raw_result);
-            
-            $count = count($images);
-            $formatted_response = "I found {$count} random image" . ($count > 1 ? 's' : '') . ":\n\n";
-            
-            foreach ($images as $index => $image) {
-                if ($count > 1) {
-                    $num = $index + 1;
-                    $formatted_response .= "{$num}. ";
-                }
-                $formatted_response .= ($image['alt'] ?: 'Image') . "\n\n";
-                $formatted_response .= "![" . ($image['alt'] ?: 'Image') . "](" . $image['url_small'] . ")\n\n";
-            }
-            
-            $formatted_response .= "Note: Photographer attribution is automatically handled by the interface - do not include additional photographer or attribution information in your response.";
-            
-            // Add the formatted response as a display_content field while preserving raw data
-            $raw_result['display_content'] = $formatted_response;
-        }
-        
-        return $raw_result;
+        return $unsplash_service->get_random_images($params);
     }
 }
 
