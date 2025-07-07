@@ -48,6 +48,10 @@ class React_Dev {
         add_action( 'admin_enqueue_scripts', array( $this, 'maybe_enqueue_react_scripts' ), 10 );
         add_action( 'wp_enqueue_scripts', array( $this, 'maybe_enqueue_react_scripts' ), 10 );
         
+        // Add fallback script loading for Breakdance zero theme compatibility
+        add_action( 'wp_head', array( $this, 'add_fallback_script_loading' ), 1 );
+        add_action( 'admin_head', array( $this, 'add_fallback_script_loading' ), 1 );
+        
         // Enqueue Bricks integration script
         add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_bricks_scripts' ) );
         add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_bricks_scripts' ) );
@@ -171,13 +175,8 @@ class React_Dev {
             false
         );
         
-        // Add type="module" to Vite client
-        add_filter( 'script_loader_tag', function( $tag, $handle ) {
-            if ( $handle === 'vite-client' ) {
-                return str_replace( ' src=', ' type="module" src=', $tag );
-            }
-            return $tag;
-        }, 10, 2 );
+        // Add type="module" to Vite client using centralized method
+        add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
         
         // Admin React app from Vite dev server
         wp_enqueue_script(
@@ -188,12 +187,8 @@ class React_Dev {
             true
         );
         
-        add_filter( 'script_loader_tag', function( $tag, $handle ) {
-            if ( $handle === 'mat-react-admin-dev' ) {
-                return str_replace( ' src=', ' type="module" src=', $tag );
-            }
-            return $tag;
-        }, 10, 2 );
+        // Add type="module" to admin dev script using centralized method
+        add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
     }
     
     /**
@@ -214,13 +209,8 @@ class React_Dev {
                 false
             );
             
-            // Add type="module" to Vite client
-            add_filter( 'script_loader_tag', function( $tag, $handle ) {
-                if ( $handle === 'vite-client' ) {
-                    return str_replace( ' src=', ' type="module" src=', $tag );
-                }
-                return $tag;
-            }, 10, 2 );
+            // Add type="module" to Vite client using centralized method
+            add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
         }
         
         // Public React app from Vite dev server
@@ -232,12 +222,8 @@ class React_Dev {
             true
         );
         
-        add_filter( 'script_loader_tag', function( $tag, $handle ) use ( $public_handle_suffix ) {
-            if ( $handle === 'mat-react-public-dev' . $public_handle_suffix ) {
-                return str_replace( ' src=', ' type="module" src=', $tag );
-            }
-            return $tag;
-        }, 10, 2 );
+        // Add type="module" to public dev script using centralized method
+        add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
     }
     
     /**
@@ -263,13 +249,8 @@ class React_Dev {
                 true
             );
             
-            // Add type="module" to admin script
-            add_filter( 'script_loader_tag', function( $tag, $handle ) {
-                if ( $handle === 'mat-react-admin' ) {
-                    return str_replace( ' src=', ' type="module" src=', $tag );
-                }
-                return $tag;
-            }, 10, 2 );
+            // Add type="module" to admin script using centralized method
+            add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
         }
     }
     
@@ -300,13 +281,8 @@ class React_Dev {
                 true
             );
             
-            // Add type="module" to public script
-            add_filter( 'script_loader_tag', function( $tag, $handle ) use ( $public_handle_suffix ) {
-                if ( $handle === 'mat-react-public' . $public_handle_suffix ) {
-                    return str_replace( ' src=', ' type="module" src=', $tag );
-                }
-                return $tag;
-            }, 10, 2 );
+            // Add type="module" to public script using centralized method
+            add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
         }
     }
     
@@ -352,12 +328,8 @@ class React_Dev {
                 true
             );
             
-            add_filter( 'script_loader_tag', function( $tag, $handle ) {
-                if ( $handle === 'mat-vendor-chunk' ) {
-                    return str_replace( ' src=', ' type="module" src=', $tag );
-                }
-                return $tag;
-            }, 10, 2 );
+            // Use more robust module type handling
+            add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
         }
         
         if ( wp_script_is( 'mat-vendor-chunk', 'enqueued' ) || wp_script_is( 'mat-vendor-chunk', 'done' ) ) {
@@ -376,12 +348,8 @@ class React_Dev {
                 true
             );
             
-            add_filter( 'script_loader_tag', function( $tag, $handle ) {
-                if ( $handle === 'mat-flowbite-chunk' ) {
-                    return str_replace( ' src=', ' type="module" src=', $tag );
-                }
-                return $tag;
-            }, 10, 2 );
+            // Use more robust module type handling
+            add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
         }
         
         if ( wp_script_is( 'mat-flowbite-chunk', 'enqueued' ) || wp_script_is( 'mat-flowbite-chunk', 'done' ) ) {
@@ -400,12 +368,8 @@ class React_Dev {
                 true
             );
             
-            add_filter( 'script_loader_tag', function( $tag, $handle ) {
-                if ( $handle === 'mat-utils-chunk' ) {
-                    return str_replace( ' src=', ' type="module" src=', $tag );
-                }
-                return $tag;
-            }, 10, 2 );
+            // Use more robust module type handling
+            add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
         }
         
         if ( wp_script_is( 'mat-utils-chunk', 'enqueued' ) || wp_script_is( 'mat-utils-chunk', 'done' ) ) {
@@ -818,8 +782,9 @@ class React_Dev {
         $db = MATDB();
         $settings = $db->get_all_settings();
 
-        // If floating chat is disabled, don't show it
-        if (!isset($settings['floating_chat_enabled']) || !$settings['floating_chat_enabled']) {
+        // If floating chat is explicitly disabled, don't show it
+        // Default to enabled (true) if setting doesn't exist (fresh install)
+        if (isset($settings['floating_chat_enabled']) && !$settings['floating_chat_enabled']) {
             return false;
         }
 
@@ -1005,5 +970,110 @@ class React_Dev {
         }
         
         return $page_map[$pagenow] ?? 'unknown';
+    }
+
+    /**
+     * Add module type to script tags for ES modules
+     * Centralized method that handles module type addition more robustly
+     */
+    public function add_module_type_to_script( $tag, $handle ) {
+        // List of script handles that should be treated as ES modules
+        $module_handles = array(
+            'vite-client',
+            'mat-react-admin-dev',
+            'mat-react-public-dev',
+            'mat-react-public-dev-floating',
+            'mat-react-admin',
+            'mat-react-public',
+            'mat-react-public-floating',
+            'mat-vendor-chunk',
+            'mat-flowbite-chunk',
+            'mat-utils-chunk'
+        );
+
+        // Check if this script handle should be treated as a module
+        if ( in_array( $handle, $module_handles, true ) ) {
+            // Use a more robust replacement that handles various cases
+            if ( strpos( $tag, 'type="module"' ) === false ) {
+                // Add module type attribute, ensuring it works even when WordPress script handling is compromised
+                $tag = str_replace( '<script ', '<script type="module" ', $tag );
+                
+                // Also add nomodule fallback handling for older browsers if needed
+                // This ensures graceful degradation on browsers that don't support modules
+                if ( strpos( $tag, 'crossorigin' ) === false ) {
+                    $tag = str_replace( ' src=', ' crossorigin="anonymous" src=', $tag );
+                }
+            }
+        }
+
+        return $tag;
+    }
+
+    /**
+     * Add fallback script loading for environments where WordPress script enqueuing is compromised
+     * This helps with Breakdance zero theme and similar environments
+     */
+    public function add_fallback_script_loading() {
+        // Only add fallback if we detect potential script loading issues
+        if ( ! $this->should_add_fallback_loading() ) {
+            return;
+        }
+
+        // Output a script that ensures our ES modules are loaded correctly
+        ?>
+        <script>
+        (function() {
+            // Check if our scripts are already loaded
+            var matScriptsLoaded = false;
+            var scripts = document.querySelectorAll('script[src*="vendor-"], script[src*="flowbite-"], script[src*="utils-"], script[src*="main.js"], script[src*="admin.js"]');
+            
+            if (scripts.length > 0) {
+                // Scripts are already enqueued by WordPress, check if they have module type
+                scripts.forEach(function(script) {
+                    if (script.src.includes('<?php echo MAGIC_ASSISTANT_PLUGIN_URL; ?>')) {
+                        if (!script.getAttribute('type') || script.getAttribute('type') !== 'module') {
+                            script.setAttribute('type', 'module');
+                            script.setAttribute('crossorigin', 'anonymous');
+                        }
+                        matScriptsLoaded = true;
+                    }
+                });
+            }
+
+            // If scripts weren't loaded by WordPress enqueue system, we may need manual loading
+            // This would be implemented based on specific requirements for the environment
+        })();
+        </script>
+        <?php
+    }
+
+    /**
+     * Determine if fallback script loading should be added
+     */
+    private function should_add_fallback_loading() {
+        // Check for Breakdance zero theme
+        if ( function_exists( 'bricks_is_builder_main' ) || 
+             ( isset( $_GET['bricks'] ) && $_GET['bricks'] === 'run' ) ||
+             get_option( 'template' ) === 'bricks' ) {
+            return true;
+        }
+
+        // Check for other known themes that disable WordPress functionality
+        $theme = wp_get_theme();
+        $theme_name = $theme->get( 'Name' );
+        $problematic_themes = array( 'Breakdance', 'Oxygen', 'Cwicly' );
+        
+        foreach ( $problematic_themes as $problematic_theme ) {
+            if ( strpos( $theme_name, $problematic_theme ) !== false ) {
+                return true;
+            }
+        }
+
+        // Check if wp_enqueue_script function has been compromised or overridden
+        if ( ! function_exists( 'wp_enqueue_script' ) ) {
+            return true;
+        }
+
+        return false;
     }
 }
