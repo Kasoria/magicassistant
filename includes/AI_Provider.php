@@ -4077,6 +4077,12 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 $status['tier'] = $tier;
             }
             
+            // Get DataForSEO balance from MagicProxy
+            $dataforseo_balance = $this->get_dataforseo_balance_from_magicproxy( $license_key );
+            if ( $dataforseo_balance !== null ) {
+                $status['dataForSEOBalance'] = $dataforseo_balance;
+            }
+            
             // Fetch comprehensive limit information from MagicProxy (credits or requests)
             $comprehensive_limits = $this->get_comprehensive_limits_from_magicproxy( $license_key );
             if ( $comprehensive_limits ) {
@@ -4157,18 +4163,27 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 // Get tier from MagicProxy using the license key
                 $tier = $this->get_tier_from_magicproxy( $licensing_client->settings()->license_key );
                 
+                // Get DataForSEO balance from MagicProxy
+                $dataforseo_balance = $this->get_dataforseo_balance_from_magicproxy( $licensing_client->settings()->license_key );
+                
+                $response_data = array(
+                    'is_active' => true,
+                    'activation_id' => $licensing_client->settings()->activation_id,
+                    'license_key' => $this->mask_license_key($licensing_client->settings()->license_key),
+                    'site_name' => get_bloginfo('name'),
+                    'activated_at' => $activated_at_formatted,
+                    'activated_at_raw' => $activated_at_raw, // Keep raw value for debugging
+                    'tier' => $tier
+                );
+                
+                if ( $dataforseo_balance !== null ) {
+                    $response_data['dataForSEOBalance'] = $dataforseo_balance;
+                }
+                
                 return array(
                     'success' => true,
                     'message' => 'License activated successfully',
-                    'data' => array(
-                        'is_active' => true,
-                        'activation_id' => $licensing_client->settings()->activation_id,
-                        'license_key' => $this->mask_license_key($licensing_client->settings()->license_key),
-                        'site_name' => get_bloginfo('name'),
-                        'activated_at' => $activated_at_formatted,
-                        'activated_at_raw' => $activated_at_raw, // Keep raw value for debugging
-                        'tier' => $tier
-                    )
+                    'data' => $response_data
                 );
             } else {
                 // Handle WP_Error or other error responses
@@ -4502,6 +4517,55 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     'remaining' => $data['credits_remaining'] ?? $data['remaining'],
                     'limit'     => $data['credit_limit'] ?? $data['limit'] ?? null,
                 );
+            }
+
+            return null;
+        } catch ( Exception $e ) {
+            return null;
+        }
+    }
+
+    /**
+     * Get DataForSEO balance information for this license from MagicProxy
+     *
+     * @param string $license_key
+     * @return float|null Balance amount or null on failure
+     */
+    private function get_dataforseo_balance_from_magicproxy( $license_key ) {
+        if ( empty( $license_key ) ) {
+            return null;
+        }
+
+        try {
+            $response = wp_remote_get( 'https://proxy.magicplugins.io/api/proxy/license-info', array(
+                'headers' => array(
+                    'X-License-Key' => $license_key,
+                ),
+                'timeout' => 10,
+            ) );
+
+            if ( is_wp_error( $response ) ) {
+                return null;
+            }
+
+            $response_code = wp_remote_retrieve_response_code( $response );
+            if ( $response_code !== 200 ) {
+                return null;
+            }
+
+            $body = wp_remote_retrieve_body( $response );
+            $data = json_decode( $body, true );
+
+            if ( json_last_error() !== JSON_ERROR_NONE || ! is_array( $data ) ) {
+                return null;
+            }
+
+            // Debug: Log the full response to see what we're getting
+            error_log( 'DataForSEO proxy response: ' . print_r( $data, true ) );
+
+            // Check for DataForSEO balance in the response
+            if ( isset( $data['dataForSEO']['available'] ) ) {
+                return floatval( $data['dataForSEO']['available'] );
             }
 
             return null;
