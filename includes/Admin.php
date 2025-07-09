@@ -31,6 +31,7 @@ class Admin {
     add_action('wp_ajax_mat_dismiss_tour_permanently', array($this, 'dismiss_tour_permanently'));
     add_action('wp_ajax_mat_mark_first_visit_complete', array($this, 'mark_first_visit_complete'));
     add_action('wp_ajax_mat_reset_all_tours', array($this, 'reset_all_tours'));
+    add_action('wp_ajax_mat_reenable_tours', array($this, 'reenable_tours'));
   }
   
   public function add_admin_menu() {
@@ -996,6 +997,38 @@ class Admin {
       'success' => true,
       'data' => array(
         'message' => __('All tours reset successfully.', 'magic-assistant')
+      )
+    )));
+  }
+
+  /**
+   * AJAX handler to re-enable tours for current user
+   */
+  public function reenable_tours() {
+    // Check nonce for security
+    if (!wp_verify_nonce($_POST['_ajax_nonce'], 'mat_ajax_nonce')) {
+      wp_die(json_encode(array(
+        'success' => false,
+        'data' => __('Invalid nonce.', 'magic-assistant')
+      )));
+    }
+    
+    // Check if user is logged in
+    if (!is_user_logged_in()) {
+      wp_die(json_encode(array(
+        'success' => false,
+        'data' => __('You must be logged in to re-enable tours.', 'magic-assistant')
+      )));
+    }
+    
+    // Remove permanently dismissed flag for this user
+    $user_id = get_current_user_id();
+    delete_user_meta($user_id, 'mat_tour_dismissed_permanently');
+    
+    wp_die(json_encode(array(
+      'success' => true,
+      'data' => array(
+        'message' => __('Tours re-enabled successfully.', 'magic-assistant')
       )
     )));
   }
