@@ -1470,6 +1470,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'current_credits' => isset($this->settings['current_credits']) ? $this->settings['current_credits'] : null,
             'floating_chat_button_color' => $this->settings['floating_chat_button_color'] ?? 'blue',
             'floating_chat_button_icon'  => $this->settings['floating_chat_button_icon']  ?? 'chat',
+            'floating_chat_custom_color' => $this->settings['floating_chat_custom_color'] ?? '',
+            'floating_chat_custom_icon'  => $this->settings['floating_chat_custom_icon']  ?? '',
         );
         
         // Add comprehensive limit information if available
@@ -1749,6 +1751,14 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
         if (isset($data['floating_chat_button_icon'])) {
             $this->db->save_setting('floating_chat_button_icon', sanitize_text_field($data['floating_chat_button_icon']));
+        }
+
+        if (isset($data['floating_chat_custom_color'])) {
+            $this->db->save_setting('floating_chat_custom_color', sanitize_text_field($data['floating_chat_custom_color']));
+        }
+
+        if (isset($data['floating_chat_custom_icon'])) {
+            $this->db->save_setting('floating_chat_custom_icon', sanitize_text_field($data['floating_chat_custom_icon']));
         }
         
         return array('success' => true);

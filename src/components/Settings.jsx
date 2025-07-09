@@ -29,6 +29,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     licenseCompleted: false,
     toursHidden: false
   })
+  const [customColor, setCustomColor] = useState('')
+  const [customIcon, setCustomIcon] = useState('')
   const { showSuccess, showWarning, showError } = useToast()
 
   // Update tour status when component mounts or tour functions change
@@ -86,6 +88,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         floating_chat_specific_admin_pages: settings.floating_chat_specific_admin_pages || [],
         floating_chat_button_color: settings.floating_chat_button_color || 'blue',
         floating_chat_button_icon: settings.floating_chat_button_icon || 'chat',
+        floating_chat_custom_color: settings.floating_chat_custom_color || '',
+        floating_chat_custom_icon: settings.floating_chat_custom_icon || '',
         enable_sql_queries: settings.enable_sql_queries === true,
         enable_dangerous_sql_queries: settings.enable_dangerous_sql_queries === true,
         debug_view_enabled: settings.debug_view_enabled === true,
@@ -384,6 +388,41 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     }
   }
 
+  const handleReenableTours = async () => {
+    const confirmed = window.confirm('Are you sure you want to re-enable tours? This will allow tours to be shown again.')
+    if (!confirmed) return
+
+    try {
+      const formData = new FormData()
+      formData.append('action', 'mat_reenable_tours')
+      formData.append('_ajax_nonce', window.matAdminData?.nonces?.mat_ajax || '')
+
+      const response = await fetch(window.matAdminData?.ajaxurl, {
+        method: 'POST',
+        body: formData
+      })
+
+      const result = await response.json()
+      if (result.success) {
+        // Update local tour status immediately
+        setTourStatus(prev => ({
+          ...prev,
+          toursHidden: false
+        }))
+        // Also update the global admin data
+        if (window.matAdminData?.tourDismissed) {
+          window.matAdminData.tourDismissed.permanently = false
+        }
+        showSuccess('Tours re-enabled successfully! You will now see tour prompts again.')
+      } else {
+        showError('Failed to re-enable tours.')
+      }
+    } catch (error) {
+      console.error('Re-enable tours error:', error)
+      showError('Failed to re-enable tours. Please try again.')
+    }
+  }
+
   const getTabSettings = () => {
     switch (activeTab) {
       case 'general':
@@ -431,6 +470,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           floating_chat_specific_admin_pages: localSettings.floating_chat_specific_admin_pages,
           floating_chat_button_color: localSettings.floating_chat_button_color,
           floating_chat_button_icon: localSettings.floating_chat_button_icon,
+          floating_chat_custom_color: localSettings.floating_chat_custom_color,
+          floating_chat_custom_icon: localSettings.floating_chat_custom_icon,
         }
       default:
         return {}
@@ -731,56 +772,71 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
               </div>
 
               {/* Tour Actions */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                  <div>
-                    <h5 className="font-medium text-brand-dark dark:text-white">Replay License Tour</h5>
-                    <p className="text-sm text-gray-600 dark:text-gray-300">
-                      Restart the license activation tour to see it again
-                    </p>
-                  </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                  <h5 className="font-medium text-brand-dark dark:text-white mb-2">Replay License Tour</h5>
+                  <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+                    Restart the license activation tour to see it again
+                  </p>
                   <Button
                     size="sm"
                     onClick={handleResetTour}
                     disabled={isResettingTour}
+                    className="w-full"
                   >
                     {isResettingTour ? 'Resetting...' : 'Replay Tour'}
                   </Button>
                 </div>
 
-                <div className="flex items-center justify-between p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-                  <div>
-                    <h5 className="font-medium text-brand-dark dark:text-white">Reset All Tours</h5>
-                    <p className="text-sm text-gray-600 dark:text-gray-300">
-                      Reset all tour progress for your user account
-                    </p>
-                  </div>
+                <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+                  <h5 className="font-medium text-brand-dark dark:text-white mb-2">Reset All Tours</h5>
+                  <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+                    Reset all tour progress for your user account
+                  </p>
                   <Button
                     size="sm"
                     color="warning"
                     onClick={handleResetAllTours}
                     disabled={isResettingTour}
+                    className="w-full"
                   >
                     Reset All
                   </Button>
                 </div>
 
-                <div className="flex items-center justify-between p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                  <div>
-                    <h5 className="font-medium text-brand-dark dark:text-white">Dismiss Tours Permanently</h5>
-                    <p className="text-sm text-gray-600 dark:text-gray-300">
+                {tourStatus.toursHidden ? (
+                  <div className="p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+                    <h5 className="font-medium text-brand-dark dark:text-white mb-2">Re-enable Tours</h5>
+                    <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+                      Re-enable tour prompts for your account
+                    </p>
+                    <Button
+                      size="sm"
+                      color="success"
+                      onClick={handleReenableTours}
+                      disabled={isDismissingTours}
+                      className="w-full"
+                    >
+                      Re-enable Tours
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                    <h5 className="font-medium text-brand-dark dark:text-white mb-2">Dismiss Tours Permanently</h5>
+                    <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
                       Hide all tour prompts permanently for your account
                     </p>
+                    <Button
+                      size="sm"
+                      color="failure"
+                      onClick={handleDismissToursPermanently}
+                      disabled={isDismissingTours}
+                      className="w-full"
+                    >
+                      {isDismissingTours ? 'Dismissing...' : 'Dismiss Tours'}
+                    </Button>
                   </div>
-                  <Button
-                    size="sm"
-                    color="failure"
-                    onClick={handleDismissToursPermanently}
-                    disabled={isDismissingTours || tourStatus.toursHidden}
-                  >
-                    {isDismissingTours ? 'Dismissing...' : tourStatus.toursHidden ? 'Already Dismissed' : 'Dismiss Tours'}
-                  </Button>
-                </div>
+                )}
               </div>
             </div>
 
@@ -1889,7 +1945,9 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                               window.dispatchEvent(new CustomEvent('matFloatingChatCustomizationUpdate', {
                                 detail: {
                                   backgroundColor: color.value,
-                                  icon: localSettings.floating_chat_button_icon
+                                  customColor: localSettings.floating_chat_custom_color,
+                                  icon: localSettings.floating_chat_button_icon,
+                                  customIcon: localSettings.floating_chat_custom_icon
                                 }
                               }))
                             }, 0)
@@ -1902,6 +1960,59 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
                       Current: <span className="font-medium capitalize">{localSettings.floating_chat_button_color}</span>
                     </p>
+                    
+                    {/* Custom Color Input */}
+                    <div className="mt-4">
+                      <Label value="Custom Color" className="mb-2 block text-sm font-medium" />
+                      <div className="flex gap-2">
+                        <input
+                          type="color"
+                          value={localSettings.floating_chat_custom_color || '#3b82f6'}
+                          onChange={(e) => {
+                            handleLocalChange('floating_chat_custom_color', e.target.value)
+                            handleLocalChange('floating_chat_button_color', 'custom')
+                            // Trigger immediate update to FloatingChat component
+                            setTimeout(() => {
+                              window.dispatchEvent(new CustomEvent('matFloatingChatCustomizationUpdate', {
+                                detail: {
+                                  backgroundColor: 'custom',
+                                  customColor: e.target.value,
+                                  icon: localSettings.floating_chat_button_icon,
+                                  customIcon: localSettings.floating_chat_custom_icon
+                                }
+                              }))
+                            }, 0)
+                          }}
+                          disabled={isSavingSettings}
+                          className="w-20 h-10 rounded-lg border border-gray-300 dark:border-gray-600 cursor-pointer disabled:opacity-50"
+                        />
+                        <TextInput
+                          type="text"
+                          placeholder="#3b82f6"
+                          value={localSettings.floating_chat_custom_color || ''}
+                          onChange={(e) => {
+                            handleLocalChange('floating_chat_custom_color', e.target.value)
+                            handleLocalChange('floating_chat_button_color', 'custom')
+                            // Trigger immediate update to FloatingChat component
+                            setTimeout(() => {
+                              window.dispatchEvent(new CustomEvent('matFloatingChatCustomizationUpdate', {
+                                detail: {
+                                  backgroundColor: 'custom',
+                                  customColor: e.target.value,
+                                  icon: localSettings.floating_chat_button_icon,
+                                  customIcon: localSettings.floating_chat_custom_icon
+                                }
+                              }))
+                            }, 0)
+                          }}
+                          disabled={isSavingSettings}
+                          className="flex-1"
+                        />
+                      </div>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        Enter a hex color code (e.g., #3b82f6) or use the color picker
+                      </p>
+                    </div>
                   </div>
 
                   {/* Icon Selection */}
@@ -1950,7 +2061,9 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                               window.dispatchEvent(new CustomEvent('matFloatingChatCustomizationUpdate', {
                                 detail: {
                                   backgroundColor: localSettings.floating_chat_button_color,
-                                  icon: icon.value
+                                  customColor: localSettings.floating_chat_custom_color,
+                                  icon: icon.value,
+                                  customIcon: localSettings.floating_chat_custom_icon
                                 }
                               }))
                             }, 0)
@@ -1978,6 +2091,83 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
                       Current: <span className="font-medium capitalize">{localSettings.floating_chat_button_icon.replace('_', ' ')}</span>
                     </p>
+                    
+                    {/* Custom Icon Input */}
+                    <div className="mt-4">
+                      <Label value="Custom Icon" className="mb-2 block text-sm font-medium" />
+                      <div className="flex gap-2">
+                        <TextInput
+                          type="text"
+                          placeholder="Enter SVG path, Unicode character, or image URL"
+                          value={localSettings.floating_chat_custom_icon || ''}
+                          onChange={(e) => {
+                            handleLocalChange('floating_chat_custom_icon', e.target.value)
+                            handleLocalChange('floating_chat_button_icon', 'custom')
+                            // Trigger immediate update to FloatingChat component
+                            setTimeout(() => {
+                              window.dispatchEvent(new CustomEvent('matFloatingChatCustomizationUpdate', {
+                                detail: {
+                                  backgroundColor: localSettings.floating_chat_button_color,
+                                  customColor: localSettings.floating_chat_custom_color,
+                                  icon: 'custom',
+                                  customIcon: e.target.value
+                                }
+                              }))
+                            }, 0)
+                          }}
+                          disabled={isSavingSettings}
+                          className="flex-1"
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          color="gray"
+                          onClick={() => {
+                            // Open WordPress media library
+                            if (window.wp && window.wp.media) {
+                              const frame = window.wp.media({
+                                title: 'Select Icon',
+                                button: {
+                                  text: 'Use this icon'
+                                },
+                                multiple: false,
+                                library: {
+                                  type: 'image'
+                                }
+                              })
+                              
+                              frame.on('select', function() {
+                                const attachment = frame.state().get('selection').first().toJSON()
+                                handleLocalChange('floating_chat_custom_icon', attachment.url)
+                                handleLocalChange('floating_chat_button_icon', 'custom')
+                                // Trigger immediate update to FloatingChat component
+                                setTimeout(() => {
+                                  window.dispatchEvent(new CustomEvent('matFloatingChatCustomizationUpdate', {
+                                    detail: {
+                                      backgroundColor: localSettings.floating_chat_button_color,
+                                      customColor: localSettings.floating_chat_custom_color,
+                                      icon: 'custom',
+                                      customIcon: attachment.url
+                                    }
+                                  }))
+                                }, 0)
+                              })
+                              
+                              frame.open()
+                            } else {
+                              showError('WordPress media library not available')
+                            }
+                          }}
+                          disabled={isSavingSettings}
+                          className="whitespace-nowrap"
+                        >
+                          📁 Browse
+                        </Button>
+                      </div>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        Enter an SVG path, Unicode character (e.g., &#x1F4AC; for 💬), or select an image from your media library
+                      </p>
+                    </div>
                   </div>
                 </div>
 
@@ -1994,7 +2184,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                       {/* Preview Button */}
                       <div
                         className={`flex items-center justify-center h-14 w-14 rounded-full shadow-lg text-white transition-colors ${
-                          {
+                          localSettings.floating_chat_button_color === 'custom' ? '' : {
                             blue: 'bg-blue-600',
                             purple: 'bg-purple-600',
                             green: 'bg-green-600',
@@ -2005,27 +2195,65 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                             teal: 'bg-teal-600'
                           }[localSettings.floating_chat_button_color]
                         }`}
+                        style={localSettings.floating_chat_button_color === 'custom' && localSettings.floating_chat_custom_color ? 
+                          { backgroundColor: localSettings.floating_chat_custom_color } : {}
+                        }
                       >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          strokeWidth={1.5}
-                          stroke="currentColor"
-                          className="w-6 h-6"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d={{
-                              chat: 'M7.5 8.25h9m-9 3h5.25M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
-                              message: 'M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-8.25L8.25 21l-3-1.5v-12a2.25 2.25 0 012.25-2.25h12a2.25 2.25 0 012.25 2.25z',
-                              support: 'M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z',
-                              help: 'M8.25 9.75h4.875a2.625 2.625 0 010 5.25H8.25m0-10.5h4.875a2.625 2.625 0 010 5.25H8.25m0 0V21m0-12v-3',
-                              assistant: 'M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.847a4.5 4.5 0 003.09 3.09L15.75 12l-2.847.813a4.5 4.5 0 00-3.09 3.09z'
-                            }[localSettings.floating_chat_button_icon]}
-                          />
-                        </svg>
+                        {localSettings.floating_chat_button_icon === 'custom' && localSettings.floating_chat_custom_icon ? (
+                          // Handle custom icon - check if it's an image URL, Unicode character, or SVG path
+                          localSettings.floating_chat_custom_icon.startsWith('http') ? (
+                            // Image URL
+                            <img 
+                              src={localSettings.floating_chat_custom_icon} 
+                              alt="Custom icon" 
+                              className="w-6 h-6"
+                            />
+                          ) : localSettings.floating_chat_custom_icon.startsWith('&#') || 
+                               localSettings.floating_chat_custom_icon.match(/^[\u0000-\u1F7FF]+$/) ? (
+                            // Unicode character
+                            <span 
+                              className="text-lg"
+                              dangerouslySetInnerHTML={{ __html: localSettings.floating_chat_custom_icon }}
+                            />
+                          ) : (
+                            // SVG path
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              strokeWidth={1.5}
+                              stroke="currentColor"
+                              className="w-6 h-6"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d={localSettings.floating_chat_custom_icon}
+                              />
+                            </svg>
+                          )
+                        ) : (
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            strokeWidth={1.5}
+                            stroke="currentColor"
+                            className="w-6 h-6"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d={{
+                                chat: 'M7.5 8.25h9m-9 3h5.25M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+                                message: 'M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-8.25L8.25 21l-3-1.5v-12a2.25 2.25 0 012.25-2.25h12a2.25 2.25 0 012.25 2.25z',
+                                support: 'M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z',
+                                help: 'M8.25 9.75h4.875a2.625 2.625 0 010 5.25H8.25m0-10.5h4.875a2.625 2.625 0 010 5.25H8.25m0 0V21m0-12v-3',
+                                assistant: 'M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.847a4.5 4.5 0 003.09 3.09L15.75 12l-2.847.813a4.5 4.5 0 00-3.09 3.09z'
+                              }[localSettings.floating_chat_button_icon]}
+                            />
+                          </svg>
+                        )}
                       </div>
                       <div className="text-sm text-gray-600 dark:text-gray-300">
                         <div className="font-medium">Floating Chat Button</div>

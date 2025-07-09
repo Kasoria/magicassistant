@@ -142,6 +142,9 @@ class React_Dev {
      * Enqueue admin React scripts
      */
     private function enqueue_admin_scripts( $hook ) {
+        // Enqueue WordPress media library for icon selection
+        wp_enqueue_media();
+        
         if ( $this->is_dev_mode ) {
             $this->enqueue_admin_dev_scripts( $hook );
         } else {
@@ -510,6 +513,8 @@ class React_Dev {
             // Floating chat default customization coming from server-side settings
             'floatingChatButtonColor' => isset( $settings['floating_chat_button_color'] ) ? $settings['floating_chat_button_color'] : 'blue',
             'floatingChatButtonIcon'  => isset( $settings['floating_chat_button_icon'] )  ? $settings['floating_chat_button_icon']  : 'chat',
+            'floatingChatCustomColor' => isset( $settings['floating_chat_custom_color'] ) ? $settings['floating_chat_custom_color'] : '',
+            'floatingChatCustomIcon'  => isset( $settings['floating_chat_custom_icon'] )  ? $settings['floating_chat_custom_icon']  : '',
             'i18n' => array(
                 'loading' => __( 'Loading...', 'magic-assistant' ),
                 'error' => __( 'An error occurred', 'magic-assistant' ),

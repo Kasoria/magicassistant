@@ -109,10 +109,15 @@ const FloatingChat = ({ pluginData }) => {
     // Server-side defaults from plugin settings (always take precedence so that admin changes apply site-wide)
     const serverColor = pluginData?.floatingChatButtonColor;
     const serverIcon  = pluginData?.floatingChatButtonIcon;
+    const serverCustomColor = pluginData?.floatingChatCustomColor;
+    const serverCustomIcon = pluginData?.floatingChatCustomIcon;
+
 
     return {
       backgroundColor: serverColor || stored.backgroundColor || 'blue',
-      icon: serverIcon || stored.icon || 'chat'
+      icon: serverIcon || stored.icon || 'chat',
+      customColor: serverCustomColor || stored.customColor || '',
+      customIcon: serverCustomIcon || stored.customIcon || ''
     };
   })
   const [isDragging, setIsDragging] = useState(false)
@@ -147,7 +152,13 @@ const FloatingChat = ({ pluginData }) => {
   useEffect(() => {
     const handleCustomizationUpdate = (event) => {
       if (event.detail) {
-        setButtonCustomization(event.detail)
+        setButtonCustomization(prev => ({
+          ...prev,
+          backgroundColor: event.detail.backgroundColor || prev.backgroundColor,
+          icon: event.detail.icon || prev.icon,
+          customColor: event.detail.customColor || prev.customColor,
+          customIcon: event.detail.customIcon || prev.customIcon
+        }))
       }
     }
 
@@ -335,9 +346,24 @@ const FloatingChat = ({ pluginData }) => {
   // Check if we are inside the Bricks editor
   const isBricksEditor = new URLSearchParams(window.location.search).get('bricks') === 'run';
 
+  // Get button background color style
+  const getButtonStyle = () => {
+    if (buttonCustomization.backgroundColor === 'custom' && buttonCustomization.customColor) {
+      return {
+        backgroundColor: buttonCustomization.customColor,
+        right: `${buttonPosition.x}px`,
+        bottom: `${buttonPosition.y}px`
+      }
+    }
+    return {
+      right: `${buttonPosition.x}px`,
+      bottom: `${buttonPosition.y}px`
+    }
+  }
+
   const buttonClasses =
     'fixed z-50 flex items-center justify-center h-14 w-14 rounded-full shadow-lg transition-colors focus:outline-none cursor-grab active:cursor-grabbing text-white ' +
-    backgroundColors[buttonCustomization.backgroundColor]
+    (buttonCustomization.backgroundColor === 'custom' ? '' : backgroundColors[buttonCustomization.backgroundColor])
 
   // Handle backdrop click to close drawer
   const handleBackdropClick = (e) => {
@@ -359,24 +385,57 @@ const FloatingChat = ({ pluginData }) => {
           type="button"
           aria-label="Open chat"
           className={buttonClasses}
-          style={{
-            right: `${buttonPosition.x}px`,
-            bottom: `${buttonPosition.y}px`
-          }}
+          style={getButtonStyle()}
           onMouseDown={handleButtonMouseDown}
           onClick={handleButtonClick}
         >
           {/* Chat icon */}
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            strokeWidth={1.5}
-            stroke="currentColor"
-            className="w-6 h-6 pointer-events-none"
-          >
-            {icons[buttonCustomization.icon]}
-          </svg>
+          {buttonCustomization.icon === 'custom' && buttonCustomization.customIcon ? (
+            // Handle custom icon
+            buttonCustomization.customIcon.startsWith('http') ? (
+              // Image URL
+              <img 
+                src={buttonCustomization.customIcon} 
+                alt="Custom icon" 
+                className="w-6 h-6 pointer-events-none"
+              />
+            ) : buttonCustomization.customIcon.startsWith('&#') || 
+                 buttonCustomization.customIcon.match(/^[\u0000-\u1F7FF]+$/) ? (
+              // Unicode character
+              <span 
+                className="text-lg pointer-events-none"
+                dangerouslySetInnerHTML={{ __html: buttonCustomization.customIcon }}
+              />
+            ) : (
+              // SVG path
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={1.5}
+                stroke="currentColor"
+                className="w-6 h-6 pointer-events-none"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d={buttonCustomization.customIcon}
+                />
+              </svg>
+            )
+          ) : (
+            // Default predefined icon
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              className="w-6 h-6 pointer-events-none"
+            >
+              {icons[buttonCustomization.icon]}
+            </svg>
+          )}
         </button>
       )}
 
