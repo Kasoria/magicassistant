@@ -43,7 +43,8 @@ export default defineConfig({
           // Separate vendor chunks
           vendor: ['react', 'react-dom'],
           flowbite: ['flowbite', 'flowbite-react'],
-          utils: ['@hello-pangea/dnd', 'react-select', 'react-tooltip']
+          utils: ['@hello-pangea/dnd', 'react-select', 'react-tooltip'],
+          tour: ['driver.js']
         }
       }
     },

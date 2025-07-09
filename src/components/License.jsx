@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Card, Button, TextInput, Label, Alert, Spinner } from 'flowbite-react'
 import { useToast } from './Toast'
 
-const License = ({ adminData }) => {
+const License = ({ adminData, licenseData: propLicenseData, onLicenseDataChange }) => {
   const [licenseData, setLicenseData] = useState(null)
   const [licenseKey, setLicenseKey] = useState('')
   const [isLoading, setIsLoading] = useState(true)
@@ -12,8 +12,13 @@ const License = ({ adminData }) => {
   const { showSuccess, showError } = useToast()
 
   useEffect(() => {
-    loadLicenseStatus()
-  }, [])
+    if (propLicenseData) {
+      setLicenseData(propLicenseData)
+      setIsLoading(false)
+    } else {
+      loadLicenseStatus()
+    }
+  }, [propLicenseData])
 
   const loadLicenseStatus = async () => {
     if (!adminData) return
@@ -29,7 +34,11 @@ const License = ({ adminData }) => {
       const result = await response.json()
       
       if (result.success) {
+        console.log('License data loaded:', result.data)
         setLicenseData(result.data)
+        if (onLicenseDataChange) {
+          onLicenseDataChange(result.data)
+        }
       } else {
         setErrors({ general: result.message || 'Failed to load license status' })
       }
@@ -68,6 +77,9 @@ const License = ({ adminData }) => {
 
       if (response.ok && result.success) {
         setLicenseData(result.data)
+        if (onLicenseDataChange) {
+          onLicenseDataChange(result.data)
+        }
         setLicenseKey('')
         showSuccess('License activated successfully!')
       } else {
@@ -167,6 +179,7 @@ const License = ({ adminData }) => {
     return dateString
   }
 
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-64">
@@ -180,7 +193,7 @@ const License = ({ adminData }) => {
 
   return (
     <div className="space-y-6">
-      <Card className="p-6">
+      <Card className="p-6" data-tour="license-management-card">
         <div className="mb-6">
           <h2 className="text-2xl font-bold text-brand-dark dark:text-white mb-2">
             License Management
@@ -349,6 +362,21 @@ const License = ({ adminData }) => {
                     </div>
                   ))
                 )}
+                {licenseData.current_credits?.dataForSEO !== undefined && (
+                  <div>
+                    <Label className="text-green-800 dark:text-green-200 font-medium">
+                      DataForSEO Balance
+                    </Label>
+                    <div className="mt-1 text-green-700 dark:text-green-300 space-y-2">
+                      <div className="text-md font-semibold">
+                        <strong>Remaining Balance:</strong> ${licenseData.current_credits.dataForSEO.available.toFixed(2)}
+                      </div>
+                      <div className="text-sm opacity-75">
+                        Used ${licenseData.current_credits.dataForSEO.totalUsed.toFixed(2)} of ${licenseData.current_credits.dataForSEO.totalPurchased.toFixed(2)} purchased
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {licenseData.activated_at && (
                   <div className="md:col-span-3">
                     <Label className="text-green-800 dark:text-green-200 font-medium">
@@ -430,6 +458,7 @@ const License = ({ adminData }) => {
               type="submit"
               disabled={isSubmitting || !licenseKey.trim()}
               className="w-full sm:w-auto"
+              data-tour="activate-license-btn"
             >
               {isSubmitting ? (
                 <>
@@ -484,17 +513,20 @@ const License = ({ adminData }) => {
           </div>
         </div>
         <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-600">
-          <a
-            href="https://magicplugins.io/support"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center text-brand-accent hover:text-brand-accent-dark"
-          >
-            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-            </svg>
-            Contact Support
-          </a>
+          <div className="flex flex-col sm:flex-row gap-4 items-start">
+            <a
+              href="https://magicplugins.io/support"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center text-brand-accent hover:text-brand-accent-dark"
+            >
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+              Contact Support
+            </a>
+            
+          </div>
         </div>
       </Card>
     </div>

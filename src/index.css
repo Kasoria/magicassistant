@@ -2,6 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Driver.js WordPress admin integration styles */
+.driver-popover {
+  font-family: 'Nunito Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif !important;
+  z-index: 10000000 !important; /* Ensure it appears above WordPress admin elements */
+}
+
+.driver-popover * {
+  font-family: 'Nunito Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif !important;
+}
+
+/* Ensure driver overlay is properly positioned above WordPress admin bar */
+.driver-active .driver-overlay {
+  z-index: 9999999 !important;
+}
+
 /* Custom WordPress admin integration styles */
 @layer base {
   
@@ -689,6 +704,25 @@
 
 .dark ::-webkit-scrollbar-thumb:hover {
   background: #64748b;
+}
+
+/* Driver.js custom enhancement for WordPress admin integration */
+/* These styles provide additional customization for the WordPress admin environment */
+
+/* Ensure driver elements work properly within WordPress admin */
+.driver-active {
+  position: relative !important;
+}
+
+.driver-active-element {
+  position: relative !important;
+  z-index: 999998 !important;
+  pointer-events: auto !important;
+}
+
+/* Custom class for better tour integration */
+.magicassistant-tour-popover {
+  font-family: 'Nunito Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif !important;
 }
 
 /* Base styles for light/dark theme support */

@@ -7,6 +7,7 @@ import SEO from './SEO'
 import Security from './Security'
 import License from './License'
 import { ToastProvider } from './Toast'
+import { startLicenseTour, shouldShowLicenseTour, markLicenseTourCompleted } from '../utils/tour'
 
 const navigationItems = [
   {
@@ -60,6 +61,8 @@ const AdminApp = () => {
   const [isSavingSettings, setIsSavingSettings] = useState(false)
   const [dashboardData, setDashboardData] = useState(null)
   const [dashboardLoading, setDashboardLoading] = useState(true)
+  const [licenseData, setLicenseData] = useState(null)
+  const [tourDriver, setTourDriver] = useState(null)
 
   // Initialize settings from WordPress
   useEffect(() => {
@@ -73,6 +76,9 @@ const AdminApp = () => {
       
       // Load dashboard data
       loadDashboardData(data)
+      
+      // Load license data
+      loadLicenseData(data)
       
       // Initialize dark mode
       const serverTheme = data.savedTheme
@@ -147,6 +153,105 @@ const AdminApp = () => {
     }
   }, [sidebarOpen])
 
+  // Initialize tour when on dashboard for first-time visitors or via URL parameter
+  useEffect(() => {
+    if (licenseData && adminData && activeTab === 'dashboard') {
+      const urlParams = new URLSearchParams(window.location.search)
+      const isDirectVisit = !urlParams.get('tab') || urlParams.get('tab') === 'dashboard'
+      const forceTour = urlParams.get('tour') === 'license' || urlParams.get('start_tour') === '1'
+      
+      // Debug logging
+      console.log('Tour initialization check:', {
+        licenseData: licenseData,
+        adminData: !!adminData,
+        activeTab: activeTab,
+        isDirectVisit: isDirectVisit,
+        forceTour: forceTour,
+        shouldShowTour: shouldShowLicenseTour(licenseData),
+        urlParams: Object.fromEntries(urlParams.entries())
+      })
+      
+      // Start tour if it's a direct visit and should show, OR if forced via URL parameter
+      if ((isDirectVisit && shouldShowLicenseTour(licenseData)) || forceTour) {
+        console.log('Starting license tour...')
+        
+        // Small delay to ensure DOM is ready
+        const timer = setTimeout(() => {
+          try {
+            const driver = startLicenseTour({
+              onComplete: () => {
+                console.log('Tour completed')
+                markLicenseTourCompleted()
+                setTourDriver(null)
+              },
+              onSkip: () => {
+                console.log('Tour skipped')
+                setTourDriver(null)
+              }
+            })
+            setTourDriver(driver)
+            console.log('Tour driver created:', driver)
+          } catch (error) {
+            console.error('Failed to start tour:', error)
+          }
+        }, 1000)
+        
+        return () => clearTimeout(timer)
+      } else {
+        console.log('Tour not started due to conditions not met')
+      }
+    } else {
+      console.log('Tour initialization skipped - missing dependencies:', {
+        licenseData: !!licenseData,
+        adminData: !!adminData,
+        activeTab: activeTab
+      })
+    }
+  }, [licenseData, adminData, activeTab])
+
+
+  // Add tour event listeners
+  useEffect(() => {
+    const handleTourCompleted = (event) => {
+      if (event.detail.tourType === 'license') {
+        markLicenseTourCompleted()
+        setTourDriver(null)
+      }
+    }
+
+    const handleForceTourStart = (event) => {
+      console.log('Force tour start event received:', event.detail)
+      if (event.detail.tourType === 'license' && event.detail.forced) {
+        console.log('Forcing tour start...')
+        try {
+          const driver = startLicenseTour({
+            onComplete: () => {
+              console.log('Forced tour completed')
+              markLicenseTourCompleted()
+              setTourDriver(null)
+            },
+            onSkip: () => {
+              console.log('Forced tour skipped')
+              setTourDriver(null)
+            }
+          })
+          setTourDriver(driver)
+          console.log('Forced tour driver created:', driver)
+        } catch (error) {
+          console.error('Failed to force start tour:', error)
+        }
+      }
+    }
+
+    window.addEventListener('tourCompleted', handleTourCompleted)
+    window.addEventListener('forceTourStart', handleForceTourStart)
+    
+    return () => {
+      window.removeEventListener('tourCompleted', handleTourCompleted)
+      window.removeEventListener('forceTourStart', handleForceTourStart)
+    }
+  }, [])
+
   const loadSettings = async (data) => {
     try {
       const response = await fetch(`${data.restUrl}settings`, {
@@ -215,6 +320,26 @@ const AdminApp = () => {
     }
     
     setDashboardLoading(false)
+  }
+
+  const loadLicenseData = async (data) => {
+    if (!data) return
+
+    try {
+      const response = await fetch(`${data.restUrl}license`, {
+        headers: {
+          'X-WP-Nonce': data.nonces.wp_rest,
+        },
+      })
+
+      const result = await response.json()
+      
+      if (result.success) {
+        setLicenseData(result.data)
+      }
+    } catch (error) {
+      console.error('Failed to load license data:', error)
+    }
   }
 
   const formatCurrency = (amount) => {
@@ -390,7 +515,7 @@ Please start by asking me about the product details so you can create descriptio
       case 'analytics':
         return <Analytics adminData={adminData} />
       case 'license':
-        return <License adminData={adminData} />
+        return <License adminData={adminData} licenseData={licenseData} onLicenseDataChange={setLicenseData} />
       case 'settings':
         return (
           <Settings 
@@ -763,6 +888,7 @@ Please start by asking me about the product details so you can create descriptio
                           : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
                       }`}
                       title={sidebarCollapsed ? item.label : undefined}
+                      data-tour={item.id === 'chat' ? 'chat-tab' : (item.id === 'settings' ? 'settings-tab' : undefined)}
                     >
                       {item.id === 'dashboard' ? (
                         <svg
@@ -852,6 +978,7 @@ Please start by asking me about the product details so you can create descriptio
                 </li>
                 <li>
                   <button
+                    data-tour="license-tab"
                     onClick={() => {
                       setActiveTab('license')
                       // Close mobile sidebar when navigating

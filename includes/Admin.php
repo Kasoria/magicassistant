@@ -25,6 +25,12 @@ class Admin {
     
     // Add AJAX handlers
     add_action('wp_ajax_mat_save_theme_mode', array($this, 'save_theme_mode'));
+    add_action('wp_ajax_mat_mark_tour_completed', array($this, 'mark_tour_completed'));
+    add_action('wp_ajax_mat_reset_tour', array($this, 'reset_tour'));
+    add_action('wp_ajax_mat_mark_tour_triggered', array($this, 'mark_tour_triggered'));
+    add_action('wp_ajax_mat_dismiss_tour_permanently', array($this, 'dismiss_tour_permanently'));
+    add_action('wp_ajax_mat_mark_first_visit_complete', array($this, 'mark_first_visit_complete'));
+    add_action('wp_ajax_mat_reset_all_tours', array($this, 'reset_all_tours'));
   }
   
   public function add_admin_menu() {
@@ -170,6 +176,16 @@ class Admin {
       'currentPage' => $this->get_current_page($hook),
       'currentPost' => $current_post_info,
       'initialTab' => $this->get_initial_tab(),
+      'tourCompleted' => array(
+        'license' => (bool) get_user_meta(get_current_user_id(), 'mat_tour_completed_license', true),
+        'dashboard' => (bool) get_user_meta(get_current_user_id(), 'mat_tour_completed_dashboard', true),
+        'settings' => (bool) get_user_meta(get_current_user_id(), 'mat_tour_completed_settings', true),
+        'firstVisit' => (bool) get_user_meta(get_current_user_id(), 'mat_tour_first_visit_complete', true)
+      ),
+      'tourDismissed' => array(
+        'permanently' => (bool) get_user_meta(get_current_user_id(), 'mat_tour_dismissed_permanently', true)
+      ),
+      'toursGloballyDisabled' => (bool) get_option('mat_tours_globally_disabled', false),
       'i18n' => array(
         'loading' => __('Loading...', 'magic-assistant'),
         'error' => __('An error occurred', 'magic-assistant'),
@@ -750,5 +766,237 @@ class Admin {
     
     $date_format = isset($formats[$format]) ? $formats[$format] : $formats['us'];
     return date($date_format, $timestamp);
+  }
+
+  /**
+   * AJAX handler to mark tour as completed
+   */
+  public function mark_tour_completed() {
+    // Check nonce for security
+    if (!wp_verify_nonce($_POST['_ajax_nonce'], 'mat_ajax_nonce')) {
+      wp_die(json_encode(array(
+        'success' => false,
+        'data' => __('Invalid nonce.', 'magic-assistant')
+      )));
+    }
+    
+    // Check if user is logged in
+    if (!is_user_logged_in()) {
+      wp_die(json_encode(array(
+        'success' => false,
+        'data' => __('You must be logged in to save tour completion.', 'magic-assistant')
+      )));
+    }
+    
+    $tour_type = sanitize_text_field($_POST['tour_type']);
+    
+    if (!in_array($tour_type, array('license', 'dashboard', 'settings'))) {
+      wp_die(json_encode(array(
+        'success' => false,
+        'data' => __('Invalid tour type.', 'magic-assistant')
+      )));
+    }
+    
+    // Save the tour completion to WordPress user meta
+    $user_id = get_current_user_id();
+    $meta_key = 'mat_tour_completed_' . $tour_type;
+    update_user_meta($user_id, $meta_key, true);
+    
+    wp_die(json_encode(array(
+      'success' => true,
+      'data' => array(
+        'tour_type' => $tour_type,
+        'message' => __('Tour completion saved successfully.', 'magic-assistant')
+      )
+    )));
+  }
+
+  /**
+   * AJAX handler to reset tour completion
+   */
+  public function reset_tour() {
+    // Check nonce for security
+    if (!wp_verify_nonce($_POST['_ajax_nonce'], 'mat_ajax_nonce')) {
+      wp_die(json_encode(array(
+        'success' => false,
+        'data' => __('Invalid nonce.', 'magic-assistant')
+      )));
+    }
+    
+    // Check if user is logged in
+    if (!is_user_logged_in()) {
+      wp_die(json_encode(array(
+        'success' => false,
+        'data' => __('You must be logged in to reset tour.', 'magic-assistant')
+      )));
+    }
+    
+    $tour_type = sanitize_text_field($_POST['tour_type']);
+    
+    if (!in_array($tour_type, array('license', 'dashboard', 'settings'))) {
+      wp_die(json_encode(array(
+        'success' => false,
+        'data' => __('Invalid tour type.', 'magic-assistant')
+      )));
+    }
+    
+    // Remove the tour completion from WordPress user meta
+    $user_id = get_current_user_id();
+    $meta_key = 'mat_tour_completed_' . $tour_type;
+    delete_user_meta($user_id, $meta_key);
+    
+    wp_die(json_encode(array(
+      'success' => true,
+      'data' => array(
+        'tour_type' => $tour_type,
+        'message' => __('Tour reset successfully.', 'magic-assistant')
+      )
+    )));
+  }
+
+  /**
+   * AJAX handler to mark tour as triggered
+   */
+  public function mark_tour_triggered() {
+    // Check nonce for security
+    if (!wp_verify_nonce($_POST['_ajax_nonce'], 'mat_ajax_nonce')) {
+      wp_die(json_encode(array(
+        'success' => false,
+        'data' => __('Invalid nonce.', 'magic-assistant')
+      )));
+    }
+    
+    // Check if user is logged in
+    if (!is_user_logged_in()) {
+      wp_die(json_encode(array(
+        'success' => false,
+        'data' => __('You must be logged in to mark tour as triggered.', 'magic-assistant')
+      )));
+    }
+    
+    $tour_type = sanitize_text_field($_POST['tour_type']);
+    
+    if (!in_array($tour_type, array('license', 'dashboard', 'settings'))) {
+      wp_die(json_encode(array(
+        'success' => false,
+        'data' => __('Invalid tour type.', 'magic-assistant')
+      )));
+    }
+    
+    // Save the tour trigger timestamp to WordPress user meta
+    $user_id = get_current_user_id();
+    $meta_key = 'mat_tour_triggered_' . $tour_type;
+    update_user_meta($user_id, $meta_key, current_time('timestamp'));
+    
+    wp_die(json_encode(array(
+      'success' => true,
+      'data' => array(
+        'tour_type' => $tour_type,
+        'message' => __('Tour marked as triggered successfully.', 'magic-assistant')
+      )
+    )));
+  }
+
+  /**
+   * AJAX handler to dismiss tours permanently
+   */
+  public function dismiss_tour_permanently() {
+    // Check nonce for security
+    if (!wp_verify_nonce($_POST['_ajax_nonce'], 'mat_ajax_nonce')) {
+      wp_die(json_encode(array(
+        'success' => false,
+        'data' => __('Invalid nonce.', 'magic-assistant')
+      )));
+    }
+    
+    // Check if user is logged in
+    if (!is_user_logged_in()) {
+      wp_die(json_encode(array(
+        'success' => false,
+        'data' => __('You must be logged in to dismiss tours.', 'magic-assistant')
+      )));
+    }
+    
+    // Mark tours as permanently dismissed for this user
+    $user_id = get_current_user_id();
+    update_user_meta($user_id, 'mat_tour_dismissed_permanently', true);
+    
+    wp_die(json_encode(array(
+      'success' => true,
+      'data' => array(
+        'message' => __('Tours dismissed permanently.', 'magic-assistant')
+      )
+    )));
+  }
+
+  /**
+   * AJAX handler to mark first visit as complete
+   */
+  public function mark_first_visit_complete() {
+    // Check nonce for security
+    if (!wp_verify_nonce($_POST['_ajax_nonce'], 'mat_ajax_nonce')) {
+      wp_die(json_encode(array(
+        'success' => false,
+        'data' => __('Invalid nonce.', 'magic-assistant')
+      )));
+    }
+    
+    // Check if user is logged in
+    if (!is_user_logged_in()) {
+      wp_die(json_encode(array(
+        'success' => false,
+        'data' => __('You must be logged in to mark first visit.', 'magic-assistant')
+      )));
+    }
+    
+    // Mark first visit as complete for this user
+    $user_id = get_current_user_id();
+    update_user_meta($user_id, 'mat_tour_first_visit_complete', true);
+    
+    wp_die(json_encode(array(
+      'success' => true,
+      'data' => array(
+        'message' => __('First visit marked as complete.', 'magic-assistant')
+      )
+    )));
+  }
+
+  /**
+   * AJAX handler to reset all tours for current user
+   */
+  public function reset_all_tours() {
+    // Check nonce for security
+    if (!wp_verify_nonce($_POST['_ajax_nonce'], 'mat_ajax_nonce')) {
+      wp_die(json_encode(array(
+        'success' => false,
+        'data' => __('Invalid nonce.', 'magic-assistant')
+      )));
+    }
+    
+    // Check if user is logged in
+    if (!is_user_logged_in()) {
+      wp_die(json_encode(array(
+        'success' => false,
+        'data' => __('You must be logged in to reset tours.', 'magic-assistant')
+      )));
+    }
+    
+    // Reset all tour-related user meta
+    $user_id = get_current_user_id();
+    delete_user_meta($user_id, 'mat_tour_completed_license');
+    delete_user_meta($user_id, 'mat_tour_completed_dashboard');
+    delete_user_meta($user_id, 'mat_tour_completed_settings');
+    delete_user_meta($user_id, 'mat_tour_dismissed_permanently');
+    delete_user_meta($user_id, 'mat_tour_first_visit_complete');
+    delete_user_meta($user_id, 'mat_tour_triggered_license');
+    delete_user_meta($user_id, 'mat_tour_triggered_dashboard');
+    delete_user_meta($user_id, 'mat_tour_triggered_settings');
+    
+    wp_die(json_encode(array(
+      'success' => true,
+      'data' => array(
+        'message' => __('All tours reset successfully.', 'magic-assistant')
+      )
+    )));
   }
 } 

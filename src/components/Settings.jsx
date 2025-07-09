@@ -6,6 +6,7 @@ import { useToast } from './Toast'
 import SharedConversations from './SharedConversations'
 import { countries } from 'countries-list'
 import ISO6391 from 'iso-639-1'
+import { resetLicenseTour, dismissToursPermanently, hasCompletedLicenseTour, hasDismissedTourPermanently } from '../utils/tour'
 
 const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onToggleDarkMode }) => {
   const [apiKey, setApiKey] = useState('')
@@ -22,7 +23,36 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
   const [availableUsers, setAvailableUsers] = useState([])
   const [isLoadingUsers, setIsLoadingUsers] = useState(false)
   const [showDangerousSqlModal, setShowDangerousSqlModal] = useState(false)
+  const [isResettingTour, setIsResettingTour] = useState(false)
+  const [isDismissingTours, setIsDismissingTours] = useState(false)
+  const [tourStatus, setTourStatus] = useState({
+    licenseCompleted: false,
+    toursHidden: false
+  })
   const { showSuccess, showWarning, showError } = useToast()
+
+  // Update tour status when component mounts or tour functions change
+  useEffect(() => {
+    const updateTourStatus = () => {
+      setTourStatus({
+        licenseCompleted: hasCompletedLicenseTour(),
+        toursHidden: hasDismissedTourPermanently()
+      })
+    }
+    
+    updateTourStatus()
+    
+    // Listen for tour completion events
+    const handleTourCompleted = () => {
+      updateTourStatus()
+    }
+    
+    window.addEventListener('tourCompleted', handleTourCompleted)
+    
+    return () => {
+      window.removeEventListener('tourCompleted', handleTourCompleted)
+    }
+  }, [])
 
   // Sync local state with props
   useEffect(() => {
@@ -277,6 +307,81 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     }
     
     setIsLoadingUsers(false)
+  }
+
+  // Tour management functions
+  const handleResetTour = async () => {
+    setIsResettingTour(true)
+    try {
+      await resetLicenseTour()
+      // Update local tour status immediately
+      setTourStatus(prev => ({
+        ...prev,
+        licenseCompleted: false
+      }))
+      showSuccess('Tour reset successfully! You can now replay the tour.')
+    } catch (error) {
+      console.error('Reset tour error:', error)
+      showError('Failed to reset tour. Please try again.')
+    } finally {
+      setIsResettingTour(false)
+    }
+  }
+
+  const handleDismissToursPermanently = async () => {
+    setIsDismissingTours(true)
+    try {
+      await dismissToursPermanently()
+      // Update local tour status immediately
+      setTourStatus(prev => ({
+        ...prev,
+        toursHidden: true
+      }))
+      showSuccess('Tours dismissed permanently. You will no longer see tour prompts.')
+    } catch (error) {
+      console.error('Dismiss tours error:', error)
+      showError('Failed to dismiss tours. Please try again.')
+    } finally {
+      setIsDismissingTours(false)
+    }
+  }
+
+  const handleResetAllTours = async () => {
+    const confirmed = window.confirm('Are you sure you want to reset all tours for your user account? This will allow you to replay all tours.')
+    if (!confirmed) return
+
+    try {
+      const formData = new FormData()
+      formData.append('action', 'mat_reset_all_tours')
+      formData.append('_ajax_nonce', window.matAdminData?.nonces?.mat_ajax || '')
+
+      const response = await fetch(window.matAdminData?.ajaxurl, {
+        method: 'POST',
+        body: formData
+      })
+
+      const result = await response.json()
+      if (result.success) {
+        // Update local tour status immediately instead of reloading
+        setTourStatus({
+          licenseCompleted: false,
+          toursHidden: false
+        })
+        // Also update the global admin data
+        if (window.matAdminData?.tourCompleted) {
+          window.matAdminData.tourCompleted.license = false
+        }
+        if (window.matAdminData?.tourDismissed) {
+          window.matAdminData.tourDismissed.permanently = false
+        }
+        showSuccess('All tours reset successfully! You can now replay all tours.')
+      } else {
+        showError('Failed to reset tours.')
+      }
+    } catch (error) {
+      console.error('Reset all tours error:', error)
+      showError('Failed to reset tours. Please try again.')
+    }
   }
 
   const getTabSettings = () => {
@@ -599,6 +704,86 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
               </div>
             </div>
 
+            {/* Tour Management Section */}
+            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
+              <h4 className="font-medium text-brand-dark dark:text-white mb-2">Tour Management</h4>
+              <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+                Manage your guided tour experience and preferences
+              </p>
+              
+              {/* Tour Status */}
+              <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                <h5 className="font-medium text-brand-dark dark:text-white mb-2">Tour Status</h5>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-600 dark:text-gray-300">License Tour:</span>
+                    <span className={`font-medium ${tourStatus.licenseCompleted ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400'}`}>
+                      {tourStatus.licenseCompleted ? '✓ Completed' : 'Not completed'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-600 dark:text-gray-300">Tours Dismissed:</span>
+                    <span className={`font-medium ${tourStatus.toursHidden ? 'text-orange-600 dark:text-orange-400' : 'text-gray-500 dark:text-gray-400'}`}>
+                      {tourStatus.toursHidden ? '⚠️ Permanently dismissed' : 'Active'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tour Actions */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                  <div>
+                    <h5 className="font-medium text-brand-dark dark:text-white">Replay License Tour</h5>
+                    <p className="text-sm text-gray-600 dark:text-gray-300">
+                      Restart the license activation tour to see it again
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={handleResetTour}
+                    disabled={isResettingTour}
+                  >
+                    {isResettingTour ? 'Resetting...' : 'Replay Tour'}
+                  </Button>
+                </div>
+
+                <div className="flex items-center justify-between p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+                  <div>
+                    <h5 className="font-medium text-brand-dark dark:text-white">Reset All Tours</h5>
+                    <p className="text-sm text-gray-600 dark:text-gray-300">
+                      Reset all tour progress for your user account
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    color="warning"
+                    onClick={handleResetAllTours}
+                    disabled={isResettingTour}
+                  >
+                    Reset All
+                  </Button>
+                </div>
+
+                <div className="flex items-center justify-between p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                  <div>
+                    <h5 className="font-medium text-brand-dark dark:text-white">Dismiss Tours Permanently</h5>
+                    <p className="text-sm text-gray-600 dark:text-gray-300">
+                      Hide all tour prompts permanently for your account
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    color="failure"
+                    onClick={handleDismissToursPermanently}
+                    disabled={isDismissingTours || tourStatus.toursHidden}
+                  >
+                    {isDismissingTours ? 'Dismissing...' : tourStatus.toursHidden ? 'Already Dismissed' : 'Dismiss Tours'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+
             {/* Save Button */}
             <div className="pt-4 border-t border-gray-200 dark:border-gray-600">
               <div className="flex items-center justify-between">
@@ -623,7 +808,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         return (
           <div className="space-y-6">
             {/* AI Provider Section */}
-            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
+            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg" data-tour="api-keys-section">
               <h4 className="font-medium text-brand-dark dark:text-white mb-3">AI Provider</h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <div>
@@ -891,7 +1076,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
             </div>
 
             {/* MCP Settings Section */}
-            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
+            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg" data-tour="mcp-tools-section">
               <h4 className="font-medium text-brand-dark dark:text-white mb-3">MCP (Model Context Protocol)</h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="flex items-center space-x-3">
@@ -1912,6 +2097,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                     ? `${colors.border} ${colors.text} ${colors.darkText}`
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
                 }`}
+                data-tour={tab.id === 'ai' ? 'ai-configuration-tab' : undefined}
               >
                 <svg
                   className={`w-5 h-5 mr-2 ${

@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import AdminApp from './components/AdminApp'
 import './index.css'
 import 'flowbite'
+import 'driver.js/dist/driver.css'
 
 const root = document.getElementById('mat-admin-root')
 if (root) {
