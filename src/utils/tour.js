@@ -668,14 +668,7 @@ export const hasCompletedLicenseTour = () => {
   const localStorageCompleted = localStorage.getItem('magicassistant_license_tour_completed') === 'true';
   
   const result = Boolean(wpUserMeta) || localStorageCompleted;
-  
-  console.log('hasCompletedLicenseTour check:', {
-    wpUserMeta: wpUserMeta,
-    localStorageCompleted: localStorageCompleted,
-    result: result,
-    matAdminData: window.matAdminData
-  });
-  
+
   return result;
 };
 
@@ -759,38 +752,28 @@ export const shouldShowLicenseTour = (licenseData) => {
     isGloballyDisabled: areToursGloballyDisabled()
   };
   
-  console.log('shouldShowLicenseTour checks:', {
-    licenseData: licenseData,
-    checks: checks
-  });
-  
   // Don't show if no license data available
   if (!licenseData) {
-    console.log('Tour not shown: No license data');
     return false;
   }
   
   // Don't show if already completed
   if (hasCompletedLicenseTour()) {
-    console.log('Tour not shown: Already completed');
     return false;
   }
   
   // Don't show if license is already active
   if (licenseData?.is_active) {
-    console.log('Tour not shown: License already active');
     return false;
   }
   
   // Don't show if permanently dismissed
   if (hasDismissedTourPermanently()) {
-    console.log('Tour not shown: Permanently dismissed');
     return false;
   }
   
   // Don't show if tours are globally disabled
   if (areToursGloballyDisabled()) {
-    console.log('Tour not shown: Globally disabled');
     return false;
   }
   
