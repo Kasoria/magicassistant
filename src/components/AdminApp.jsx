@@ -160,17 +160,6 @@ const AdminApp = () => {
       const isDirectVisit = !urlParams.get('tab') || urlParams.get('tab') === 'dashboard'
       const forceTour = urlParams.get('tour') === 'license' || urlParams.get('start_tour') === '1'
       
-      // Debug logging
-      console.log('Tour initialization check:', {
-        licenseData: licenseData,
-        adminData: !!adminData,
-        activeTab: activeTab,
-        isDirectVisit: isDirectVisit,
-        forceTour: forceTour,
-        shouldShowTour: shouldShowLicenseTour(licenseData),
-        urlParams: Object.fromEntries(urlParams.entries())
-      })
-      
       // Start tour if it's a direct visit and should show, OR if forced via URL parameter
       if ((isDirectVisit && shouldShowLicenseTour(licenseData)) || forceTour) {
         console.log('Starting license tour...')
@@ -197,15 +186,7 @@ const AdminApp = () => {
         }, 1000)
         
         return () => clearTimeout(timer)
-      } else {
-        console.log('Tour not started due to conditions not met')
       }
-    } else {
-      console.log('Tour initialization skipped - missing dependencies:', {
-        licenseData: !!licenseData,
-        adminData: !!adminData,
-        activeTab: activeTab
-      })
     }
   }, [licenseData, adminData, activeTab])
 
