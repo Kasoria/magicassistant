@@ -272,6 +272,259 @@ class DataForSEO {
     }
     
     /**
+     * Handle content generation request
+     */
+    public function handle_content_generate($args) {
+        try {
+            // Validate required parameters
+            if (empty($args['text'])) {
+                throw new \Exception('Text parameter is required for content generation');
+            }
+            
+            // Add default parameters if missing
+            $args = array_merge(array(
+                'creativity_index' => 0.5,
+                'max_new_tokens' => 100,
+                'max_tokens' => 1024
+            ), $args);
+            
+            $result = $this->make_proxy_request_with_retry('content_generate', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            // Log the error for debugging
+            if (function_exists('error_log')) {
+                error_log('DataForSEO content_generate error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
+            }
+            
+            throw $e;
+        }
+    }
+    
+    /**
+     * Handle text generation request
+     */
+    public function handle_content_generate_text($args) {
+        try {
+            // Validate required parameters
+            if (empty($args['topic'])) {
+                throw new \Exception('Topic parameter is required for text generation');
+            }
+            
+            // Add default parameters if missing
+            $args = array_merge(array(
+                'word_count' => 100,
+                'creativity_index' => 0.5
+            ), $args);
+            
+            $result = $this->make_proxy_request_with_retry('content_generate_text', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            // Log the error for debugging
+            if (function_exists('error_log')) {
+                error_log('DataForSEO content_generate_text error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
+            }
+            
+            throw $e;
+        }
+    }
+    
+    /**
+     * Handle meta tags generation request
+     */
+    public function handle_content_generate_meta_tags($args) {
+        try {
+            // Validate required parameters
+            if (empty($args['content'])) {
+                throw new \Exception('Content parameter is required for meta tags generation');
+            }
+            
+            $result = $this->make_proxy_request_with_retry('content_generate_meta_tags', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            // Log the error for debugging
+            if (function_exists('error_log')) {
+                error_log('DataForSEO content_generate_meta_tags error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
+            }
+            
+            throw $e;
+        }
+    }
+    
+    /**
+     * Handle sub-topics generation request
+     */
+    public function handle_content_generate_sub_topics($args) {
+        try {
+            // Validate required parameters
+            if (empty($args['topic'])) {
+                throw new \Exception('Topic parameter is required for sub-topics generation');
+            }
+            
+            $result = $this->make_proxy_request_with_retry('content_generate_sub_topics', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            // Log the error for debugging
+            if (function_exists('error_log')) {
+                error_log('DataForSEO content_generate_sub_topics error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
+            }
+            
+            throw $e;
+        }
+    }
+    
+    /**
+     * Handle paraphrase request
+     */
+    public function handle_content_paraphrase($args) {
+        try {
+            // Validate required parameters
+            if (empty($args['text'])) {
+                throw new \Exception('Text parameter is required for paraphrasing');
+            }
+            
+            // Add default parameters if missing
+            $args = array_merge(array(
+                'creativity_index' => 0.5
+            ), $args);
+            
+            $result = $this->make_proxy_request_with_retry('content_paraphrase', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            // Log the error for debugging
+            if (function_exists('error_log')) {
+                error_log('DataForSEO content_paraphrase error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
+            }
+            
+            throw $e;
+        }
+    }
+    
+    /**
+     * Handle grammar check request
+     */
+    public function handle_content_check_grammar($args) {
+        try {
+            // Validate required parameters
+            if (empty($args['text'])) {
+                throw new \Exception('Text parameter is required for grammar check');
+            }
+            
+            // Add default parameters if missing
+            $args = array_merge(array(
+                'language_code' => 'en'
+            ), $args);
+            
+            $result = $this->make_proxy_request_with_retry('content_check_grammar', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            // Log the error for debugging
+            if (function_exists('error_log')) {
+                error_log('DataForSEO content_check_grammar error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
+            }
+            
+            throw $e;
+        }
+    }
+    
+    /**
+     * Handle text summary request
+     */
+    public function handle_content_text_summary($args) {
+        try {
+            // Validate required parameters
+            if (empty($args['text'])) {
+                throw new \Exception('Text parameter is required for text summary');
+            }
+            
+            // Add default parameters if missing
+            $args = array_merge(array(
+                'language_code' => 'en'
+            ), $args);
+            
+            $result = $this->make_proxy_request_with_retry('content_text_summary', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            // Log the error for debugging
+            if (function_exists('error_log')) {
+                error_log('DataForSEO content_text_summary error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
+            }
+            
+            throw $e;
+        }
+    }
+    
+    /**
+     * Handle grammar languages request
+     */
+    public function handle_content_grammar_languages($args = array()) {
+        try {
+            $result = $this->make_proxy_request_with_retry('content_grammar_languages', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            // Log the error for debugging
+            if (function_exists('error_log')) {
+                error_log('DataForSEO content_grammar_languages error: ' . $e->getMessage());
+            }
+            
+            throw $e;
+        }
+    }
+    
+    /**
+     * Handle grammar rules request
+     */
+    public function handle_content_grammar_rules($args = array()) {
+        try {
+            $result = $this->make_proxy_request_with_retry('content_grammar_rules', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            // Log the error for debugging
+            if (function_exists('error_log')) {
+                error_log('DataForSEO content_grammar_rules error: ' . $e->getMessage());
+            }
+            
+            throw $e;
+        }
+    }
+    
+    /**
+     * Handle summary languages request
+     */
+    public function handle_content_summary_languages($args = array()) {
+        try {
+            $result = $this->make_proxy_request_with_retry('content_summary_languages', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            // Log the error for debugging
+            if (function_exists('error_log')) {
+                error_log('DataForSEO content_summary_languages error: ' . $e->getMessage());
+            }
+            
+            throw $e;
+        }
+    }
+    
+    /**
      * Make request to magicplugins.io proxy
      */
     private function make_proxy_request($action, $args) {
@@ -299,11 +552,6 @@ class DataForSEO {
         
         // Add site authentication
         $request_data['auth'] = $this->generate_request_auth($request_data);
-        
-        // Debug logging for all requests
-        if (function_exists('error_log')) {
-            error_log('DataForSEO proxy request - Action: ' . $action . ' | Data: ' . wp_json_encode($request_data['data']));
-        }
         
         // Merge license headers (needed by MagicProxy for verification)
         $license_headers = $this->get_license_headers();
