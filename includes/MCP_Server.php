@@ -8649,6 +8649,253 @@ class MCP_Server {
                 ),
                 'callback' => array($dataforseo, 'get_manual_competitors')
             ));
+            
+            // Register content generation tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_content_generate',
+                'description' => 'Generate content based on initial text using DataForSEO Content Generation API. Use this to continue or expand existing text.',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'text' => array(
+                            'type' => 'string',
+                            'description' => 'The initial text to continue or expand upon (1-500 tokens)'
+                        ),
+                        'creativity_index' => array(
+                            'type' => 'number',
+                            'description' => 'Creativity level from 0 to 1 (default: 0.5)',
+                            'minimum' => 0,
+                            'maximum' => 1,
+                            'default' => 0.5
+                        ),
+                        'max_new_tokens' => array(
+                            'type' => 'integer',
+                            'description' => 'Maximum number of new tokens to generate (default: 100)',
+                            'minimum' => 1,
+                            'maximum' => 300,
+                            'default' => 100
+                        ),
+                        'max_tokens' => array(
+                            'type' => 'integer',
+                            'description' => 'Maximum total tokens including input (default: 1024)',
+                            'minimum' => 1,
+                            'maximum' => 1024,
+                            'default' => 1024
+                        ),
+                        'tag' => array(
+                            'type' => 'string',
+                            'description' => 'Optional tag for tracking (max 255 characters)'
+                        )
+                    ),
+                    'required' => array('text')
+                ),
+                'callback' => array($dataforseo, 'handle_content_generate')
+            ));
+            
+            // Register text generation tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_content_generate_text',
+                'description' => 'Generate text content based on a topic using DataForSEO Content Generation API. Use this to create new content from scratch.',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'topic' => array(
+                            'type' => 'string',
+                            'description' => 'The main topic to generate content about (1-50 tokens)'
+                        ),
+                        'word_count' => array(
+                            'type' => 'integer',
+                            'description' => 'Desired word count for the generated text (default: 100)',
+                            'minimum' => 10,
+                            'maximum' => 1000,
+                            'default' => 100
+                        ),
+                        'creativity_index' => array(
+                            'type' => 'number',
+                            'description' => 'Creativity level from 0 to 1 (default: 0.5)',
+                            'minimum' => 0,
+                            'maximum' => 1,
+                            'default' => 0.5
+                        ),
+                        'sub_topics' => array(
+                            'type' => 'array',
+                            'items' => array('type' => 'string'),
+                            'description' => 'Optional array of sub-topics to include'
+                        ),
+                        'meta_keywords' => array(
+                            'type' => 'array',
+                            'items' => array('type' => 'string'),
+                            'description' => 'Optional array of keywords to incorporate'
+                        ),
+                        'avoid_words' => array(
+                            'type' => 'array',
+                            'items' => array('type' => 'string'),
+                            'description' => 'Optional array of words to avoid'
+                        ),
+                        'tag' => array(
+                            'type' => 'string',
+                            'description' => 'Optional tag for tracking (max 255 characters)'
+                        )
+                    ),
+                    'required' => array('topic')
+                ),
+                'callback' => array($dataforseo, 'handle_content_generate_text')
+            ));
+            
+            // Register meta tags generation tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_content_generate_meta_tags',
+                'description' => 'Generate SEO-optimized meta title and description based on content using DataForSEO Content Generation API.',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'content' => array(
+                            'type' => 'string',
+                            'description' => 'The content to generate meta tags for'
+                        ),
+                        'tag' => array(
+                            'type' => 'string',
+                            'description' => 'Optional tag for tracking (max 255 characters)'
+                        )
+                    ),
+                    'required' => array('content')
+                ),
+                'callback' => array($dataforseo, 'handle_content_generate_meta_tags')
+            ));
+            
+            // Register sub-topics generation tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_content_generate_sub_topics',
+                'description' => 'Generate relevant sub-topics for a given topic using DataForSEO Content Generation API. Returns 10 related subtopics.',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'topic' => array(
+                            'type' => 'string',
+                            'description' => 'The main topic to generate sub-topics for'
+                        ),
+                        'tag' => array(
+                            'type' => 'string',
+                            'description' => 'Optional tag for tracking (max 255 characters)'
+                        )
+                    ),
+                    'required' => array('topic')
+                ),
+                'callback' => array($dataforseo, 'handle_content_generate_sub_topics')
+            ));
+            
+            // Register paraphrase tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_content_paraphrase',
+                'description' => 'Paraphrase or rewrite existing text using DataForSEO Content Generation API. Use this to create variations of existing content.',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'text' => array(
+                            'type' => 'string',
+                            'description' => 'The text to paraphrase or rewrite'
+                        ),
+                        'creativity_index' => array(
+                            'type' => 'number',
+                            'description' => 'Creativity level from 0 to 1 (default: 0.5)',
+                            'minimum' => 0,
+                            'maximum' => 1,
+                            'default' => 0.5
+                        ),
+                        'tag' => array(
+                            'type' => 'string',
+                            'description' => 'Optional tag for tracking (max 255 characters)'
+                        )
+                    ),
+                    'required' => array('text')
+                ),
+                'callback' => array($dataforseo, 'handle_content_paraphrase')
+            ));
+            
+            // Register grammar check tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_content_check_grammar',
+                'description' => 'Check grammar and spelling in text using DataForSEO Content Generation API. Provides detailed error detection and suggestions.',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'text' => array(
+                            'type' => 'string',
+                            'description' => 'The text to check for grammar and spelling errors (1-10000 tokens)'
+                        ),
+                        'language_code' => array(
+                            'type' => 'string',
+                            'description' => 'Language code for grammar checking (default: en)',
+                            'default' => 'en'
+                        ),
+                        'tag' => array(
+                            'type' => 'string',
+                            'description' => 'Optional tag for tracking (max 255 characters)'
+                        )
+                    ),
+                    'required' => array('text')
+                ),
+                'callback' => array($dataforseo, 'handle_content_check_grammar')
+            ));
+            
+            // Register text summary tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_content_text_summary',
+                'description' => 'Analyze text and provide comprehensive summary with readability metrics using DataForSEO Content Generation API.',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'text' => array(
+                            'type' => 'string',
+                            'description' => 'The text to analyze and summarize (1-10000 tokens)'
+                        ),
+                        'language_code' => array(
+                            'type' => 'string',
+                            'description' => 'Language code for text analysis (default: en)',
+                            'default' => 'en'
+                        ),
+                        'tag' => array(
+                            'type' => 'string',
+                            'description' => 'Optional tag for tracking (max 255 characters)'
+                        )
+                    ),
+                    'required' => array('text')
+                ),
+                'callback' => array($dataforseo, 'handle_content_text_summary')
+            ));
+            
+            // Register grammar languages tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_content_grammar_languages',
+                'description' => 'Get list of supported languages for grammar checking using DataForSEO Content Generation API.',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => new \stdClass()
+                ),
+                'callback' => array($dataforseo, 'handle_content_grammar_languages')
+            ));
+            
+            // Register grammar rules tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_content_grammar_rules',
+                'description' => 'Get available grammar rules and categories from DataForSEO Content Generation API.',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => new \stdClass()
+                ),
+                'callback' => array($dataforseo, 'handle_content_grammar_rules')
+            ));
+            
+            // Register summary languages tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_content_summary_languages',
+                'description' => 'Get list of supported languages for text summary analysis using DataForSEO Content Generation API.',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => new \stdClass()
+                ),
+                'callback' => array($dataforseo, 'handle_content_summary_languages')
+            ));
         }
     }
     
