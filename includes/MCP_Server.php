@@ -3557,11 +3557,29 @@ class MCP_Server {
         );
 
         if ($include_details) {
+            // Limit detail arrays to reduce payload size
             $summary['details'] = array(
-                'missing'    => $missing,
-                'modified'   => $modified,
-                'unexpected' => $unexpected
+                'missing'    => array_slice($missing, 0, 50),
+                'modified'   => array_slice($modified, 0, 50),
+                'unexpected' => array_slice($unexpected, 0, 50)
             );
+            
+            // Add truncation info and counts
+            $summary['counts'] = array(
+                'missing_total'    => count($missing),
+                'modified_total'   => count($modified), 
+                'unexpected_total' => count($unexpected)
+            );
+            
+            if (count($missing) > 50) {
+                $summary['details']['missing_truncated'] = count($missing) - 50;
+            }
+            if (count($modified) > 50) {
+                $summary['details']['modified_truncated'] = count($modified) - 50;
+            }
+            if (count($unexpected) > 50) {
+                $summary['details']['unexpected_truncated'] = count($unexpected) - 50;
+            }
         }
 
         return array('success' => true, 'checksum_report' => $summary);
@@ -3655,6 +3673,8 @@ class MCP_Server {
      */
     public function security_file_permissions($args) {
         $include_details = isset($args['include_details']) ? (bool) $args['include_details'] : false;
+        $max_files = isset($args['max_files']) ? (int) $args['max_files'] : 2000;
+        $max_issues = isset($args['max_issues']) ? (int) $args['max_issues'] : 100;
 
         $paths_to_scan = array(
             ABSPATH,
@@ -3666,6 +3686,8 @@ class MCP_Server {
         $issues = array();
         $critical_issues = array();
         $total = 0;
+        $start_time = time();
+        $max_execution_time = 30; // 30 seconds max
 
         foreach ($paths_to_scan as $base) {
             if (!file_exists($base)) continue;
@@ -3675,6 +3697,11 @@ class MCP_Server {
                 : array($base);
 
             foreach ($iterator as $path) {
+                // Check execution time and file limits
+                if (time() - $start_time > $max_execution_time || $total >= $max_files) {
+                    break 2; // Break out of both loops
+                }
+                
                 // Skip files that shouldn't be checked for permissions issues
                 $relative_path = str_replace(ABSPATH, '', $path);
                 if ($this->should_skip_permission_check($relative_path)) {
@@ -3682,50 +3709,32 @@ class MCP_Server {
                 }
 
                 $total++;
+                
+                // Stop collecting more issues if we have enough critical ones
+                if (count($critical_issues) >= $max_issues) {
+                    continue;
+                }
                 $isDir = is_dir($path);
                 $perms = substr(sprintf('%o', fileperms($path)), -4);
                 
-                // Determine recommended permissions and severity
-                $severity = $this->assess_permission_issue($path, $perms, $isDir);
+                // Check for permission issues with WordPress context
+                $issue_details = $this->get_wordpress_permission_issue($path, $perms, $isDir);
                 
-                if ($severity !== 'ok') {
-                    $recommended = $isDir ? '0755' : '0644';
+                if ($issue_details) {
+                    $issue = array(
+                        'file_path' => $relative_path,
+                        'full_path' => $path,
+                        'filename' => basename($path),
+                        'current_permissions' => $this->format_permissions_user_friendly($perms, $isDir),
+                        'issue' => $issue_details['issue'],
+                        'user_friendly_fix' => $issue_details['fix'],
+                        'severity' => $issue_details['severity'],
+                        'hosting_note' => $issue_details['hosting_note']
+                    );
                     
-                    // Special cases
-                    if (basename($path) === 'wp-config.php') {
-                        $recommended = '0600-0644';
-                        if (!in_array($perms, array('0600', '0644', '0640'), true)) {
-                            $issue = array(
-                                'path' => $relative_path, 
-                                'perms' => $perms, 
-                                'recommended' => $recommended,
-                                'severity' => 'critical',
-                                'reason' => 'wp-config.php contains sensitive database credentials'
-                            );
-                            $issues[] = $issue;
-                            $critical_issues[] = $issue;
-                        }
-                        continue;
-                    }
-                    
-                    if ($severity === 'critical') {
-                        $issue = array(
-                            'path' => $relative_path, 
-                            'perms' => $perms, 
-                            'recommended' => $recommended,
-                            'severity' => $severity,
-                            'reason' => $this->get_permission_issue_reason($path, $perms, $isDir)
-                        );
-                        $issues[] = $issue;
+                    $issues[] = $issue;
+                    if ($issue_details['severity'] === 'critical') {
                         $critical_issues[] = $issue;
-                    } elseif ($severity === 'warning') {
-                        $issues[] = array(
-                            'path' => $relative_path, 
-                            'perms' => $perms, 
-                            'recommended' => $recommended,
-                            'severity' => $severity,
-                            'reason' => $this->get_permission_issue_reason($path, $perms, $isDir)
-                        );
                     }
                 }
             }
@@ -3738,18 +3747,120 @@ class MCP_Server {
             'has_issues'          => !empty($issues),
             'has_critical_issues' => !empty($critical_issues),
             'notes' => array(
-                'scope' => 'Focused on security-critical files and directories',
-                'excluded' => 'Cache files, logs, uploads, and development files are excluded from permission checks',
-                'critical_note' => count($critical_issues) > 0 ? 'Critical permission issues found that could compromise security' : null,
-                'general_note' => 'Only significant permission deviations are flagged'
+                'scope' => 'Basic permission check for WordPress security',
+                'excluded' => 'Cache files, logs, uploads, and development files are excluded',
+                'priority' => 'File permissions are less critical than other security issues',
+                'hosting_awareness' => 'Permission recommendations may vary based on your hosting environment',
+                'critical_note' => count($critical_issues) > 0 ? 'Some files may need attention, but consult your hosting provider first' : null
             )
         );
         
         if ($include_details) {
-            $summary['details'] = $issues;
+            // Limit details and prioritize critical issues
+            $critical_details = array_slice($critical_issues, 0, 50);
+            $warning_details = array_slice(array_diff($issues, $critical_issues), 0, 50);
+            
+            $summary['details'] = array(
+                'critical' => $critical_details,
+                'warnings' => $warning_details
+            );
+            
+            // Add truncation info
+            if (count($critical_issues) > 50) {
+                $summary['details']['critical_truncated'] = count($critical_issues) - 50;
+            }
+            if (count($issues) - count($critical_issues) > 50) {
+                $summary['details']['warnings_truncated'] = (count($issues) - count($critical_issues)) - 50;
+            }
+            
+            $summary['counts'] = array(
+                'critical_total' => count($critical_issues),
+                'warnings_total' => count($issues) - count($critical_issues)
+            );
         }
         
         return array('success' => true, 'report' => $summary);
+    }
+
+    /**
+     * Get WordPress-aware permission issue with user-friendly messaging
+     */
+    private function get_wordpress_permission_issue($path, $perms, $isDir) {
+        $filename = basename($path);
+        $relative_path = str_replace(ABSPATH, '', $path);
+        
+        // Only flag truly dangerous permission issues
+        
+        // World-writable files are a real security risk
+        if (substr($perms, -1) === '7') {
+            return array(
+                'severity' => 'critical',
+                'issue' => 'This file can be modified by anyone on the server',
+                'fix' => 'Contact your hosting provider to secure this file',
+                'hosting_note' => 'Your hosting provider should help fix this - don\'t change permissions manually without their guidance'
+            );
+        }
+        
+        // Executable PHP files in uploads directory (major security risk)
+        if (strpos($path, 'wp-content/uploads/') !== false && pathinfo($path, PATHINFO_EXTENSION) === 'php') {
+            return array(
+                'severity' => 'critical',
+                'issue' => 'PHP files should not exist in the uploads directory',
+                'fix' => 'Remove this PHP file from uploads directory - it may be malicious',
+                'hosting_note' => 'This is likely a security threat - contact your hosting provider immediately'
+            );
+        }
+        
+        // wp-config.php with overly permissive permissions
+        if ($filename === 'wp-config.php' && intval($perms) > 644) {
+            return array(
+                'severity' => 'warning',
+                'issue' => 'WordPress configuration file has broad access permissions',
+                'fix' => 'Ask your hosting provider to review wp-config.php permissions',
+                'hosting_note' => 'Many hosting environments handle this automatically - check with support first'
+            );
+        }
+        
+        // Only report other issues if they're severely misconfigured
+        if ($isDir && intval($perms) > 777) {
+            return array(
+                'severity' => 'warning',
+                'issue' => 'Directory has unusual permissions',
+                'fix' => 'Contact hosting support to review directory permissions',
+                'hosting_note' => 'Some hosting environments use different permission schemes'
+            );
+        }
+        
+        return null; // No significant issue found
+    }
+    
+    /**
+     * Format permissions in user-friendly way
+     */
+    private function format_permissions_user_friendly($perms, $isDir) {
+        $type = $isDir ? 'Directory' : 'File';
+        $owner_perms = array();
+        $group_perms = array();
+        $other_perms = array();
+        
+        // Owner permissions (first digit after 0)
+        $owner = intval($perms[1]);
+        if ($owner >= 4) $owner_perms[] = 'read';
+        if ($owner >= 2) $owner_perms[] = 'write';
+        if ($owner % 2 === 1) $owner_perms[] = 'execute';
+        
+        // Other permissions (last digit)
+        $other = intval($perms[3]);
+        if ($other >= 4) $other_perms[] = 'read';
+        if ($other >= 2) $other_perms[] = 'write';
+        if ($other % 2 === 1) $other_perms[] = 'execute';
+        
+        $description = $type . ' permissions: Owner can ' . implode(', ', $owner_perms);
+        if (!empty($other_perms)) {
+            $description .= '; Everyone can ' . implode(', ', $other_perms);
+        }
+        
+        return $description;
     }
 
     /**
@@ -3785,81 +3896,19 @@ class MCP_Server {
         return false;
     }
 
-    /**
-     * Assess the severity of a permission issue
-     */
+    /*
+     * DEPRECATED: Old harsh permission checking methods - replaced with WordPress-aware alternatives
+     * 
     private function assess_permission_issue($path, $perms, $isDir) {
-        $filename = basename($path);
-        $extension = pathinfo($path, PATHINFO_EXTENSION);
-        
-        // World-writable files/directories are always critical
-        if (substr($perms, -1) === '7' || substr($perms, -1) === '6') {
-            return 'critical';
-        }
-        
-        // Executable PHP files in uploads directory
-        if (strpos($path, 'wp-content/uploads/') !== false && $extension === 'php') {
-            if (substr($perms, -3, 1) >= '1' || substr($perms, -2, 1) >= '1' || substr($perms, -1) >= '1') {
-                return 'critical';
-            }
-        }
-        
-        // Core WordPress files with wrong permissions
-        if (strpos($path, 'wp-admin/') !== false || strpos($path, 'wp-includes/') !== false) {
-            if ($isDir && $perms !== '0755') {
-                return intval($perms) > 755 ? 'critical' : 'warning';
-            } elseif (!$isDir && $perms !== '0644') {
-                return intval($perms) > 644 ? 'warning' : 'ok';
-            }
-        }
-        
-        // Configuration files
-        if (in_array($filename, array('wp-config.php', '.htaccess'))) {
-            if (intval($perms) > 644) {
-                return 'critical';
-            }
-        }
-        
-        // Plugin/theme files
-        if (strpos($path, 'wp-content/plugins/') !== false || strpos($path, 'wp-content/themes/') !== false) {
-            if ($isDir && intval($perms) > 755) {
-                return 'warning';
-            } elseif (!$isDir && intval($perms) > 644) {
-                return 'warning';
-            }
-        }
-        
-        return 'ok';
+        // This method was too strict and suggested changes that could break WordPress
+        // Replaced with get_wordpress_permission_issue()
     }
 
-    /**
-     * Get reason for permission issue
-     */
     private function get_permission_issue_reason($path, $perms, $isDir) {
-        $filename = basename($path);
-        
-        // World-writable
-        if (substr($perms, -1) === '7' || substr($perms, -1) === '6') {
-            return 'File/directory is world-writable, allowing anyone to modify it';
-        }
-        
-        // Executable uploads
-        if (strpos($path, 'wp-content/uploads/') !== false) {
-            return 'Files in uploads directory should not be executable';
-        }
-        
-        // Configuration files
-        if (in_array($filename, array('wp-config.php', '.htaccess'))) {
-            return 'Configuration files should have restrictive permissions';
-        }
-        
-        // Generic
-        if ($isDir) {
-            return 'Directory permissions are more permissive than recommended';
-        } else {
-            return 'File permissions are more permissive than recommended';
-        }
+        // This method generated technical messages not suitable for end users
+        // Replaced with user-friendly messaging in get_wordpress_permission_issue()
     }
+    */
 
     /**
      * Inspect security-related HTTP headers.
@@ -4019,11 +4068,22 @@ class MCP_Server {
             )
         );
         if ($include_details) {
+            // Limit detail arrays to reduce payload size
             $summary['details'] = array(
-                'new_files'      => array_keys($new_files),
-                'deleted_files'  => array_keys($deleted_files),
-                'modified_files' => $modified_files
+                'new_files'      => array_slice(array_keys($new_files), 0, 50),
+                'deleted_files'  => array_slice(array_keys($deleted_files), 0, 50),
+                'modified_files' => array_slice($modified_files, 0, 50, true)
             );
+            // Add truncation info if needed
+            if (count($new_files) > 50) {
+                $summary['details']['new_files_truncated'] = count($new_files) - 50;
+            }
+            if (count($deleted_files) > 50) {
+                $summary['details']['deleted_files_truncated'] = count($deleted_files) - 50;
+            }
+            if (count($modified_files) > 50) {
+                $summary['details']['modified_files_truncated'] = count($modified_files) - 50;
+            }
         }
         return array('success' => true, 'integrity_report' => $summary);
     }
@@ -4031,9 +4091,14 @@ class MCP_Server {
     /**
      * Helper to generate file => md5 hash snapshot.
      */
-    private function generate_file_hash_snapshot() {
+    private function generate_file_hash_snapshot($max_files = 1000) {
         $dirs = array(ABSPATH, WP_CONTENT_DIR);
         $snapshot = array();
+        $file_count = 0;
+        $priority_files = array();
+        $regular_files = array();
+        
+        // First pass: collect and prioritize files
         foreach ($dirs as $base) {
             if (!is_dir($base)) continue;
             $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($base, \FilesystemIterator::SKIP_DOTS));
@@ -4048,10 +4113,35 @@ class MCP_Server {
                 
                 // Only hash reasonably sized files (<5MB) to avoid memory issues
                 if ($file->getSize() <= 5 * 1024 * 1024) {
-                    $snapshot[$rel] = md5_file($file);
+                    // Prioritize critical files
+                    if ($this->is_critical_security_file($rel)) {
+                        $priority_files[$rel] = $file;
+                    } else {
+                        $regular_files[$rel] = $file;
+                    }
                 }
             }
         }
+        
+        // Process priority files first (always include)
+        foreach ($priority_files as $rel => $file) {
+            if ($file_count >= $max_files) break;
+            $snapshot[$rel] = substr(md5_file($file), 0, 12); // 12-char hash for space efficiency
+            $file_count++;
+        }
+        
+        // Random sample from regular files if we have room
+        $remaining_slots = $max_files - $file_count;
+        if ($remaining_slots > 0 && !empty($regular_files)) {
+            if (count($regular_files) > $remaining_slots) {
+                $regular_files = array_slice($regular_files, 0, $remaining_slots, true);
+            }
+            foreach ($regular_files as $rel => $file) {
+                $snapshot[$rel] = substr(md5_file($file), 0, 12);
+                $file_count++;
+            }
+        }
+        
         return $snapshot;
     }
 
@@ -4131,6 +4221,61 @@ class MCP_Server {
             return pathinfo($file, PATHINFO_EXTENSION) !== 'php';
         }
 
+        return false;
+    }
+
+    /**
+     * Check if a file is critical for security monitoring
+     */
+    private function is_critical_security_file($file) {
+        $critical_patterns = array(
+            // WordPress core configuration
+            'wp-config.php',
+            'wp-config-sample.php',
+            '.htaccess',
+            
+            // WordPress core admin files
+            'wp-admin/admin.php',
+            'wp-admin/admin-ajax.php',
+            'wp-admin/index.php',
+            'wp-login.php',
+            'xmlrpc.php',
+            
+            // WordPress core includes
+            'wp-includes/functions.php',
+            'wp-includes/class-wp-user.php',
+            'wp-includes/user.php',
+            'wp-includes/pluggable.php',
+            'wp-includes/wp-db.php',
+            
+            // Must-use plugins (always loaded)
+            'wp-content/mu-plugins/',
+            
+            // Active theme files (especially index.php, functions.php)
+            'wp-content/themes/'.get_template().'/index.php',
+            'wp-content/themes/'.get_template().'/functions.php',
+            'wp-content/themes/'.get_stylesheet().'/index.php',
+            'wp-content/themes/'.get_stylesheet().'/functions.php',
+        );
+        
+        $file_lower = strtolower($file);
+        
+        foreach ($critical_patterns as $pattern) {
+            if (strpos($file_lower, strtolower($pattern)) !== false) {
+                return true;
+            }
+        }
+        
+        // Any .php file in wp-admin root
+        if (preg_match('/^wp-admin\/[^\/]+\.php$/', $file)) {
+            return true;
+        }
+        
+        // Any .php file in wp-includes root  
+        if (preg_match('/^wp-includes\/[^\/]+\.php$/', $file)) {
+            return true;
+        }
+        
         return false;
     }
 
