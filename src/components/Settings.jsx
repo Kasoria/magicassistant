@@ -78,7 +78,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         seo_target_location: settings.seo_target_location || '',
         seo_target_language: settings.seo_target_language || 'en',
         seo_target_keywords: settings.seo_target_keywords || '',
-        floating_chat_enabled: settings.floating_chat_enabled === undefined ? true : settings.floating_chat_enabled,
+        floating_chat_enabled: settings.floating_chat_enabled === undefined ? false : settings.floating_chat_enabled,
         floating_chat_conditions: settings.floating_chat_conditions || 'everywhere',
         floating_chat_user_roles: settings.floating_chat_user_roles || [],
         floating_chat_specific_users: settings.floating_chat_specific_users || [],
