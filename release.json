@@ -5,7 +5,7 @@
   "author_profile": "https://magicplugins.io",
   "version": "1.0.1",
   "requires": "6.5",
-  "tested": "6.8.1",
+  "tested": "6.8.2",
   "requires_php": "7.4",
   "banners": {
     "high": "https://magicplugins.io/wp-content/uploads/banner-1544x500-1.jpg",
