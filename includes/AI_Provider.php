@@ -343,6 +343,8 @@ class AI_Provider {
         $truncate_at_message = $data['truncate_at_message'] ?? null;
         $page_url = $data['page_url'] ?? '';
         $page_context = $data['page_context'] ?? null;
+        $attached_files = $data['attached_files'] ?? [];
+        $custom_system_message = $data['custom_system_message'] ?? null;
         
         // Reset tool discovery flag for new sessions
         if ($this->current_session_id !== $session_id) {
@@ -362,6 +364,8 @@ class AI_Provider {
             'truncate_at_message' => $truncate_at_message,
             'page_url' => $page_url,
             'page_context' => $page_context,
+            'attached_files_count' => count($attached_files),
+            'has_custom_system_message' => !empty($custom_system_message),
             'history_length' => count($conversation_history),
             'timestamp' => current_time('mysql')
         );
@@ -430,10 +434,10 @@ class AI_Provider {
             
             if ($agent_mode) {
                 // Use agent mode for complex multi-step tasks
-                $result = $this->handle_agent_mode($message, $conversation_history, $provider, $api_key);
+                $result = $this->handle_agent_mode($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message);
             } else {
                 // Use simple chat mode
-                $result = $this->handle_chat_mode($message, $conversation_history, $provider, $api_key);
+                $result = $this->handle_chat_mode($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message);
             }
             
             $response_time = microtime(true) - $start_time;
@@ -602,7 +606,7 @@ class AI_Provider {
         return false; // Always return false since auto mode is removed
     }
     
-    private function handle_chat_mode($message, $conversation_history, $provider, $api_key) {
+    private function handle_chat_mode($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null) {
         // Limit the amount of history we send to the model to save tokens
         $history_limit = $this->settings['conversation_history_limit'] ?? 20;
         if ($history_limit > 0 && is_array($conversation_history) && count($conversation_history) > $history_limit) {
@@ -610,7 +614,19 @@ class AI_Provider {
         }
         
         // Prepare system message with MCP tools information
-        $system_message = $this->build_system_message();
+        $system_message = $this->build_system_message($custom_system_message);
+        
+        // Append file attachments information if present
+        if (!empty($attached_files)) {
+            $files_info = "\n\nAttached Files:\n";
+            foreach ($attached_files as $file) {
+                $files_info .= "- {$file['name']} ({$file['type']}, " . round($file['size'] / 1024, 1) . "KB)";
+                if (!empty($file['content'])) {
+                    $files_info .= "\n";
+                }
+            }
+            $system_message .= $files_info;
+        }
         
         // Build conversation with system message
         $messages = array_merge(
@@ -742,7 +758,7 @@ class AI_Provider {
         );
     }
     
-    private function handle_agent_mode($message, $conversation_history, $provider, $api_key) {
+    private function handle_agent_mode($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null) {
         // Limit history length to avoid oversized prompts while keeping recent context
         $history_limit = $this->settings['conversation_history_limit'] ?? 20;
         if ($history_limit > 0 && is_array($conversation_history) && count($conversation_history) > $history_limit) {
@@ -755,7 +771,19 @@ class AI_Provider {
         $all_tool_results = []; // Store all tool results for final display
         
         // Prepare enhanced system message for agent mode
-        $system_message = $this->build_agent_system_message();
+        $system_message = $this->build_agent_system_message($custom_system_message);
+        
+        // Append file attachments information if present
+        if (!empty($attached_files)) {
+            $files_info = "\n\nAttached Files:\n";
+            foreach ($attached_files as $file) {
+                $files_info .= "- {$file['name']} ({$file['type']}, " . round($file['size'] / 1024, 1) . "KB)";
+                if (!empty($file['content'])) {
+                    $files_info .= "\n";
+                }
+            }
+            $system_message .= $files_info;
+        }
         
         // Build initial conversation
         $messages = array_merge(
@@ -953,7 +981,11 @@ class AI_Provider {
         return $formatted;
     }
     
-    private function build_agent_system_message() {
+    private function build_agent_system_message($custom_system_message = null) {
+        // If custom system message is provided, use it instead of the default
+        if (!empty($custom_system_message)) {
+            return $custom_system_message;
+        }
         $tools_info = "\nYou have access to a comprehensive set of WordPress MCP tools including SEO analysis capabilities through DataForSEO. Use them thoughtfully when they can enhance your answer.\n";
         
         return "You are MagicAssistant, a helpful AI assistant for WordPress websites operating in AGENT MODE. You can help users manage their WordPress site, create content, perform SEO analysis, and execute complex multi-step operations.
@@ -984,7 +1016,11 @@ In Agent Mode, you should:
 Be proactive and thorough, but focus on creating natural, helpful responses rather than technical data dumps.";
     }
 
-    private function build_system_message() {
+    private function build_system_message($custom_system_message = null) {
+        // If custom system message is provided, use it instead of the default
+        if (!empty($custom_system_message)) {
+            return $custom_system_message;
+        }
         $tools_info = "\nYou have access to a comprehensive set of WordPress MCP tools including SEO analysis capabilities through DataForSEO. Use them thoughtfully when they can enhance your answer.\n";
         
         return "You are MagicAssistant, a helpful AI assistant for WordPress websites. You can help users manage their WordPress site, create content, perform SEO analysis, and provide guidance.

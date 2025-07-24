@@ -55,6 +55,20 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
   const [availablePosts, setAvailablePosts] = useState([])
   const [loadingPosts, setLoadingPosts] = useState(false)
   
+  // File upload and attachment states
+  const [attachedFiles, setAttachedFiles] = useState([])
+  const [isFileModalOpen, setIsFileModalOpen] = useState(false)
+  const [customFileContent, setCustomFileContent] = useState('')
+  const [customFileName, setCustomFileName] = useState('')
+  const [customFileType, setCustomFileType] = useState('txt')
+  const [isDragOver, setIsDragOver] = useState(false)
+  const fileInputRef = useRef(null)
+  
+  // Chat settings states
+  const [customSystemMessage, setCustomSystemMessage] = useState('')
+  const [enableCustomSystem, setEnableCustomSystem] = useState(false)
+  const [persistFiles, setPersistFiles] = useState(false)
+  
   // Helper: reset lightbox state when opening
   const resetLightboxState = () => {
     setLightboxZoom(1)
@@ -232,6 +246,16 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
       setInputMessage(prefillMessage)
       sessionStorage.removeItem('mat_prefill_message')
     }
+    
+    // Load custom system message from localStorage
+    const savedSystemMessage = localStorage.getItem('magicassistant_custom_system_message')
+    const savedEnableCustom = localStorage.getItem('magicassistant_enable_custom_system') === 'true'
+    const savedPersistFiles = localStorage.getItem('magicassistant_persist_files') === 'true'
+    if (savedSystemMessage) {
+      setCustomSystemMessage(savedSystemMessage)
+    }
+    setEnableCustomSystem(savedEnableCustom)
+    setPersistFiles(savedPersistFiles)
   }, [])
 
   const loadSettings = async () => {
@@ -327,19 +351,54 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
   }
 
   const sendMessage = async () => {
-    if (!inputMessage.trim()) return
+    if (!inputMessage.trim() && attachedFiles.length === 0) return
+    
+    // Prepare display message content (what the user sees in chat)
+    let displayContent = inputMessage || ''
+    if (attachedFiles.length > 0) {
+      const filesDisplay = attachedFiles.map(file => {
+        if (file.isImage) {
+          return `📷 **Image:** ${file.name} (${(file.size / 1024).toFixed(1)}KB)`
+        } else {
+          return `📎 **File:** ${file.name} (${file.type}, ${(file.size / 1024).toFixed(1)}KB)`
+        }
+      }).join('\n')
+      
+      displayContent = displayContent ? `${displayContent}\n\n${filesDisplay}` : filesDisplay
+    }
+    
+    // Prepare API message content (what gets sent to the AI with full file contents)
+    let apiMessageContent = inputMessage || ''
+    if (attachedFiles.length > 0) {
+      const filesContent = attachedFiles.map(file => {
+        if (file.isImage && file.content) {
+          return `**Image: ${file.name}** (${file.type}, ${(file.size / 1024).toFixed(1)}KB)\n${file.content}`
+        } else if (file.content && !file.isImage) {
+          return `**File: ${file.name}** (${file.type})\n\`\`\`\n${file.content}\n\`\`\``
+        } else {
+          return `**File: ${file.name}** (${file.type}, ${(file.size / 1024).toFixed(1)}KB) - Binary file attached`
+        }
+      }).join('\n\n')
+      
+      apiMessageContent = apiMessageContent ? `${apiMessageContent}\n\n${filesContent}` : filesContent
+    }
     
     const userMessage = {
       role: 'user',
-      content: inputMessage,
+      content: displayContent, // This is what shows in the chat UI
       timestamp: new Date(),
       userId: adminData?.currentUser?.id,
       userName: adminData?.currentUser?.name,
-      userAvatar: adminData?.currentUser?.avatar
+      userAvatar: adminData?.currentUser?.avatar,
+      attachedFiles: attachedFiles.length > 0 ? attachedFiles : undefined
     }
 
     setMessages(prev => [...prev, userMessage])
     setInputMessage('')
+    // Only clear files if persistence is disabled
+    if (!persistFiles) {
+      setAttachedFiles([])
+    }
     setIsLoading(true)
 
     try {
@@ -362,7 +421,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
           'X-WP-Nonce': adminData.nonces.wp_rest,
         },
         body: JSON.stringify({
-          message: inputMessage,
+          message: apiMessageContent, // Use the API version with full content
           history: messages.filter(msg => msg.role !== 'system').map(msg => ({
             role: msg.role,
             content: msg.content
@@ -370,7 +429,15 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
           agent_mode: forceAgentMode,
           session_id: currentSessionId,
           page_url: pageContext.url,
-          page_context: pageContext
+          page_context: pageContext,
+          attached_files: attachedFiles.length > 0 ? attachedFiles.map(f => ({
+            name: f.name,
+            type: f.type,
+            size: f.size,
+            content: f.content,
+            isImage: f.isImage || false
+          })) : undefined,
+          custom_system_message: enableCustomSystem && customSystemMessage ? customSystemMessage : undefined
         })
       })
 
@@ -702,6 +769,10 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
     setCustomTitle('') // Reset custom title
     setIsEditingTitle(false) // Stop editing if in edit mode
     setForceAgentMode(true)   // Default back to Agent Mode
+    // Only clear files if persistence is disabled
+    if (!persistFiles) {
+      setAttachedFiles([]) // Clear any attached files
+    }
   }
 
   const startNewChat = () => {
@@ -1332,6 +1403,124 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
     }
   }
 
+  // File handling functions
+  const handleFileUpload = (files) => {
+    const newFiles = Array.from(files).map(file => ({
+      id: Date.now() + Math.random(),
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      file: file,
+      content: null, // Will be populated when read
+      isImage: file.type.startsWith('image/'),
+      dataUrl: null // For images
+    }))
+    
+    // Process files based on type
+    newFiles.forEach(fileObj => {
+      if (fileObj.isImage) {
+        // For images, create data URL for preview and send as base64
+        const reader = new FileReader()
+        reader.onload = (e) => {
+          fileObj.dataUrl = e.target.result
+          fileObj.content = e.target.result // base64 data URL
+          setAttachedFiles(prev => [...prev.filter(f => f.id !== fileObj.id), fileObj])
+        }
+        reader.readAsDataURL(fileObj.file)
+      } else if (fileObj.type.startsWith('text/') || 
+          fileObj.name.endsWith('.txt') || 
+          fileObj.name.endsWith('.md') || 
+          fileObj.name.endsWith('.json') ||
+          fileObj.name.endsWith('.js') ||
+          fileObj.name.endsWith('.css') ||
+          fileObj.name.endsWith('.html') ||
+          fileObj.name.endsWith('.php') ||
+          fileObj.name.endsWith('.py') ||
+          fileObj.name.endsWith('.xml') ||
+          fileObj.name.endsWith('.csv')) {
+        // For text files, read as text
+        const reader = new FileReader()
+        reader.onload = (e) => {
+          fileObj.content = e.target.result
+          setAttachedFiles(prev => [...prev.filter(f => f.id !== fileObj.id), fileObj])
+        }
+        reader.readAsText(fileObj.file)
+      }
+    })
+    
+    setAttachedFiles(prev => [...prev, ...newFiles])
+  }
+
+  const removeAttachedFile = (fileId) => {
+    setAttachedFiles(prev => prev.filter(f => f.id !== fileId))
+  }
+
+  const createCustomFile = () => {
+    if (!customFileContent.trim() || !customFileName.trim()) {
+      showError('Please provide both file name and content')
+      return
+    }
+
+    const fileExtension = customFileType === 'txt' ? '.txt' : `.${customFileType}`
+    const fileName = customFileName.endsWith(fileExtension) ? customFileName : `${customFileName}${fileExtension}`
+    
+    const customFile = {
+      id: Date.now() + Math.random(),
+      name: fileName,
+      size: new Blob([customFileContent]).size,
+      type: `text/${customFileType}`,
+      file: new File([customFileContent], fileName, { type: `text/${customFileType}` }),
+      content: customFileContent,
+      isCustomCreated: true,
+      isImage: false,
+      dataUrl: null
+    }
+
+    setAttachedFiles(prev => [...prev, customFile])
+    setCustomFileContent('')
+    setCustomFileName('')
+    setIsFileModalOpen(false)
+    showSuccess('Custom file created and attached!')
+  }
+
+  const handleDragOver = (e) => {
+    e.preventDefault()
+    setIsDragOver(true)
+  }
+
+  const handleDragLeave = (e) => {
+    e.preventDefault()
+    setIsDragOver(false)
+  }
+
+  const handleDrop = (e) => {
+    e.preventDefault()
+    setIsDragOver(false)
+    const files = e.dataTransfer.files
+    if (files.length > 0) {
+      handleFileUpload(files)
+    }
+  }
+
+  const saveCustomSystemMessage = () => {
+    localStorage.setItem('magicassistant_custom_system_message', customSystemMessage)
+    localStorage.setItem('magicassistant_enable_custom_system', enableCustomSystem)
+    showSuccess('Custom system message saved!')
+  }
+
+  const clearCustomSystemMessage = () => {
+    setCustomSystemMessage('')
+    setEnableCustomSystem(false)
+    localStorage.removeItem('magicassistant_custom_system_message')
+    localStorage.removeItem('magicassistant_enable_custom_system')
+    showSuccess('Custom system message cleared!')
+  }
+
+  const saveFilePersistenceSetting = () => {
+    localStorage.setItem('magicassistant_persist_files', persistFiles)
+    showSuccess('File persistence setting saved!')
+  }
+
   return (
     
     <div className={`h-[calc(100vh-7.4rem)] mx-auto flex flex-col ${isDrawerMode ? 'h-full' : ''}`}>
@@ -1698,8 +1887,68 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
             </p>
           </div>
         ) : (
-          <div className={`flex items-center gap-3`}>
-            <div className="relative flex-1">
+          <div className="space-y-3">
+            {/* Attached Files Display */}
+            {attachedFiles.length > 0 && (
+              <div className="space-y-2">
+                {persistFiles && (
+                  <div className="text-xs text-purple-600 dark:text-purple-400 flex items-center gap-1">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                    Files will persist throughout chat
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2">
+                {attachedFiles.map(file => (
+                  <div key={file.id} className="flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-sm">
+                    {file.isImage ? (
+                      <div className="flex items-center gap-2">
+                        {file.dataUrl && (
+                          <img 
+                            src={file.dataUrl} 
+                            alt={file.name}
+                            className="w-8 h-8 object-cover rounded border"
+                          />
+                        )}
+                        <svg className="w-4 h-4 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                      </div>
+                    ) : (
+                      <svg className="w-4 h-4 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                      </svg>
+                    )}
+                    <span className="text-blue-800 dark:text-blue-200">{file.name}</span>
+                    {file.isCustomCreated && (
+                      <span className="text-xs bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-200 px-2 py-0.5 rounded">Custom</span>
+                    )}
+                    {file.isImage && (
+                      <span className="text-xs bg-purple-100 dark:bg-purple-900/20 text-purple-800 dark:text-purple-200 px-2 py-0.5 rounded">Image</span>
+                    )}
+                    <button
+                      onClick={() => removeAttachedFile(file.id)}
+                      className="text-red-500 hover:text-red-700 ml-1"
+                    >
+                      <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+                </div>
+              </div>
+            )}
+            
+            <div 
+              className={`${
+                isDragOver ? 'ring-2 ring-blue-500 ring-opacity-50 rounded-lg' : ''
+              }`}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
               <Textarea
                 placeholder="Ask me anything about your WordPress site..."
                 value={inputMessage}
@@ -1707,26 +1956,68 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                 onKeyPress={handleKeyPress}
                 disabled={isLoading}
                 rows={isDrawerMode ? 2 : 3}
-                className={`w-full pr-16 resize-y text-sm leading-relaxed placeholder-gray-500 dark:placeholder-gray-400 ${isDrawerMode ? 'text-sm' : ''}`}
+                className={`w-full resize-y text-sm leading-relaxed placeholder-gray-500 dark:placeholder-gray-400 ${isDrawerMode ? 'text-sm' : ''}`}
               />
-              <Button
-                onClick={sendMessage}
-                disabled={isLoading || !inputMessage.trim()}
-                size={isDrawerMode ? "sm" : "default"}
-                className="absolute bottom-2 right-2 z-10 rounded-full p-2 text-primary-600 hover:bg-primary-100 dark:text-primary-500 dark:hover:bg-gray-600"
-              >
-                {isLoading ? <Spinner size="sm" /> : (
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    className="w-5 h-5"
+              
+              {/* Button row below textarea */}
+              <div className="flex items-center justify-between mt-2">
+                {/* File buttons - left side */}
+                <div className="flex gap-2">
+                  {/* File Upload Button */}
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isLoading}
+                    className="flex items-center justify-center w-8 h-8 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 rounded-lg transition-colors"
+                    title="Upload file"
                   >
-                    <path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" />
-                  </svg>
-                )}
-              </Button>
+                    <svg className="w-4 h-4 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    </svg>
+                  </button>
+                  
+                  {/* Create Custom File Button */}
+                  <button
+                    onClick={() => setIsFileModalOpen(true)}
+                    disabled={isLoading}
+                    className="flex items-center justify-center w-8 h-8 bg-green-100 hover:bg-green-200 dark:bg-green-700 dark:hover:bg-green-600 rounded-lg transition-colors"
+                    title="Create custom file"
+                  >
+                    <svg className="w-4 h-4 text-green-600 dark:text-green-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                  </button>
+                </div>
+                
+                {/* Send button - right side */}
+                <Button
+                  onClick={sendMessage}
+                  disabled={isLoading || (!inputMessage.trim() && attachedFiles.length === 0)}
+                  size={isDrawerMode ? "sm" : "default"}
+                  className="rounded-full p-2 text-primary-600 hover:bg-primary-100 dark:text-primary-500 dark:hover:bg-gray-600"
+                >
+                  {isLoading ? <Spinner size="sm" /> : (
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      className="w-5 h-5"
+                    >
+                      <path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" />
+                    </svg>
+                  )}
+                </Button>
+              </div>
             </div>
+            
+            {/* Hidden File Input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              onChange={(e) => handleFileUpload(e.target.files)}
+              className="hidden"
+              accept=".txt,.md,.json,.js,.css,.html,.py,.php,.xml,.csv,.log,.jpg,.jpeg,.png,.gif,.webp,.bmp,.svg"
+            />
           </div>
         )}
       </div>
@@ -1793,18 +2084,184 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
         </Drawer>
       )}
 
-      {/* Settings Modal (placeholder) */}
+      {/* Settings Modal */}
       {!isDrawerMode && (
         <ConfirmationModal 
           isOpen={isSettingsOpen} 
           onClose={() => setIsSettingsOpen(false)}
           title="Chat Settings"
           showActions={false}
-          maxWidth="max-w-2xl"
+          maxWidth="max-w-4xl"
         >
-          <p className="text-sm text-gray-500 dark:text-gray-400">Settings will show up here.</p>
+          <div className="space-y-6">
+            {/* Custom System Message Section */}
+            <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
+              <div className="flex items-center mb-3">
+                <input
+                  type="checkbox"
+                  id="enableCustomSystem"
+                  checked={enableCustomSystem}
+                  onChange={(e) => setEnableCustomSystem(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                />
+                <label htmlFor="enableCustomSystem" className="ml-2 text-sm font-medium text-gray-900 dark:text-gray-100 cursor-pointer">
+                  🤖 Enable Custom System Message
+                </label>
+              </div>
+              
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                Override the default system prompt with your own custom instructions for the AI.
+              </p>
+              
+              <div className="space-y-3">
+                <textarea
+                  value={customSystemMessage}
+                  onChange={(e) => setCustomSystemMessage(e.target.value)}
+                  placeholder="Enter your custom system message here... For example: 'You are a helpful WordPress expert who always provides detailed explanations with code examples.'"
+                  rows={6}
+                  className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white resize-none text-sm"
+                  disabled={!enableCustomSystem}
+                />
+                
+                <div className="flex gap-2">
+                  <Button
+                    onClick={saveCustomSystemMessage}
+                    size="sm"
+                    className="bg-blue-600 hover:bg-blue-700 text-white"
+                  >
+                    Save Custom Message
+                  </Button>
+                  <Button
+                    onClick={clearCustomSystemMessage}
+                    size="sm"
+                    color="gray"
+                  >
+                    Clear & Reset
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* File Persistence Settings */}
+            <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4 border border-purple-200 dark:border-purple-800">
+              <div className="flex items-center mb-3">
+                <input
+                  type="checkbox"
+                  id="persistFiles"
+                  checked={persistFiles}
+                  onChange={(e) => setPersistFiles(e.target.checked)}
+                  className="w-4 h-4 text-purple-600 bg-gray-100 border-gray-300 rounded focus:ring-purple-500 dark:focus:ring-purple-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                />
+                <label htmlFor="persistFiles" className="ml-2 text-sm font-medium text-purple-900 dark:text-purple-100 cursor-pointer">
+                  📎 Keep Files Attached Throughout Chat
+                </label>
+              </div>
+              
+              <p className="text-sm text-purple-800 dark:text-purple-200 mb-3">
+                When enabled, uploaded files will remain attached to all messages instead of being cleared after each send. 
+                Useful for ongoing work with the same files.
+              </p>
+              
+              <div className="flex gap-2">
+                <Button
+                  onClick={saveFilePersistenceSetting}
+                  size="sm"
+                  className="bg-purple-600 hover:bg-purple-700 text-white"
+                >
+                  Save Setting
+                </Button>
+                {persistFiles && (
+                  <Button
+                    onClick={() => setAttachedFiles([])}
+                    size="sm"
+                    color="gray"
+                  >
+                    Clear Current Files
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            
+          </div>
         </ConfirmationModal>
       )}
+
+      {/* Custom File Creation Modal */}
+      <ConfirmationModal
+        isOpen={isFileModalOpen}
+        onClose={() => setIsFileModalOpen(false)}
+        title="Create Custom File"
+        showActions={false}
+        maxWidth="max-w-2xl"
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                File Name
+              </label>
+              <input
+                type="text"
+                value={customFileName}
+                onChange={(e) => setCustomFileName(e.target.value)}
+                placeholder="my-file"
+                className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                File Type
+              </label>
+              <select
+                value={customFileType}
+                onChange={(e) => setCustomFileType(e.target.value)}
+                className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+              >
+                <option value="txt">Text (.txt)</option>
+                <option value="md">Markdown (.md)</option>
+                <option value="json">JSON (.json)</option>
+                <option value="js">JavaScript (.js)</option>
+                <option value="css">CSS (.css)</option>
+                <option value="html">HTML (.html)</option>
+                <option value="php">PHP (.php)</option>
+                <option value="py">Python (.py)</option>
+                <option value="xml">XML (.xml)</option>
+                <option value="csv">CSV (.csv)</option>
+              </select>
+            </div>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              File Content
+            </label>
+            <textarea
+              value={customFileContent}
+              onChange={(e) => setCustomFileContent(e.target.value)}
+              placeholder="Enter your file content here..."
+              rows={12}
+              className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white resize-none font-mono text-sm"
+            />
+          </div>
+          
+          <div className="flex justify-end gap-2">
+            <Button
+              onClick={() => setIsFileModalOpen(false)}
+              color="gray"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={createCustomFile}
+              disabled={!customFileName.trim() || !customFileContent.trim()}
+              className="bg-green-600 hover:bg-green-700 text-white"
+            >
+              Create File
+            </Button>
+          </div>
+        </div>
+      </ConfirmationModal>
 
       {/* Delete Session Confirmation Modal */}
       <ConfirmationModal
