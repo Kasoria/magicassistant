@@ -453,14 +453,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
           saveLastSession(data.session_id)
         }
         
-        // DEBUG: Log the raw response to see what format we're getting
-        console.log('MagicAssistant Frontend Debug - Raw API Response:', data)
-        console.log('MagicAssistant Frontend Debug - Response Content:', data.response)
-        console.log('MagicAssistant Frontend Debug - Response Type:', typeof data.response)
-        
         const responseContent = data.response;
         const chatContent = getTextFromResponse(responseContent)
-        console.log('MagicAssistant Frontend Debug - Extracted Chat Content:', chatContent)
         
         const { html: extractedHtml, css: extractedCss, js: extractedJs } = getPartsFromResponse(responseContent)
 
@@ -661,15 +655,6 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
               
               // Ensure we have the correct download_location for this specific image
               const downloadLocation = imageData?.download_location || ''
-              
-              // Log the featured image action for debugging
-              console.log('Setting Unsplash image as featured:', {
-                src,
-                downloadLocation,
-                effectiveAlt,
-                imageId: imageData?.id || '',
-                photographer: imageData?.photographer || ''
-              })
               
               if (!downloadLocation) {
                 console.warn('No download_location found for featured image:', src)

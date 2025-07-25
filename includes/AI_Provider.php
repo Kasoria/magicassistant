@@ -1209,126 +1209,204 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         // Convert chat messages format to Responses API input format
         $input_content = $this->convert_messages_to_responses_input($messages);
         
-        $request_data = array(
-            'action'   => 'openai_responses',
-            'data'     => array(
-                'model'      => $this->settings['openai_model'] ?? 'gpt-4.1-mini',
-                'input'      => $input_content,
-                'tools'      => $this->get_mcp_tools_for_openai(),
-                'store'      => false, // For zero data retention
-                'reasoning'  => $this->get_reasoning_config(),
-            ),
-            'site_url'  => home_url(),
-            'timestamp' => time(),
-        );
+        $total_usage = ['input_tokens' => 0, 'output_tokens' => 0, 'total_tokens' => 0];
+        $total_cost = 0;
+        $tool_calls_executed = 0;
+        $max_iterations = 5; // Prevent infinite loops
+        $iteration = 0;
+        $userKeyUsed = false;
+        $credits = null;
         
-        // Add system message as instructions if present
-        if (!empty($system_message)) {
-            $request_data['data']['instructions'] = $system_message;
-        }
-        
-        // Merge license headers so MagicProxy can track usage by site & license
-        $headers = array_merge( array( 'Content-Type' => 'application/json' ), $this->get_license_headers() );
-
-        if ( ! empty( $api_key ) ) {
-            $headers['X-User-Api-Key'] = $api_key;
-        }
-
-        // Debug log the request to understand what we're sending
-        error_log('MagicAssistant Responses API Request: ' . json_encode($request_data));
-
-        $response = wp_remote_post( $this->openai_proxy_url, array(
-            'headers' => $headers,
-            'body'    => wp_json_encode( $request_data ),
-            'timeout' => 120
-        ) );
-        
-        if (is_wp_error($response)) {
-            throw new Exception('OpenAI proxy request failed: ' . $response->get_error_message());
-        }
-        
-        $body = wp_remote_retrieve_body($response);
-        $data = json_decode($body, true);
-        
-        if (empty($data['success']) || isset($data['error'])) {
-            throw new Exception('OpenAI proxy error: ' . ($data['error'] ?? 'Unknown error'));
-        }
-        
-        $result = $data['data'];
-        $userKeyUsed = $data['userKeyUsed'] ?? ($data['user_key_used'] ?? false);
-        $credits = $data['credits'] ?? null;
-        
-        // Debug log the full response structure
-        error_log('MagicAssistant Responses API Full Result: ' . json_encode($result));
-        
-        $usage = $result['usage'] ?? null;
-        $cost = 0;
-        if ($usage) {
-            $model = $request_data['data']['model'];
-            $cost = $this->calculate_openai_cost($model, $usage);
-        }
-        
-        // The Responses API should handle tool calls internally and return final content
-        // Try multiple fields to find the final response text
-        $text_content = '';
-        
-        // Look for output_text first (this is the primary field for final responses)
-        if (isset($result['output_text'])) {
-            $text_content = $result['output_text'];
-            error_log('MagicAssistant: Found response in output_text field');
-        }
-        // Fallback to parsing the output array structure
-        elseif (isset($result['output']) && is_array($result['output'])) {
-            $parsed_response = $this->convert_responses_output_to_internal($result['output']);
-            $text_content = $parsed_response['content'];
-            error_log('MagicAssistant: Parsed response from output array: ' . substr($text_content, 0, 100) . '...');
-        }
-        // Additional fallbacks
-        elseif (isset($result['text'])) {
-            $text_content = $result['text'];
-            error_log('MagicAssistant: Found response in text field');
-        }
-        elseif (isset($result['content'])) {
-            $text_content = $result['content'];
-            error_log('MagicAssistant: Found response in content field');
-        }
-        
-        // Debug log if we still don't have content
-        if (empty($text_content)) {
-            error_log('MagicAssistant: No response content found. Available fields: ' . implode(', ', array_keys($result)));
+        while ($iteration < $max_iterations) {
+            $iteration++;
             
-            // If we have a response with status completed but no text, 
-            // check if function calls were made and provide appropriate feedback
-            if (isset($result['status']) && $result['status'] === 'completed' && 
-                isset($result['output']) && is_array($result['output'])) {
+            $request_data = array(
+                'action'   => 'openai_responses',
+                'data'     => array(
+                    'model'      => $this->settings['openai_model'] ?? 'gpt-4.1-mini',
+                    'input'      => $input_content,
+                    'tools'      => $this->get_mcp_tools_for_openai(),
+                    'store'      => false, // For zero data retention
+                    'reasoning'  => $this->get_reasoning_config(),
+                ),
+                'site_url'  => home_url(),
+                'timestamp' => time(),
+            );
+            
+            // Add system message as instructions if present
+            if (!empty($system_message)) {
+                $request_data['data']['instructions'] = $system_message;
+            }
+            
+            // Merge license headers so MagicProxy can track usage by site & license
+            $headers = array_merge( array( 'Content-Type' => 'application/json' ), $this->get_license_headers() );
+
+            if ( ! empty( $api_key ) ) {
+                $headers['X-User-Api-Key'] = $api_key;
+            }
+
+
+            $response = wp_remote_post( $this->openai_proxy_url, array(
+                'headers' => $headers,
+                'body'    => wp_json_encode( $request_data ),
+                'timeout' => 120
+            ) );
+            
+            if (is_wp_error($response)) {
+                throw new Exception('OpenAI proxy request failed: ' . $response->get_error_message());
+            }
+            
+            $body = wp_remote_retrieve_body($response);
+            $data = json_decode($body, true);
+            
+            if (empty($data['success']) || isset($data['error'])) {
+                throw new Exception('OpenAI proxy error: ' . ($data['error'] ?? 'Unknown error'));
+            }
+            
+            $result = $data['data'];
+            $userKeyUsed = $data['userKeyUsed'] ?? ($data['user_key_used'] ?? false);
+            $credits = $data['credits'] ?? null;
+            
+            
+            // Accumulate usage
+            if (isset($result['usage'])) {
+                $usage = $result['usage'];
+                $total_usage['input_tokens'] += $usage['input_tokens'] ?? 0;
+                $total_usage['output_tokens'] += $usage['output_tokens'] ?? 0;
+                $total_usage['total_tokens'] += $usage['total_tokens'] ?? 0;
                 
-                $function_calls = array_filter($result['output'], function($item) {
-                    return isset($item['type']) && $item['type'] === 'function_call';
-                });
-                
-                if (!empty($function_calls)) {
-                    $tool_names = array_map(function($call) {
-                        return $call['name'] ?? 'unknown';
-                    }, $function_calls);
-                    
-                    $text_content = "I executed the following tools: " . implode(', ', $tool_names) . ". The operation completed successfully.";
-                    error_log('MagicAssistant: Generated fallback response for completed function calls');
+                $model = $request_data['data']['model'];
+                $total_cost += $this->calculate_openai_cost($model, $usage);
+            }
+            
+            // Check if there are function calls to execute
+            $function_calls = [];
+            if (isset($result['output']) && is_array($result['output'])) {
+                foreach ($result['output'] as $output_item) {
+                    if (isset($output_item['type']) && $output_item['type'] === 'function_call') {
+                        $function_calls[] = $output_item;
+                    }
                 }
             }
+            
+            // If no function calls, we have the final response
+            if (empty($function_calls)) {
+                
+                // Extract the final response text
+                $text_content = '';
+                if (isset($result['output_text'])) {
+                    $text_content = $result['output_text'];
+                } elseif (isset($result['output']) && is_array($result['output'])) {
+                    // Look for text content in output array
+                    foreach ($result['output'] as $output_item) {
+                        if (isset($output_item['type']) && $output_item['type'] === 'text') {
+                            $text_content .= $output_item['text'] ?? '';
+                        } elseif (isset($output_item['type']) && $output_item['type'] === 'message') {
+                            // Handle message type with content array
+                            if (isset($output_item['content']) && is_array($output_item['content'])) {
+                                foreach ($output_item['content'] as $content_item) {
+                                    if (isset($content_item['type']) && $content_item['type'] === 'output_text') {
+                                        $text_content .= $content_item['text'] ?? '';
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if (empty($text_content)) {
+                    $text_content = "Task completed successfully.";
+                }
+                
+                return array(
+                    'content' => $text_content,
+                    'tool_calls' => [],
+                    'tool_calls_executed_count' => $tool_calls_executed,
+                    'debug_tool_data' => null,
+                    'usage' => $total_usage,
+                    'cost' => $total_cost,
+                    'user_key_used' => $userKeyUsed,
+                    'credits' => $credits
+                );
+            }
+            
+            // Execute function calls
+            
+            // Add the function calls to input for next iteration
+            foreach ($function_calls as $function_call) {
+                $input_content[] = $function_call;
+                
+                // Execute the function
+                $function_name = $function_call['name'] ?? '';
+                $arguments = $function_call['arguments'] ?? '{}';
+                $call_id = $function_call['call_id'] ?? '';
+                
+                
+                try {
+                    $function_result = $this->execute_function($function_name, $arguments);
+                    $tool_calls_executed++;
+                    
+                    // Add function result to input
+                    $input_content[] = array(
+                        'type' => 'function_call_output',
+                        'call_id' => $call_id,
+                        'output' => $function_result
+                    );
+                    
+                    
+                } catch (Exception $e) {
+                    
+                    // Add error result to input
+                    $input_content[] = array(
+                        'type' => 'function_call_output', 
+                        'call_id' => $call_id,
+                        'output' => 'Error: ' . $e->getMessage()
+                    );
+                }
+            }
+            
+            // Continue to next iteration with updated input
         }
         
-        // The Responses API handles tool calls internally and returns the final response
-        // We no longer need to manually handle tool calls or make follow-up requests
+        // If we hit max iterations, return what we have
         return array(
-            'content' => $text_content,
-            'tool_calls' => [], // Responses API handles these internally
-            'tool_calls_executed_count' => 0, // This will be updated if we can detect it from response
-            'debug_tool_data' => null, // Will be populated if we can extract tool execution info
-            'usage' => $usage,
-            'cost' => $cost,
+            'content' => 'Task partially completed. Maximum iterations reached.',
+            'tool_calls' => [],
+            'tool_calls_executed_count' => $tool_calls_executed,
+            'debug_tool_data' => null,
+            'usage' => $total_usage,
+            'cost' => $total_cost,
             'user_key_used' => $userKeyUsed,
             'credits' => $credits
         );
+    }
+    
+    private function execute_function($function_name, $arguments) {
+        // Parse arguments JSON
+        $args = json_decode($arguments, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new Exception('Invalid JSON arguments: ' . json_last_error_msg());
+        }
+        
+        // Use the MCP server instance
+        if (!$this->mcp_server) {
+            throw new Exception('MCP server not available');
+        }
+        
+        try {
+            // Call the MCP tool using the existing execute_mcp_tool method
+            $result = $this->execute_mcp_tool($function_name, $args);
+            
+            // Convert result to string if it's an array or object
+            if (is_array($result) || is_object($result)) {
+                return json_encode($result);
+            }
+            
+            return (string)$result;
+            
+        } catch (Exception $e) {
+            throw new Exception('Tool execution failed: ' . $e->getMessage());
+        }
     }
     
     private function call_anthropic($messages, $api_key) {
