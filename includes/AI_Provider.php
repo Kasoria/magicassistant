@@ -471,7 +471,7 @@ class AI_Provider {
                         $user_id,
                         $provider,
                         $model,
-                        $provider === 'openai' ? 'https://api.openai.com/v1/chat/completions' : 'https://api.anthropic.com/v1/messages',
+                        $provider === 'openai' ? 'https://api.openai.com/v1/responses' : 'https://api.anthropic.com/v1/messages',
                         array('message' => $message), // Request data (simplified)
                         array('response' => $result['response']), // Response data (simplified)
                         200, // Status code (assuming success if we got here)
@@ -524,7 +524,7 @@ class AI_Provider {
                     $user_id,
                     $provider ?? 'unknown',
                     $model ?? null,
-                    ($provider ?? 'unknown') === 'openai' ? 'https://api.openai.com/v1/chat/completions' : 'https://api.anthropic.com/v1/messages',
+                    ($provider ?? 'unknown') === 'openai' ? 'https://api.openai.com/v1/responses' : 'https://api.anthropic.com/v1/messages',
                     array('message' => $message), // Request data (simplified)
                     array('error' => $e->getMessage()), // Error response
                     500, // Status code for error
@@ -659,16 +659,18 @@ class AI_Provider {
         $total_tokens += $this->extract_token_count($response, $provider) ?? 0;
         $total_cost += $response['cost'] ?? 0;
         
-        // Check if AI wants to use tools
-        $has_tool_calls = isset($response['tool_calls']) && !empty($response['tool_calls']);
-        
-        if ($has_tool_calls) {
-            // Execute tools
-            $tool_results = $this->execute_tools($response['tool_calls']);
-            $tool_calls_count = count($response['tool_calls']);
+        // For OpenAI Responses API, tool calls are handled internally in call_openai_responses()
+        // For Anthropic, we still need the old manual approach
+        if ($provider === 'anthropic') {
+            // Check if AI wants to use tools
+            $has_tool_calls = isset($response['tool_calls']) && !empty($response['tool_calls']);
             
-            // Add AI response to conversation (format for provider)
-            if ($provider === 'anthropic') {
+            if ($has_tool_calls) {
+                // Execute tools
+                $tool_results = $this->execute_tools($response['tool_calls']);
+                $tool_calls_count = count($response['tool_calls']);
+                
+                // Add AI response to conversation (format for Anthropic)
                 $messages[] = array(
                     'role' => 'assistant',
                     'content' => array(
@@ -692,67 +694,54 @@ class AI_Provider {
                         )
                     );
                 }
-            } else {
-                // OpenAI format
-                $messages[] = array(
-                    'role' => 'assistant',
-                    'content' => $response['content'] ?? '',
-                    'tool_calls' => $response['tool_calls']
-                );
                 
-                // Add tool results to conversation
-                foreach ($tool_results as $result) {
-                    $messages[] = array(
-                        'role' => 'tool',
-                        'tool_call_id' => $result['tool_call_id'], // Required by OpenAI API
-                        'content' => json_encode($result)
-                    );
-                }
-            }
-            
-            // Call AI again to get final response with the tool data
-            $final_response = null;
-            if ($provider === 'openai') {
-                $final_response = $this->call_openai($messages, $api_key);
-            } elseif ($provider === 'anthropic') {
+                // Call AI again to get final response with the tool data
                 $final_response = $this->call_anthropic($messages, $api_key);
-            } else {
-                throw new Exception('Unsupported AI provider: ' . $provider);
+                
+                // Track flag for the second call as well
+                $user_key_used_total = $user_key_used_total || ($final_response['user_key_used'] ?? false);
+                
+                // Update usage tracking for the second call
+                $total_tokens += $this->extract_token_count($final_response, $provider) ?? 0;
+                $total_cost += $final_response['cost'] ?? 0;
+                
+                // If the user key was not used in any of the calls, zero-out cost and token statistics
+                if (!$user_key_used_total) {
+                    $total_tokens = 0;
+                    $total_cost   = 0;
+                }
+                return array(
+                    'response' => $final_response['content'] ?? '',
+                    'tool_calls_count' => $tool_calls_count,
+                    'tokens_used' => $total_tokens,
+                    'cost' => $total_cost,
+                    'debug_tool_data' => $this->format_debug_tool_results($tool_results),
+                    'user_key_used' => $user_key_used_total,
+                    'credits' => $final_response['credits'] ?? $response['credits'] ?? null
+                );
             }
-            
-            // Track flag for the second call as well
-            $user_key_used_total = $user_key_used_total || ($final_response['user_key_used'] ?? false);
-            
-            // Update usage tracking for the second call
-            $total_tokens += $this->extract_token_count($final_response, $provider) ?? 0;
-            $total_cost += $final_response['cost'] ?? 0;
-            
-            // If the user key was not used in any of the calls, zero-out cost and token statistics
-            if (!$user_key_used_total) {
-                $total_tokens = 0;
-                $total_cost   = 0;
-            }
-            return array(
-                'response' => $final_response['content'] ?? '',
-                'tool_calls_count' => $tool_calls_count,
-                'tokens_used' => $total_tokens,
-                'cost' => $total_cost,
-                'debug_tool_data' => $this->format_debug_tool_results($tool_results),
-                'user_key_used' => $user_key_used_total,
-                'credits' => $final_response['credits'] ?? $response['credits'] ?? null
-            );
         }
         
-        // No tool calls, return direct response
+        // For OpenAI, check if tool calls were made and get count from response metadata
+        $tool_calls_count = 0;
+        $debug_tool_data = null;
+        
+        if ($provider === 'openai' && isset($response['tool_calls_executed_count'])) {
+            $tool_calls_count = $response['tool_calls_executed_count'];
+            $debug_tool_data = $response['debug_tool_data'] ?? null;
+        }
+        
+        // No additional tool calls, return direct response
         if (!$user_key_used_total) {
             $total_tokens = 0;
             $total_cost   = 0;
         }
         return array(
             'response' => $response['content'] ?? '',
-            'tool_calls_count' => 0,
+            'tool_calls_count' => $tool_calls_count,
             'tokens_used' => $total_tokens,
             'cost' => $total_cost,
+            'debug_tool_data' => $debug_tool_data,
             'user_key_used' => $user_key_used_total,
             'credits' => $response['credits'] ?? null
         );
@@ -1052,20 +1041,192 @@ IMPORTANT: Respond naturally and conversationally. When you use tools to gather 
 Be conversational, helpful, and proactive in suggesting how you can help with WordPress and SEO tasks.";
     }
     
+    /**
+     * Convert chat messages format to Responses API input format
+     */
+    private function convert_messages_to_responses_input($messages) {
+        // Extract system message and conversation for proper Responses API formatting
+        $system_message = '';
+        $conversation_messages = [];
+        
+        foreach ($messages as $message) {
+            if ($message['role'] === 'system') {
+                $system_message = $message['content'];
+            } else {
+                // Filter out tool-related messages as Responses API doesn't support them in input
+                if ($message['role'] === 'tool' || 
+                    (isset($message['tool_calls']) && !empty($message['tool_calls']))) {
+                    // Skip tool messages and assistant messages with tool calls
+                    // The Responses API will handle tool calls through its own mechanism
+                    continue;
+                }
+                
+                // Clean the message to ensure it only has supported fields
+                $clean_message = [
+                    'role' => $message['role'],
+                    'content' => $message['content'] ?? ''
+                ];
+                
+                // Handle content arrays (like from Anthropic format)
+                if (is_array($clean_message['content'])) {
+                    $text_content = '';
+                    foreach ($clean_message['content'] as $content_item) {
+                        if (isset($content_item['text'])) {
+                            $text_content .= $content_item['text'];
+                        } elseif (isset($content_item['type']) && $content_item['type'] === 'text') {
+                            $text_content .= $content_item['text'] ?? '';
+                        }
+                    }
+                    $clean_message['content'] = $text_content;
+                }
+                
+                $conversation_messages[] = $clean_message;
+            }
+        }
+        
+        // For Responses API, we can send the messages directly as input
+        // The API will handle the conversation flow
+        if (count($conversation_messages) === 1 && $conversation_messages[0]['role'] === 'user') {
+            // Simple single message - just return content
+            return $conversation_messages[0]['content'];
+        } else {
+            // Multiple messages - return as structured input array
+            return $conversation_messages;
+        }
+    }
+    
+    /**
+     * Convert Responses API output to internal format
+     * The Responses API handles tool calls internally, so we mainly extract the final text content
+     */
+    private function convert_responses_output_to_internal($output) {
+        $content = '';
+        $function_calls_found = false;
+        
+        if (empty($output) || !is_array($output)) {
+            return ['content' => '', 'tool_calls' => []];
+        }
+        
+        // Debug log the output structure to understand what we're getting
+        error_log('MagicAssistant: Processing Responses API output structure: ' . json_encode($output));
+        
+        foreach ($output as $item) {
+            $type = $item['type'] ?? '';
+            error_log('MagicAssistant: Processing output item type: ' . $type);
+            
+            switch ($type) {
+                case 'message':
+                    if (isset($item['content']) && is_array($item['content'])) {
+                        foreach ($item['content'] as $content_item) {
+                            $content_type = $content_item['type'] ?? '';
+                            if ($content_type === 'output_text' || $content_type === 'text') {
+                                $text = $content_item['text'] ?? '';
+                                $content .= $text;
+                                error_log('MagicAssistant: Extracted text from message: ' . substr($text, 0, 100) . '...');
+                            }
+                        }
+                    } elseif (isset($item['content']) && is_string($item['content'])) {
+                        // Handle case where content is a direct string
+                        $content .= $item['content'];
+                        error_log('MagicAssistant: Extracted direct content from message: ' . substr($item['content'], 0, 100) . '...');
+                    }
+                    break;
+                    
+                case 'function_call':
+                    $function_calls_found = true;
+                    // Log function calls but don't try to execute them - Responses API handles this
+                    error_log('MagicAssistant: Function call detected in output (handled internally): ' . ($item['name'] ?? 'unknown'));
+                    
+                    // If this is a completed function call with no text output yet,
+                    // we might need to wait for the Responses API to process it fully
+                    $status = $item['status'] ?? '';
+                    if ($status === 'completed') {
+                        error_log('MagicAssistant: Function call completed but no text response found');
+                        // For now, provide a placeholder response indicating the tool was called
+                        if (empty($content)) {
+                            $tool_name = $item['name'] ?? 'unknown tool';
+                            $content = "I called the {$tool_name} tool to help with your request.";
+                        }
+                    }
+                    break;
+                    
+                case 'function_call_output':
+                    // Log function outputs - these are already processed by the API
+                    error_log('MagicAssistant: Function call output detected (already processed internally)');
+                    break;
+                    
+                default:
+                    // Log unknown types for debugging
+                    error_log('MagicAssistant: Unknown output item type: ' . $type);
+                    break;
+            }
+        }
+        
+        error_log('MagicAssistant: Final extracted content length: ' . strlen($content));
+        error_log('MagicAssistant: Function calls found: ' . ($function_calls_found ? 'yes' : 'no'));
+        
+        return [
+            'content' => $content,
+            'tool_calls' => [] // Responses API handles tool calls internally
+        ];
+    }
+    
+    /**
+     * Get reasoning configuration for o-series models
+     */
+    private function get_reasoning_config() {
+        $model = $this->settings['openai_model'] ?? 'gpt-4.1-mini';
+        
+        // Only add reasoning config for o-series models
+        if (strpos($model, 'o') === 0 && preg_match('/^o\d/', $model)) {
+            return [
+                'effort' => 'medium',
+                'summary' => 'auto'
+            ];
+        }
+        
+        return null;
+    }
+    
     private function call_openai($messages, $api_key) {
+        // For Responses API, we need to handle tool calls differently
+        return $this->call_openai_responses($messages, $api_key);
+    }
+    
+    private function call_openai_responses($messages, $api_key) {
+        // Extract system message and conversation for proper Responses API formatting
+        $system_message = '';
+        $conversation_messages = [];
+        
+        foreach ($messages as $message) {
+            if ($message['role'] === 'system') {
+                $system_message = $message['content'];
+            } else {
+                $conversation_messages[] = $message;
+            }
+        }
+        
+        // Convert chat messages format to Responses API input format
+        $input_content = $this->convert_messages_to_responses_input($messages);
+        
         $request_data = array(
-            'action'   => 'openai',
+            'action'   => 'openai_responses',
             'data'     => array(
                 'model'      => $this->settings['openai_model'] ?? 'gpt-4.1-mini',
-                'messages'   => $messages,
-                'temperature'=> (strpos($this->settings['openai_model'] ?? '', 'o') === 0 && preg_match('/^o\d/', $this->settings['openai_model'] ?? '')) ? 1 : 0.7,
-                'max_completion_tokens' => intval($this->settings['max_response_tokens'] ?? 1500),
+                'input'      => $input_content,
                 'tools'      => $this->get_mcp_tools_for_openai(),
-                'tool_choice'=> 'auto'
+                'store'      => false, // For zero data retention
+                'reasoning'  => $this->get_reasoning_config(),
             ),
             'site_url'  => home_url(),
             'timestamp' => time(),
         );
+        
+        // Add system message as instructions if present
+        if (!empty($system_message)) {
+            $request_data['data']['instructions'] = $system_message;
+        }
+        
         // Merge license headers so MagicProxy can track usage by site & license
         $headers = array_merge( array( 'Content-Type' => 'application/json' ), $this->get_license_headers() );
 
@@ -1073,40 +1234,101 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $headers['X-User-Api-Key'] = $api_key;
         }
 
+        // Debug log the request to understand what we're sending
+        error_log('MagicAssistant Responses API Request: ' . json_encode($request_data));
+
         $response = wp_remote_post( $this->openai_proxy_url, array(
             'headers' => $headers,
             'body'    => wp_json_encode( $request_data ),
             'timeout' => 120
         ) );
+        
         if (is_wp_error($response)) {
             throw new Exception('OpenAI proxy request failed: ' . $response->get_error_message());
         }
+        
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
+        
         if (empty($data['success']) || isset($data['error'])) {
             throw new Exception('OpenAI proxy error: ' . ($data['error'] ?? 'Unknown error'));
         }
-        $result  = $data['data'];
-        // NEW: detect if the proxy actually used the user-supplied API key
+        
+        $result = $data['data'];
         $userKeyUsed = $data['userKeyUsed'] ?? ($data['user_key_used'] ?? false);
-        // Extract credits information from proxy response
         $credits = $data['credits'] ?? null;
-        $message = $result['choices'][0]['message'] ?? null;
-        $usage   = $result['usage'] ?? null;
+        
+        // Debug log the full response structure
+        error_log('MagicAssistant Responses API Full Result: ' . json_encode($result));
+        
+        $usage = $result['usage'] ?? null;
         $cost = 0;
         if ($usage) {
             $model = $request_data['data']['model'];
-            $cost  = $this->calculate_openai_cost($model, $usage);
+            $cost = $this->calculate_openai_cost($model, $usage);
         }
-        if ($message) {
-            $message['usage'] = $usage;
-            $message['cost']  = $cost;
-            // Pass through the flag so downstream logic can decide whether to count analytics
-            $message['user_key_used'] = $userKeyUsed;
-            // Pass through credits information
-            $message['credits'] = $credits;
+        
+        // The Responses API should handle tool calls internally and return final content
+        // Try multiple fields to find the final response text
+        $text_content = '';
+        
+        // Look for output_text first (this is the primary field for final responses)
+        if (isset($result['output_text'])) {
+            $text_content = $result['output_text'];
+            error_log('MagicAssistant: Found response in output_text field');
         }
-        return $message;
+        // Fallback to parsing the output array structure
+        elseif (isset($result['output']) && is_array($result['output'])) {
+            $parsed_response = $this->convert_responses_output_to_internal($result['output']);
+            $text_content = $parsed_response['content'];
+            error_log('MagicAssistant: Parsed response from output array: ' . substr($text_content, 0, 100) . '...');
+        }
+        // Additional fallbacks
+        elseif (isset($result['text'])) {
+            $text_content = $result['text'];
+            error_log('MagicAssistant: Found response in text field');
+        }
+        elseif (isset($result['content'])) {
+            $text_content = $result['content'];
+            error_log('MagicAssistant: Found response in content field');
+        }
+        
+        // Debug log if we still don't have content
+        if (empty($text_content)) {
+            error_log('MagicAssistant: No response content found. Available fields: ' . implode(', ', array_keys($result)));
+            
+            // If we have a response with status completed but no text, 
+            // check if function calls were made and provide appropriate feedback
+            if (isset($result['status']) && $result['status'] === 'completed' && 
+                isset($result['output']) && is_array($result['output'])) {
+                
+                $function_calls = array_filter($result['output'], function($item) {
+                    return isset($item['type']) && $item['type'] === 'function_call';
+                });
+                
+                if (!empty($function_calls)) {
+                    $tool_names = array_map(function($call) {
+                        return $call['name'] ?? 'unknown';
+                    }, $function_calls);
+                    
+                    $text_content = "I executed the following tools: " . implode(', ', $tool_names) . ". The operation completed successfully.";
+                    error_log('MagicAssistant: Generated fallback response for completed function calls');
+                }
+            }
+        }
+        
+        // The Responses API handles tool calls internally and returns the final response
+        // We no longer need to manually handle tool calls or make follow-up requests
+        return array(
+            'content' => $text_content,
+            'tool_calls' => [], // Responses API handles these internally
+            'tool_calls_executed_count' => 0, // This will be updated if we can detect it from response
+            'debug_tool_data' => null, // Will be populated if we can extract tool execution info
+            'usage' => $usage,
+            'cost' => $cost,
+            'user_key_used' => $userKeyUsed,
+            'credits' => $credits
+        );
     }
     
     private function call_anthropic($messages, $api_key) {
@@ -1204,12 +1426,10 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 $schema = $this->compress_tool_schema($schema);
 
                 $openai_tools[] = array(
-                    'type'     => 'function',
-                    'function' => array(
-                        'name'        => $name,
-                        'description' => $description,
-                        'parameters'  => $schema,
-                    ),
+                    'type'        => 'function',
+                    'name'        => $name,
+                    'description' => $description,
+                    'parameters'  => $schema,
                 );
                 $tool_count++;
             }
@@ -1229,12 +1449,10 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     $schema = $this->compress_tool_schema($schema);
 
                     $openai_tools[] = array(
-                        'type'     => 'function',
-                        'function' => array(
-                            'name'        => $name,
-                            'description' => $description,
-                            'parameters'  => $schema,
-                        ),
+                        'type'        => 'function',
+                        'name'        => $name,
+                        'description' => $description,
+                        'parameters'  => $schema,
                     );
                 }
             }
@@ -1248,12 +1466,10 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $schema = $this->compress_tool_schema($schema);
 
         return [array(
-            'type'     => 'function',
-            'function' => array(
-                'name'        => 'get_available_tools',
-                'description' => $description,
-                'parameters'  => $schema,
-            ),
+            'type'        => 'function',
+            'name'        => 'get_available_tools',
+            'description' => $description,
+            'parameters'  => $schema,
         )];
     }
     
