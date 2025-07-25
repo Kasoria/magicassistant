@@ -31,6 +31,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
   })
   const [customColor, setCustomColor] = useState('')
   const [customIcon, setCustomIcon] = useState('')
+  const [openrouterModels, setOpenrouterModels] = useState([])
+  const [isLoadingOpenrouterModels, setIsLoadingOpenrouterModels] = useState(false)
   const { showSuccess, showWarning, showError } = useToast()
 
   // Update tour status when component mounts or tour functions change
@@ -99,6 +101,13 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
       setHasUnsavedChanges(false)
     }
   }, [settings])
+
+  // Load OpenRouter models when AI provider is set to 'openrouter'
+  useEffect(() => {
+    if (localSettings.ai_provider === 'openrouter') {
+      loadOpenrouterModels()
+    }
+  }, [localSettings.ai_provider])
 
   const handleLocalChange = (key, value) => {
     setLocalSettings(prev => ({
@@ -315,6 +324,53 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     setIsLoadingUsers(false)
   }
 
+  // Load OpenRouter models from API
+  const loadOpenrouterModels = async () => {
+    if (isLoadingOpenrouterModels || openrouterModels.length > 0) return
+    
+    setIsLoadingOpenrouterModels(true)
+    
+    try {
+      const response = await fetch(`${window.matAdminData?.restUrl}openrouter-models`, {
+        headers: {
+          'X-WP-Nonce': window.matAdminData?.nonces.wp_rest,
+        },
+      })
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      
+      const data = await response.json()
+      
+      if (data.success && data.models) {
+        setOpenrouterModels(data.models)
+      } else {
+        throw new Error(data.message || 'Failed to load OpenRouter models')
+      }
+    } catch (error) {
+      console.error('Error loading OpenRouter models:', error)
+      // Fallback to hardcoded models if API fails
+      setOpenrouterModels([
+        { value: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet' },
+        { value: 'anthropic/claude-3.5-haiku', label: 'Claude 3.5 Haiku' },
+        { value: 'anthropic/claude-3-opus', label: 'Claude 3 Opus' },
+        { value: 'openai/gpt-4o', label: 'GPT-4o' },
+        { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini' },
+        { value: 'openai/gpt-4-turbo', label: 'GPT-4 Turbo' },
+        { value: 'openai/o1-preview', label: 'GPT-o1 Preview' },
+        { value: 'meta-llama/llama-3.1-70b-instruct', label: 'Llama 3.1 70B' },
+        { value: 'meta-llama/llama-3.1-405b-instruct', label: 'Llama 3.1 405B' },
+        { value: 'google/gemini-pro-1.5', label: 'Gemini Pro 1.5' },
+        { value: 'cohere/command-r-plus', label: 'Command R+' },
+        { value: 'mistralai/mistral-large', label: 'Mistral Large' }
+      ])
+      showWarning('Could not load latest OpenRouter models, using cached list')
+    }
+    
+    setIsLoadingOpenrouterModels(false)
+  }
+
   // Tour management functions
   const handleResetTour = async () => {
     setIsResettingTour(true)
@@ -498,20 +554,6 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku' }
   ]
 
-  const openrouterModels = [
-    { value: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet' },
-    { value: 'anthropic/claude-3.5-haiku', label: 'Claude 3.5 Haiku' },
-    { value: 'anthropic/claude-3-opus', label: 'Claude 3 Opus' },
-    { value: 'openai/gpt-4o', label: 'GPT-4o' },
-    { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini' },
-    { value: 'openai/gpt-4-turbo', label: 'GPT-4 Turbo' },
-    { value: 'openai/o1-preview', label: 'GPT-o1 Preview' },
-    { value: 'meta-llama/llama-3.1-70b-instruct', label: 'Llama 3.1 70B' },
-    { value: 'meta-llama/llama-3.1-405b-instruct', label: 'Llama 3.1 405B' },
-    { value: 'google/gemini-pro-1.5', label: 'Gemini Pro 1.5' },
-    { value: 'cohere/command-r-plus', label: 'Command R+' },
-    { value: 'mistralai/mistral-large', label: 'Mistral Large' }
-  ]
 
   const aiProviderOptions = [
     { value: 'openai', label: 'OpenAI' },
@@ -1022,15 +1064,39 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <Label htmlFor="openrouter-model" value="Model" className="mb-2" />
+                      <div className="flex items-center justify-between mb-2">
+                        <Label htmlFor="openrouter-model" value="Model" />
+                        <Button
+                          size="xs"
+                          color="gray"
+                          onClick={() => {
+                            setOpenrouterModels([])
+                            loadOpenrouterModels()
+                          }}
+                          disabled={isLoadingOpenrouterModels}
+                        >
+                          {isLoadingOpenrouterModels ? 'Loading...' : 'Refresh Models'}
+                        </Button>
+                      </div>
                       <CustomSelect
                         id="openrouter-model"
-                        value={openrouterModels.find(option => option.value === (localSettings.openrouter_model || 'anthropic/claude-3.5-sonnet'))}
+                        value={openrouterModels.find(option => option.value === (localSettings.openrouter_model || 'anthropic/claude-3.5-sonnet')) || null}
                         onChange={(selectedOption) => handleLocalChange('openrouter_model', selectedOption.value)}
-                        isDisabled={isSavingSettings}
-                        options={openrouterModels}
+                        isDisabled={isSavingSettings || isLoadingOpenrouterModels}
+                        options={isLoadingOpenrouterModels ? [{ value: '', label: 'Loading models...' }] : openrouterModels}
                         darkMode={darkMode}
+                        placeholder={isLoadingOpenrouterModels ? 'Loading OpenRouter models...' : 'Select a model'}
                       />
+                      {isLoadingOpenrouterModels && (
+                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                          Loading available models from OpenRouter...
+                        </p>
+                      )}
+                      {openrouterModels.length > 0 && !isLoadingOpenrouterModels && (
+                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                          {openrouterModels.length} models available
+                        </p>
+                      )}
                     </div>
                   </div>
 

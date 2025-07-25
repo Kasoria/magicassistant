@@ -332,6 +332,13 @@ class AI_Provider {
             'callback' => array($this, 'get_posts_and_pages'),
             'permission_callback' => array($this, 'check_permissions'),
         ));
+        
+        // OPENROUTER MODELS ENDPOINT
+        register_rest_route('magicassistant/v1', '/openrouter-models', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_openrouter_models'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
     }
     
     public function handle_chat($request) {
@@ -6060,6 +6067,70 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'success' => true,
             'posts' => $formatted_posts
         );
+    }
+    
+    /**
+     * Fetch available models from OpenRouter API
+     */
+    public function get_openrouter_models($request) {
+        try {
+            // Use WordPress HTTP API to fetch models from OpenRouter
+            $response = wp_remote_get('https://openrouter.ai/api/v1/models', array(
+                'timeout' => 30,
+                'headers' => array(
+                    'Content-Type' => 'application/json',
+                    'User-Agent' => 'MagicAssistant WordPress Plugin'
+                )
+            ));
+            
+            if (is_wp_error($response)) {
+                return new WP_Error('fetch_error', 'Failed to fetch models from OpenRouter: ' . $response->get_error_message(), array('status' => 500));
+            }
+            
+            $body = wp_remote_retrieve_body($response);
+            $data = json_decode($body, true);
+            
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                return new WP_Error('json_error', 'Invalid JSON response from OpenRouter API', array('status' => 500));
+            }
+            
+            if (!isset($data['data']) || !is_array($data['data'])) {
+                return new WP_Error('api_error', 'Invalid response format from OpenRouter API', array('status' => 500));
+            }
+            
+            // Process and format the models for frontend consumption
+            $formatted_models = array();
+            foreach ($data['data'] as $model) {
+                // Skip models that don't have the required fields
+                if (empty($model['id']) || empty($model['name'])) {
+                    continue;
+                }
+                
+                // Format the model for the dropdown
+                $formatted_models[] = array(
+                    'value' => $model['id'],
+                    'label' => $model['name'],
+                    'description' => $model['description'] ?? '',
+                    'context_length' => $model['context_length'] ?? null,
+                    'pricing' => $model['pricing'] ?? null,
+                    'top_provider' => $model['top_provider'] ?? null
+                );
+            }
+            
+            // Sort models alphabetically by label
+            usort($formatted_models, function($a, $b) {
+                return strcasecmp($a['label'], $b['label']);
+            });
+            
+            return array(
+                'success' => true,
+                'models' => $formatted_models,
+                'count' => count($formatted_models)
+            );
+            
+        } catch (Exception $e) {
+            return new WP_Error('exception', 'Error fetching OpenRouter models: ' . $e->getMessage(), array('status' => 500));
+        }
     }
 
 }
