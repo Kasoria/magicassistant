@@ -18,6 +18,7 @@ class AI_Provider {
     // Add proxy endpoints for AI
     private $openai_proxy_url = 'https://proxy.magicplugins.io/api/proxy/openai';
     private $anthropic_proxy_url = 'https://proxy.magicplugins.io/api/proxy/anthropic';
+    private $openrouter_proxy_url = 'https://proxy.magicplugins.io/api/proxy/openrouter';
     
     public function __construct() {
         add_action('rest_api_init', array($this, 'register_rest_routes'));
@@ -416,11 +417,11 @@ class AI_Provider {
             
             // Get the appropriate API key based on provider
             if ($provider === 'openai') {
-                $encrypted_key = $this->settings['openai_api_key'] ?? '';
-                $api_key = $this->db ? $this->db->decrypt_api_key($encrypted_key) : '';
+                $api_key = $this->settings['openai_api_key'] ?? '';
             } elseif ($provider === 'anthropic') {
-                $encrypted_key = $this->settings['anthropic_api_key'] ?? '';
-                $api_key = $this->db ? $this->db->decrypt_api_key($encrypted_key) : '';
+                $api_key = $this->settings['anthropic_api_key'] ?? '';
+            } elseif ($provider === 'openrouter') {
+                $api_key = $this->settings['openrouter_api_key'] ?? '';
             } else {
                 $api_key = '';
             }
@@ -648,6 +649,8 @@ class AI_Provider {
             $response = $this->call_openai($messages, $api_key);
         } elseif ($provider === 'anthropic') {
             $response = $this->call_anthropic($messages, $api_key);
+        } elseif ($provider === 'openrouter') {
+            $response = $this->call_openrouter($messages, $api_key);
         } else {
             throw new Exception('Unsupported AI provider: ' . $provider);
         }
@@ -796,6 +799,8 @@ class AI_Provider {
                 $response = $this->call_openai($messages, $api_key);
             } elseif ($provider === 'anthropic') {
                 $response = $this->call_anthropic($messages, $api_key);
+            } elseif ($provider === 'openrouter') {
+                $response = $this->call_openrouter($messages, $api_key);
             } else {
                 throw new Exception('Unsupported AI provider: ' . $provider);
             }
@@ -1475,6 +1480,85 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         );
     }
     
+    private function call_openrouter($messages, $api_key) {
+        // Separate system and user messages (similar to Anthropic format)
+        $system_message = '';
+        $conversation   = [];
+        foreach ($messages as $m) {
+            if ($m['role'] === 'system') {
+                $system_message = $m['content'];
+            } else {
+                $conversation[] = $m;
+            }
+        }
+        
+        $request_data = array(
+            'action'   => 'openrouter',
+            'data'     => array(
+                'model'      => $this->settings['openrouter_model'] ?? 'anthropic/claude-sonnet-4-20250514',
+                'messages'   => $conversation,
+                'tools'      => $this->get_mcp_tools_for_openai(), // OpenRouter uses OpenAI-style tools
+            ),
+            'site_url'  => home_url(),
+            'timestamp' => time(),
+        );
+        
+        if (!empty($system_message)) {
+            // For OpenRouter, we add system message to the conversation array at the beginning
+            array_unshift($request_data['data']['messages'], array(
+                'role' => 'system',
+                'content' => $system_message
+            ));
+        }
+        
+        // Merge license headers so MagicProxy can track usage
+        $headers = array_merge( array( 'Content-Type' => 'application/json' ), $this->get_license_headers() );
+
+        if ( ! empty( $api_key ) ) {
+            $headers['X-User-Api-Key'] = $api_key;
+        }
+
+        $response = wp_remote_post( $this->openrouter_proxy_url, array(
+            'headers' => $headers,
+            'body'    => wp_json_encode( $request_data ),
+            'timeout' => 120
+        ) );
+        
+        if (is_wp_error($response)) {
+            throw new Exception('OpenRouter proxy request failed: ' . $response->get_error_message());
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        if (empty($data['success']) || isset($data['error'])) {
+            throw new Exception('OpenRouter proxy error: ' . ($data['error'] ?? 'Unknown error'));
+        }
+        
+        $result       = $data['data'];
+        $userKeyUsed  = $data['userKeyUsed'] ?? ($data['user_key_used'] ?? false);
+        $credits      = $data['credits'] ?? null;
+        $content      = $result['content']    ?? '';
+        $tool_calls   = $result['tool_calls'] ?? [];
+        $usage        = $result['usage']      ?? null;
+        $cost = 0;
+        
+        if ($usage) {
+            // OpenRouter uses OpenAI-style usage reporting
+            $model = $request_data['data']['model'];
+            $cost  = $this->calculate_openrouter_cost($model, $usage);
+        }
+        
+        return array(
+            'content'        => $content,
+            'tool_calls'     => $tool_calls,
+            'usage'          => $usage,
+            'cost'           => $cost,
+            'user_key_used'  => $userKeyUsed,
+            'credits'        => $credits
+        );
+    }
+    
     private function get_mcp_tools_for_openai() {
         if (!$this->mcp_server || !$this->mcp_server->is_enabled()) {
             return [];
@@ -1766,9 +1850,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'mcp_enabled' => isset($this->settings['mcp_enabled']) ? (bool) $this->settings['mcp_enabled'] : true,
             'openai_model' => $this->settings['openai_model'] ?? 'gpt-4.1-mini',
             'anthropic_model' => $this->settings['anthropic_model'] ?? 'claude-sonnet-4-20250514',
-            'has_api_key' => $this->db ? ($this->db->has_api_key('openai_api_key') || $this->db->has_api_key('anthropic_api_key')) : false,
+            'openrouter_model' => $this->settings['openrouter_model'] ?? 'anthropic/claude-3.5-sonnet',
+            'has_api_key' => $this->db ? ($this->db->has_api_key('openai_api_key') || $this->db->has_api_key('anthropic_api_key') || $this->db->has_api_key('openrouter_api_key')) : false,
             'openai_api_key' => $this->db ? $this->db->has_api_key('openai_api_key') : false,
             'anthropic_api_key' => $this->db ? $this->db->has_api_key('anthropic_api_key') : false,
+            'openrouter_api_key' => $this->db ? $this->db->has_api_key('openrouter_api_key') : false,
             'dataforseo_login_id' => $this->db ? ($this->db->has_api_key('dataforseo_login_id') ? $this->db->decrypt_api_key($this->db->get_setting('dataforseo_login_id')) : null) : null,
             'dataforseo_api_key' => $this->db ? $this->db->has_api_key('dataforseo_api_key') : false,
             'enable_create_tools' => isset($this->settings['enable_create_tools']) ? (bool) $this->settings['enable_create_tools'] : true,
@@ -1894,6 +1980,15 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         if (isset($data['anthropic_model'])) {
             $this->db->save_setting('anthropic_model', sanitize_text_field($data['anthropic_model']));
+        }
+        
+        if (isset($data['openrouter_model'])) {
+            $this->db->save_setting('openrouter_model', sanitize_text_field($data['openrouter_model']));
+        }
+        
+        if (isset($data['openrouter_api_key']) && !empty($data['openrouter_api_key'])) {
+            $api_key = sanitize_text_field($data['openrouter_api_key']);
+            $this->db->save_setting('openrouter_api_key', $api_key);
         }
         
         if (isset($data['enable_create_tools'])) {
@@ -2115,7 +2210,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         $key_name = $provider . '_api_key';
         
-        if (!in_array($key_name, ['openai_api_key', 'anthropic_api_key', 'dataforseo_api_key'])) {
+        if (!in_array($key_name, ['openai_api_key', 'anthropic_api_key', 'openrouter_api_key', 'dataforseo_api_key'])) {
             return new WP_Error('invalid_provider', 'Invalid provider', array('status' => 400));
         }
         
@@ -2287,6 +2382,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 return $this->settings['openai_model'] ?? 'gpt-4.1-mini';
             case 'anthropic':
                 return $this->settings['anthropic_model'] ?? 'claude-sonnet-4-20250514';
+            case 'openrouter':
+                return $this->settings['openrouter_model'] ?? 'anthropic/claude-sonnet-4-20250514';
             default:
                 return 'unknown';
         }
@@ -2359,6 +2456,55 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     }
     
     /**
+     * Calculate cost for OpenRouter models based on token usage
+     * OpenRouter uses different pricing per model, but we'll use a simplified estimate
+     */
+    private function calculate_openrouter_cost($model, $usage) {
+        if (!$usage || !isset($usage['prompt_tokens']) || !isset($usage['completion_tokens'])) {
+            return 0;
+        }
+        
+        $prompt_tokens = $usage['prompt_tokens'];
+        $completion_tokens = $usage['completion_tokens'];
+        
+        // OpenRouter pricing varies by model - these are rough estimates per 1M tokens
+        $pricing = array(
+            // Anthropic models via OpenRouter
+            'anthropic/claude-3.5-sonnet' => array('input' => 3.00, 'output' => 15.00),
+            'anthropic/claude-3.5-haiku' => array('input' => 0.80, 'output' => 4.00),
+            'anthropic/claude-3-opus' => array('input' => 15.00, 'output' => 75.00),
+            
+            // OpenAI models via OpenRouter
+            'openai/gpt-4o' => array('input' => 2.50, 'output' => 10.00),
+            'openai/gpt-4o-mini' => array('input' => 0.15, 'output' => 0.60),
+            'openai/gpt-4-turbo' => array('input' => 10.00, 'output' => 30.00),
+            'openai/o1-preview' => array('input' => 15.00, 'output' => 60.00),
+            
+            // Meta Llama models
+            'meta-llama/llama-3.1-70b-instruct' => array('input' => 0.88, 'output' => 0.88),
+            'meta-llama/llama-3.1-405b-instruct' => array('input' => 3.50, 'output' => 4.00),
+            
+            // Google models
+            'google/gemini-pro-1.5' => array('input' => 1.25, 'output' => 5.00),
+            
+            // Cohere models
+            'cohere/command-r-plus' => array('input' => 3.00, 'output' => 15.00),
+            
+            // Mistral models
+            'mistralai/mistral-large' => array('input' => 4.00, 'output' => 12.00)
+        );
+        
+        // Default to Claude 3.5 Sonnet pricing if model not found
+        $model_pricing = $pricing[$model] ?? $pricing['anthropic/claude-sonnet-4-20250514'];
+        
+        // Calculate cost (convert from per 1M tokens to per token)
+        $input_cost = ($prompt_tokens / 1000000) * $model_pricing['input'];
+        $output_cost = ($completion_tokens / 1000000) * $model_pricing['output'];
+        
+        return $input_cost + $output_cost;
+    }
+    
+    /**
      * Extract total token count from API response
      */
     private function extract_token_count($response, $provider) {
@@ -2375,6 +2521,9 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $input_tokens = $usage['input_tokens'] ?? 0;
             $output_tokens = $usage['output_tokens'] ?? 0;
             return $input_tokens + $output_tokens;
+        } elseif ($provider === 'openrouter') {
+            // OpenRouter uses OpenAI-style token reporting
+            return $usage['total_tokens'] ?? null;
         }
         
         return null;

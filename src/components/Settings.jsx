@@ -64,6 +64,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         ai_provider: settings.ai_provider || 'openai',
         openai_model: settings.openai_model || 'gpt-4.1-mini',
         anthropic_model: settings.anthropic_model || 'claude-sonnet-4-20250514',
+        openrouter_model: settings.openrouter_model || 'anthropic/claude-sonnet-4-20250514',
         agent_mode: settings.agent_mode || 'never',
         max_agent_iterations: parseInt(settings.max_agent_iterations) || 10,
         mcp_enabled: settings.mcp_enabled === true,
@@ -135,6 +136,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
       let settingsKey = ''
       if (provider === 'openai') settingsKey = 'openai_api_key'
       else if (provider === 'anthropic') settingsKey = 'anthropic_api_key'
+      else if (provider === 'openrouter') settingsKey = 'openrouter_api_key'
       else if (provider === 'debug_view') settingsKey = 'debug_view_password'
       
       // For debug view password, also save the enabled state
@@ -437,6 +439,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           ai_provider: localSettings.ai_provider,
           openai_model: localSettings.openai_model,
           anthropic_model: localSettings.anthropic_model,
+          openrouter_model: localSettings.openrouter_model,
           agent_mode: localSettings.agent_mode,
           max_agent_iterations: localSettings.max_agent_iterations,
           mcp_enabled: localSettings.mcp_enabled,
@@ -495,9 +498,25 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku' }
   ]
 
+  const openrouterModels = [
+    { value: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet' },
+    { value: 'anthropic/claude-3.5-haiku', label: 'Claude 3.5 Haiku' },
+    { value: 'anthropic/claude-3-opus', label: 'Claude 3 Opus' },
+    { value: 'openai/gpt-4o', label: 'GPT-4o' },
+    { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini' },
+    { value: 'openai/gpt-4-turbo', label: 'GPT-4 Turbo' },
+    { value: 'openai/o1-preview', label: 'GPT-o1 Preview' },
+    { value: 'meta-llama/llama-3.1-70b-instruct', label: 'Llama 3.1 70B' },
+    { value: 'meta-llama/llama-3.1-405b-instruct', label: 'Llama 3.1 405B' },
+    { value: 'google/gemini-pro-1.5', label: 'Gemini Pro 1.5' },
+    { value: 'cohere/command-r-plus', label: 'Command R+' },
+    { value: 'mistralai/mistral-large', label: 'Mistral Large' }
+  ]
+
   const aiProviderOptions = [
     { value: 'openai', label: 'OpenAI' },
-    { value: 'anthropic', label: 'Anthropic (Claude)' }
+    { value: 'anthropic', label: 'Anthropic (Claude)' },
+    { value: 'openrouter', label: 'OpenRouter (Multiple Providers)' }
   ]
 
   const agentModeOptions = [
@@ -984,6 +1003,66 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                           size="xs"
                           color="failure"
                           onClick={() => handleDeleteApiKeyClick('anthropic')}
+                          disabled={isSavingSettings}
+                        >
+                          Delete Key
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {localSettings.ai_provider === 'openrouter' && (
+                <div className="space-y-4 border-t border-gray-200 dark:border-gray-600 pt-4">
+                  <h5 className="font-medium text-brand-dark dark:text-white">OpenRouter Configuration</h5>
+                  <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+                    OpenRouter provides access to multiple AI providers (Anthropic, OpenAI, Meta Llama, Google, Cohere, Mistral) through a single API.
+                  </p>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="openrouter-model" value="Model" className="mb-2" />
+                      <CustomSelect
+                        id="openrouter-model"
+                        value={openrouterModels.find(option => option.value === (localSettings.openrouter_model || 'anthropic/claude-3.5-sonnet'))}
+                        onChange={(selectedOption) => handleLocalChange('openrouter_model', selectedOption.value)}
+                        isDisabled={isSavingSettings}
+                        options={openrouterModels}
+                        darkMode={darkMode}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="openrouter-api-key" value="API Key" className="mb-2" />
+                    <div className="flex gap-2">
+                      <TextInput
+                        id="openrouter-api-key"
+                        type="password"
+                        placeholder="Enter your OpenRouter API key"
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        className="flex-1"
+                        disabled={isSavingSettings}
+                      />
+                      <Button 
+                        onClick={() => handleApiKeySubmit('openrouter')}
+                        disabled={!apiKey.trim() || isSavingSettings}
+                        size="sm"
+                      >
+                        {isSavingSettings ? 'Saving...' : 'Save'}
+                      </Button>
+                    </div>
+                    {settings?.openrouter_api_key && (
+                      <div className="mt-1 flex items-center justify-between">
+                        <p className="text-sm text-green-600 dark:text-green-400">
+                          ✓ API key configured (encrypted in database)
+                        </p>
+                        <Button
+                          size="xs"
+                          color="failure"
+                          onClick={() => handleDeleteApiKeyClick('openrouter')}
                           disabled={isSavingSettings}
                         >
                           Delete Key
