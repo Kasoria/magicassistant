@@ -1539,16 +1539,22 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             }
         }
         
+        $model = $this->settings['openrouter_model'] ?? 'anthropic/claude-3.5-sonnet';
+        
         $request_data = array(
             'action'   => 'openrouter',
             'data'     => array(
-                'model'      => $this->settings['openrouter_model'] ?? 'anthropic/claude-3.5-sonnet',
+                'model'      => $model,
                 'messages'   => $conversation,
-                'tools'      => $this->get_mcp_tools_for_openai(), // OpenRouter uses OpenAI-style tools
             ),
             'site_url'  => home_url(),
             'timestamp' => time(),
         );
+        
+        // Only include tools if the model supports them
+        if ($this->openrouter_model_supports_tools($model)) {
+            $request_data['data']['tools'] = $this->get_mcp_tools_for_openai(); // OpenRouter uses OpenAI-style tools
+        }
         
         if (!empty($system_message)) {
             // For OpenRouter, we add system message to the conversation array at the beginning
@@ -2452,6 +2458,59 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             default:
                 return 'unknown';
         }
+    }
+    
+    /**
+     * Check if an OpenRouter model supports tool calling
+     * Fetches models and checks the supported_parameters field
+     */
+    private function openrouter_model_supports_tools($model_id) {
+        // Cache the models list to avoid repeated API calls
+        static $models_cache = null;
+        static $cache_time = 0;
+        $cache_ttl = 3600; // Cache for 1 hour
+        
+        // If cache is expired or empty, fetch models
+        if ($models_cache === null || (time() - $cache_time) > $cache_ttl) {
+            try {
+                $response = wp_remote_get('https://openrouter.ai/api/v1/models', array(
+                    'timeout' => 30,
+                    'headers' => array(
+                        'Content-Type' => 'application/json',
+                        'User-Agent' => 'MagicAssistant WordPress Plugin'
+                    )
+                ));
+                
+                if (!is_wp_error($response)) {
+                    $body = wp_remote_retrieve_body($response);
+                    $data = json_decode($body, true);
+                    
+                    if (isset($data['data']) && is_array($data['data'])) {
+                        $models_cache = array();
+                        foreach ($data['data'] as $model) {
+                            if (isset($model['id'])) {
+                                $models_cache[$model['id']] = $model;
+                            }
+                        }
+                        $cache_time = time();
+                    }
+                }
+            } catch (Exception $e) {
+                // If fetching fails, assume the model supports tools to avoid breaking functionality
+                return true;
+            }
+        }
+        
+        // If we have cached data, check if the model supports tools
+        if ($models_cache !== null && isset($models_cache[$model_id])) {
+            $model = $models_cache[$model_id];
+            if (isset($model['supported_parameters']) && is_array($model['supported_parameters'])) {
+                return in_array('tools', $model['supported_parameters']);
+            }
+        }
+        
+        // Default to true if we can't determine (to avoid breaking existing functionality)
+        return true;
     }
     
     /**
@@ -6164,6 +6223,12 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     continue;
                 }
                 
+                // Check if model supports tools
+                $supports_tools = false;
+                if (isset($model['supported_parameters']) && is_array($model['supported_parameters'])) {
+                    $supports_tools = in_array('tools', $model['supported_parameters']);
+                }
+                
                 // Format the model for the dropdown
                 $formatted_models[] = array(
                     'value' => $model['id'],
@@ -6171,7 +6236,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     'description' => $model['description'] ?? '',
                     'context_length' => $model['context_length'] ?? null,
                     'pricing' => $model['pricing'] ?? null,
-                    'top_provider' => $model['top_provider'] ?? null
+                    'top_provider' => $model['top_provider'] ?? null,
+                    'supports_tools' => $supports_tools
                 );
             }
             
