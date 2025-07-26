@@ -66,7 +66,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         ai_provider: settings.ai_provider || 'openai',
         openai_model: settings.openai_model || 'gpt-4.1-mini',
         anthropic_model: settings.anthropic_model || 'claude-sonnet-4-20250514',
-        openrouter_model: settings.openrouter_model || 'anthropic/claude-sonnet-4-20250514',
+        openrouter_model: settings.openrouter_model || 'anthropic/claude-3.5-sonnet',
         agent_mode: settings.agent_mode || 'never',
         max_agent_iterations: parseInt(settings.max_agent_iterations) || 10,
         mcp_enabled: settings.mcp_enabled === true,

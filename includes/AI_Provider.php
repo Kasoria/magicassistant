@@ -422,13 +422,16 @@ class AI_Provider {
             $provider = $this->settings['ai_provider'] ?? 'openai';
             $model = $this->get_model_for_provider($provider);
             
-            // Get the appropriate API key based on provider
+            // Get the appropriate API key based on provider (decrypt if available)
             if ($provider === 'openai') {
-                $api_key = $this->settings['openai_api_key'] ?? '';
+                $encrypted_key = $this->settings['openai_api_key'] ?? '';
+                $api_key = ($this->db && !empty($encrypted_key)) ? $this->db->decrypt_api_key($encrypted_key) : '';
             } elseif ($provider === 'anthropic') {
-                $api_key = $this->settings['anthropic_api_key'] ?? '';
+                $encrypted_key = $this->settings['anthropic_api_key'] ?? '';
+                $api_key = ($this->db && !empty($encrypted_key)) ? $this->db->decrypt_api_key($encrypted_key) : '';
             } elseif ($provider === 'openrouter') {
-                $api_key = $this->settings['openrouter_api_key'] ?? '';
+                $encrypted_key = $this->settings['openrouter_api_key'] ?? '';
+                $api_key = ($this->db && !empty($encrypted_key)) ? $this->db->decrypt_api_key($encrypted_key) : '';
             } else {
                 $api_key = '';
             }
@@ -670,8 +673,8 @@ class AI_Provider {
         $total_cost += $response['cost'] ?? 0;
         
         // For OpenAI Responses API, tool calls are handled internally in call_openai_responses()
-        // For Anthropic, we still need the old manual approach
-        if ($provider === 'anthropic') {
+        // For Anthropic and OpenRouter, we need the manual tool call approach
+        if ($provider === 'anthropic' || $provider === 'openrouter') {
             // Check if AI wants to use tools
             $has_tool_calls = isset($response['tool_calls']) && !empty($response['tool_calls']);
             
@@ -680,33 +683,54 @@ class AI_Provider {
                 $tool_results = $this->execute_tools($response['tool_calls']);
                 $tool_calls_count = count($response['tool_calls']);
                 
-                // Add AI response to conversation (format for Anthropic)
-                $messages[] = array(
-                    'role' => 'assistant',
-                    'content' => array(
-                        array(
-                            'type' => 'text',
-                            'text' => $response['content'] ?? ''
-                        )
-                    )
-                );
-                
-                // Add tool results for Anthropic
-                foreach ($tool_results as $result) {
+                // Add AI response to conversation (format based on provider)
+                if ($provider === 'anthropic') {
                     $messages[] = array(
-                        'role' => 'user',
+                        'role' => 'assistant',
                         'content' => array(
                             array(
-                                'type' => 'tool_result',
-                                'tool_use_id' => $result['tool_call_id'], // Use the actual tool call ID
-                                'content' => json_encode($result)
+                                'type' => 'text',
+                                'text' => $response['content'] ?? ''
                             )
                         )
                     );
+                    
+                    // Add tool results for Anthropic
+                    foreach ($tool_results as $result) {
+                        $messages[] = array(
+                            'role' => 'user',
+                            'content' => array(
+                                array(
+                                    'type' => 'tool_result',
+                                    'tool_use_id' => $result['tool_call_id'], // Use the actual tool call ID
+                                    'content' => json_encode($result)
+                                )
+                            )
+                        );
+                    }
+                    
+                    // Call AI again to get final response with the tool data
+                    $final_response = $this->call_anthropic($messages, $api_key);
+                } else {
+                    // OpenRouter uses OpenAI Chat Completion format
+                    $messages[] = array(
+                        'role' => 'assistant',
+                        'content' => $response['content'] ?? '',
+                        'tool_calls' => $response['tool_calls']
+                    );
+                    
+                    // Add tool results for OpenRouter
+                    foreach ($tool_results as $result) {
+                        $messages[] = array(
+                            'role' => 'tool',
+                            'tool_call_id' => $result['tool_call_id'], // Required by OpenAI-style API
+                            'content' => json_encode($result)
+                        );
+                    }
+                    
+                    // Call AI again to get final response with the tool data
+                    $final_response = $this->call_openrouter($messages, $api_key);
                 }
-                
-                // Call AI again to get final response with the tool data
-                $final_response = $this->call_anthropic($messages, $api_key);
                 
                 // Track flag for the second call as well
                 $user_key_used_total = $user_key_used_total || ($final_response['user_key_used'] ?? false);
@@ -854,8 +878,24 @@ class AI_Provider {
                             )
                         );
                     }
+                } elseif ($provider === 'openrouter') {
+                    // OpenRouter uses OpenAI Chat Completion format (not Responses API)
+                    $messages[] = array(
+                        'role' => 'assistant',
+                        'content' => $response['content'] ?? '',
+                        'tool_calls' => $response['tool_calls']
+                    );
+                    
+                    // Add tool results to conversation
+                    foreach ($tool_results as $result) {
+                        $messages[] = array(
+                            'role' => 'tool',
+                            'tool_call_id' => $result['tool_call_id'], // Required by OpenAI-style API
+                            'content' => json_encode($result)
+                        );
+                    }
                 } else {
-                    // OpenAI format
+                    // OpenAI Responses API format (handled internally, shouldn't reach here in agent mode)
                     $messages[] = array(
                         'role' => 'assistant',
                         'content' => $response['content'] ?? '',
@@ -1502,7 +1542,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $request_data = array(
             'action'   => 'openrouter',
             'data'     => array(
-                'model'      => $this->settings['openrouter_model'] ?? 'anthropic/claude-sonnet-4-20250514',
+                'model'      => $this->settings['openrouter_model'] ?? 'anthropic/claude-3.5-sonnet',
                 'messages'   => $conversation,
                 'tools'      => $this->get_mcp_tools_for_openai(), // OpenRouter uses OpenAI-style tools
             ),
@@ -1545,8 +1585,23 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $result       = $data['data'];
         $userKeyUsed  = $data['userKeyUsed'] ?? ($data['user_key_used'] ?? false);
         $credits      = $data['credits'] ?? null;
-        $content      = $result['content']    ?? '';
-        $tool_calls   = $result['tool_calls'] ?? [];
+        
+        // OpenRouter returns responses in OpenAI chat completions format
+        // The content should be in choices[0].message.content
+        $content = '';
+        $tool_calls = [];
+        
+        if (isset($result['choices']) && !empty($result['choices'])) {
+            $first_choice = $result['choices'][0];
+            $message = $first_choice['message'] ?? [];
+            $content = $message['content'] ?? '';
+            $tool_calls = $message['tool_calls'] ?? [];
+        } else {
+            // Fallback to direct content access if choices structure not found
+            $content = $result['content'] ?? '';
+            $tool_calls = $result['tool_calls'] ?? [];
+        }
+        
         $usage        = $result['usage']      ?? null;
         $cost = 0;
         
@@ -1953,12 +2008,14 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         if (isset($data['openai_api_key']) && !empty($data['openai_api_key'])) {
             $api_key = sanitize_text_field($data['openai_api_key']);
-            $this->db->save_setting('openai_api_key', $api_key);
+            $encrypted_api_key = $this->db->encrypt_api_key($api_key);
+            $this->db->save_setting('openai_api_key', $encrypted_api_key);
         }
         
         if (isset($data['anthropic_api_key']) && !empty($data['anthropic_api_key'])) {
             $api_key = sanitize_text_field($data['anthropic_api_key']);
-            $this->db->save_setting('anthropic_api_key', $api_key);
+            $encrypted_api_key = $this->db->encrypt_api_key($api_key);
+            $this->db->save_setting('anthropic_api_key', $encrypted_api_key);
         }
         
         if (isset($data['dataforseo_login_id']) && !empty($data['dataforseo_login_id'])) {
@@ -1995,7 +2052,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         if (isset($data['openrouter_api_key']) && !empty($data['openrouter_api_key'])) {
             $api_key = sanitize_text_field($data['openrouter_api_key']);
-            $this->db->save_setting('openrouter_api_key', $api_key);
+            $encrypted_api_key = $this->db->encrypt_api_key($api_key);
+            $this->db->save_setting('openrouter_api_key', $encrypted_api_key);
         }
         
         if (isset($data['enable_create_tools'])) {
@@ -2390,7 +2448,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             case 'anthropic':
                 return $this->settings['anthropic_model'] ?? 'claude-sonnet-4-20250514';
             case 'openrouter':
-                return $this->settings['openrouter_model'] ?? 'anthropic/claude-sonnet-4-20250514';
+                return $this->settings['openrouter_model'] ?? 'anthropic/claude-3.5-sonnet';
             default:
                 return 'unknown';
         }
@@ -2502,7 +2560,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         );
         
         // Default to Claude 3.5 Sonnet pricing if model not found
-        $model_pricing = $pricing[$model] ?? $pricing['anthropic/claude-sonnet-4-20250514'];
+        $model_pricing = $pricing[$model] ?? $pricing['anthropic/claude-3.5-sonnet'];
         
         // Calculate cost (convert from per 1M tokens to per token)
         $input_cost = ($prompt_tokens / 1000000) * $model_pricing['input'];
