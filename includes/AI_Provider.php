@@ -685,14 +685,30 @@ class AI_Provider {
                 
                 // Add AI response to conversation (format based on provider)
                 if ($provider === 'anthropic') {
+                    // Build assistant message content with text and tool uses
+                    $assistant_content = array();
+                    
+                    // Add text content if present
+                    if (!empty($response['content'])) {
+                        $assistant_content[] = array(
+                            'type' => 'text',
+                            'text' => $response['content']
+                        );
+                    }
+                    
+                    // Add tool uses
+                    foreach ($response['tool_calls'] as $tool_call) {
+                        $assistant_content[] = array(
+                            'type' => 'tool_use',
+                            'id' => $tool_call['id'],
+                            'name' => $tool_call['name'],
+                            'input' => $tool_call['input']
+                        );
+                    }
+                    
                     $messages[] = array(
                         'role' => 'assistant',
-                        'content' => array(
-                            array(
-                                'type' => 'text',
-                                'text' => $response['content'] ?? ''
-                            )
-                        )
+                        'content' => $assistant_content
                     );
                     
                     // Add tool results for Anthropic
@@ -855,14 +871,30 @@ class AI_Provider {
                 
                 // Add AI response to conversation (format for provider)
                 if ($provider === 'anthropic') {
+                    // Build assistant message content with text and tool uses
+                    $assistant_content = array();
+                    
+                    // Add text content if present
+                    if (!empty($response['content'])) {
+                        $assistant_content[] = array(
+                            'type' => 'text',
+                            'text' => $response['content']
+                        );
+                    }
+                    
+                    // Add tool uses
+                    foreach ($response['tool_calls'] as $tool_call) {
+                        $assistant_content[] = array(
+                            'type' => 'tool_use',
+                            'id' => $tool_call['id'],
+                            'name' => $tool_call['name'],
+                            'input' => $tool_call['input']
+                        );
+                    }
+                    
                     $messages[] = array(
                         'role' => 'assistant',
-                        'content' => array(
-                            array(
-                                'type' => 'text',
-                                'text' => $response['content'] ?? ''
-                            )
-                        )
+                        'content' => $assistant_content
                     );
                     
                     // Add tool results for Anthropic
@@ -1472,15 +1504,18 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 $conversation[] = $m;
             }
         }
+        $tools = $this->get_mcp_tools_for_anthropic();
         $request_data = array(
             'action'   => 'anthropic',
             'data'     => array(
-                'model'      => $this->settings['anthropic_model'] ?? 'claude-sonnet-4-20240229',
+                'model'      => $this->settings['anthropic_model'] ?? 'claude-3-5-sonnet-20241022',
                 'messages'   => $conversation,
+                'tools'      => $tools,
             ),
             'site_url'  => home_url(),
             'timestamp' => time(),
         );
+        
         if (!empty($system_message)) {
             $request_data['data']['system'] = $system_message;
         }
@@ -1512,6 +1547,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $content      = $result['content']    ?? '';
         $tool_calls   = $result['tool_calls'] ?? [];
         $usage        = $result['usage']      ?? null;
+        
         $cost = 0;
         if ($usage) {
             $model = $request_data['data']['model'];
@@ -1917,7 +1953,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'ai_provider' => $this->settings['ai_provider'] ?? 'openai',
             'mcp_enabled' => isset($this->settings['mcp_enabled']) ? (bool) $this->settings['mcp_enabled'] : true,
             'openai_model' => $this->settings['openai_model'] ?? 'gpt-4.1-mini',
-            'anthropic_model' => $this->settings['anthropic_model'] ?? 'claude-sonnet-4-20250514',
+            'anthropic_model' => $this->settings['anthropic_model'] ?? 'claude-3-5-sonnet-20241022',
             'openrouter_model' => $this->settings['openrouter_model'] ?? 'anthropic/claude-3.5-sonnet',
             'has_api_key' => $this->db ? ($this->db->has_api_key('openai_api_key') || $this->db->has_api_key('anthropic_api_key') || $this->db->has_api_key('openrouter_api_key')) : false,
             'openai_api_key' => $this->db ? $this->db->has_api_key('openai_api_key') : false,
