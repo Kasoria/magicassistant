@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Button, Card, Textarea, Spinner, Drawer } from 'flowbite-react'
+import { Button, Card, Textarea, Spinner, Drawer, Tooltip } from 'flowbite-react'
 import CustomSelect from './CustomSelect'
 import { useToast } from './Toast'
 import ConfirmationModal from './ConfirmationModal'
@@ -1960,49 +1960,53 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
               <div className="flex items-center justify-between mt-2">
                 {/* File buttons - left side */}
                 <div className="flex gap-2">
-                  {/* File Upload Button */}
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isLoading}
-                    className="flex items-center justify-center w-8 h-8 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 rounded-lg transition-colors"
-                    title="Upload file"
-                  >
-                    <svg className="w-4 h-4 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                    </svg>
-                  </button>
-                  
+
                   {/* Create Custom File Button */}
-                  <button
-                    onClick={() => setIsFileModalOpen(true)}
-                    disabled={isLoading}
-                    className="flex items-center justify-center w-8 h-8 bg-green-100 hover:bg-green-200 dark:bg-green-700 dark:hover:bg-green-600 rounded-lg transition-colors"
-                    title="Create custom file"
-                  >
-                    <svg className="w-4 h-4 text-green-600 dark:text-green-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                    </svg>
-                  </button>
+                  <Tooltip content="Create custom file" className="z-50">
+                    <button
+                      onClick={() => setIsFileModalOpen(true)}
+                      disabled={isLoading}
+                      className="flex items-center justify-center w-8 h-8 bg-green-100 hover:bg-green-200 dark:bg-green-700 dark:hover:bg-green-600 rounded-lg transition-colors"
+                    >
+                      <svg className="w-4 h-4 text-green-600 dark:text-green-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                    </button>
+                  </Tooltip>
+                  
+                  {/* File Upload Button */}
+                  <Tooltip content="Upload file" className="z-50">
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isLoading}
+                      className="flex items-center justify-center w-8 h-8 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 rounded-lg transition-colors"
+                    >
+                      <svg className="w-4 h-4 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                      </svg>
+                    </button>
+                  </Tooltip>
                   
                   {/* Web Search Toggle Button */}
-                  <button
-                    onClick={() => setWebSearchEnabled(!webSearchEnabled)}
-                    disabled={isLoading}
-                    className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors ${
-                      webSearchEnabled
-                        ? 'bg-blue-100 hover:bg-blue-200 dark:bg-blue-900 dark:hover:bg-blue-800'
-                        : 'bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600'
-                    }`}
-                    title={webSearchEnabled ? "Web search enabled" : "Enable web search"}
-                  >
-                    <svg className={`w-4 h-4 ${
+                  <Tooltip content={webSearchEnabled ? "Web search enabled" : "Enable web search"} className="z-50">
+                    <button
+                      onClick={() => setWebSearchEnabled(!webSearchEnabled)}
+                      disabled={isLoading}
+                      className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors ${
+                        webSearchEnabled
+                          ? 'bg-blue-100 hover:bg-blue-200 dark:bg-blue-900 dark:hover:bg-blue-800'
+                          : 'bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600'
+                      }`}
+                    >
+                      <svg className={`w-4 h-4 ${
                       webSearchEnabled 
                         ? 'text-blue-600 dark:text-blue-300' 
                         : 'text-gray-600 dark:text-gray-300'
                     }`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
                     </svg>
-                  </button>
+                    </button>
+                  </Tooltip>
                 </div>
                 
                 {/* Send button - right side */}
@@ -2010,7 +2014,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                   onClick={sendMessage}
                   disabled={isLoading || (!inputMessage.trim() && attachedFiles.length === 0)}
                   size={isDrawerMode ? "sm" : "default"}
-                  className="rounded-full p-2 text-primary-600 hover:bg-primary-100 dark:text-primary-500 dark:hover:bg-gray-600"
+                  className="rounded-full p-2 text-primary-600 hover:bg-primary-100 dark:text-white dark:hover:bg-gray-600"
                 >
                   {isLoading ? <Spinner size="sm" /> : (
                     <svg
