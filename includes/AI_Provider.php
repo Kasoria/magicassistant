@@ -353,6 +353,7 @@ class AI_Provider {
         $page_context = $data['page_context'] ?? null;
         $attached_files = $data['attached_files'] ?? [];
         $custom_system_message = $data['custom_system_message'] ?? null;
+        $web_search_enabled = $data['web_search_enabled'] ?? false;
         
         // Reset tool discovery flag for new sessions
         if ($this->current_session_id !== $session_id) {
@@ -445,10 +446,10 @@ class AI_Provider {
             
             if ($agent_mode) {
                 // Use agent mode for complex multi-step tasks
-                $result = $this->handle_agent_mode($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message);
+                $result = $this->handle_agent_mode($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled);
             } else {
                 // Use simple chat mode
-                $result = $this->handle_chat_mode($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message);
+                $result = $this->handle_chat_mode($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled);
             }
             
             $response_time = microtime(true) - $start_time;
@@ -617,7 +618,7 @@ class AI_Provider {
         return false; // Always return false since auto mode is removed
     }
     
-    private function handle_chat_mode($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null) {
+    private function handle_chat_mode($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false) {
         // Limit the amount of history we send to the model to save tokens
         $history_limit = $this->settings['conversation_history_limit'] ?? 20;
         if ($history_limit > 0 && is_array($conversation_history) && count($conversation_history) > $history_limit) {
@@ -656,11 +657,11 @@ class AI_Provider {
         
         // Initial AI call
         if ($provider === 'openai') {
-            $response = $this->call_openai($messages, $api_key);
+            $response = $this->call_openai($messages, $api_key, $web_search_enabled);
         } elseif ($provider === 'anthropic') {
-            $response = $this->call_anthropic($messages, $api_key);
+            $response = $this->call_anthropic($messages, $api_key, $web_search_enabled);
         } elseif ($provider === 'openrouter') {
-            $response = $this->call_openrouter($messages, $api_key);
+            $response = $this->call_openrouter($messages, $api_key, $web_search_enabled);
         } else {
             throw new Exception('Unsupported AI provider: ' . $provider);
         }
@@ -726,7 +727,7 @@ class AI_Provider {
                     }
                     
                     // Call AI again to get final response with the tool data
-                    $final_response = $this->call_anthropic($messages, $api_key);
+                    $final_response = $this->call_anthropic($messages, $api_key, $web_search_enabled);
                 } else {
                     // OpenRouter uses OpenAI Chat Completion format
                     $messages[] = array(
@@ -745,7 +746,7 @@ class AI_Provider {
                     }
                     
                     // Call AI again to get final response with the tool data
-                    $final_response = $this->call_openrouter($messages, $api_key);
+                    $final_response = $this->call_openrouter($messages, $api_key, $web_search_enabled);
                 }
                 
                 // Track flag for the second call as well
@@ -797,7 +798,7 @@ class AI_Provider {
         );
     }
     
-    private function handle_agent_mode($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null) {
+    private function handle_agent_mode($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false) {
         // Limit history length to avoid oversized prompts while keeping recent context
         $history_limit = $this->settings['conversation_history_limit'] ?? 20;
         if ($history_limit > 0 && is_array($conversation_history) && count($conversation_history) > $history_limit) {
@@ -843,11 +844,11 @@ class AI_Provider {
             
             // Call AI provider
             if ($provider === 'openai') {
-                $response = $this->call_openai($messages, $api_key);
+                $response = $this->call_openai($messages, $api_key, $web_search_enabled);
             } elseif ($provider === 'anthropic') {
-                $response = $this->call_anthropic($messages, $api_key);
+                $response = $this->call_anthropic($messages, $api_key, $web_search_enabled);
             } elseif ($provider === 'openrouter') {
-                $response = $this->call_openrouter($messages, $api_key);
+                $response = $this->call_openrouter($messages, $api_key, $web_search_enabled);
             } else {
                 throw new Exception('Unsupported AI provider: ' . $provider);
             }
@@ -1272,12 +1273,12 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         return null;
     }
     
-    private function call_openai($messages, $api_key) {
+    private function call_openai($messages, $api_key, $web_search_enabled = false) {
         // For Responses API, we need to handle tool calls differently
-        return $this->call_openai_responses($messages, $api_key);
+        return $this->call_openai_responses($messages, $api_key, $web_search_enabled);
     }
     
-    private function call_openai_responses($messages, $api_key) {
+    private function call_openai_responses($messages, $api_key, $web_search_enabled = false) {
         // Extract system message and conversation for proper Responses API formatting
         $system_message = '';
         $conversation_messages = [];
@@ -1312,6 +1313,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     'tools'      => $this->get_mcp_tools_for_openai(),
                     'store'      => false, // For zero data retention
                     'reasoning'  => $this->get_reasoning_config(),
+                    'web_search_enabled' => $web_search_enabled,
                 ),
                 'site_url'  => home_url(),
                 'timestamp' => time(),
@@ -1327,6 +1329,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
             if ( ! empty( $api_key ) ) {
                 $headers['X-User-Api-Key'] = $api_key;
+            }
+            
+            // Add web search header for proxy
+            if ( $web_search_enabled ) {
+                $headers['X-Web-Search-Enabled'] = 'true';
             }
 
 
@@ -1493,7 +1500,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
     }
     
-    private function call_anthropic($messages, $api_key) {
+    private function call_anthropic($messages, $api_key, $web_search_enabled = false) {
         // Separate system and user messages
         $system_message = '';
         $conversation   = [];
@@ -1511,6 +1518,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 'model'      => $this->settings['anthropic_model'] ?? 'claude-3-5-sonnet-20241022',
                 'messages'   => $conversation,
                 'tools'      => $tools,
+                'web_search_enabled' => $web_search_enabled,
             ),
             'site_url'  => home_url(),
             'timestamp' => time(),
@@ -1524,6 +1532,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
         if ( ! empty( $api_key ) ) {
             $headers['X-User-Api-Key'] = $api_key;
+        }
+        
+        // Add web search header for proxy
+        if ( $web_search_enabled ) {
+            $headers['X-Web-Search-Enabled'] = 'true';
         }
 
         $response = wp_remote_post( $this->anthropic_proxy_url, array(
@@ -1563,7 +1576,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         );
     }
     
-    private function call_openrouter($messages, $api_key) {
+    private function call_openrouter($messages, $api_key, $web_search_enabled = false) {
         // Separate system and user messages (similar to Anthropic format)
         $system_message = '';
         $conversation   = [];
@@ -1582,6 +1595,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'data'     => array(
                 'model'      => $model,
                 'messages'   => $conversation,
+                'web_search_enabled' => $web_search_enabled,
             ),
             'site_url'  => home_url(),
             'timestamp' => time(),
@@ -1605,6 +1619,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
         if ( ! empty( $api_key ) ) {
             $headers['X-User-Api-Key'] = $api_key;
+        }
+        
+        // Add web search header for proxy
+        if ( $web_search_enabled ) {
+            $headers['X-Web-Search-Enabled'] = 'true';
         }
 
         $response = wp_remote_post( $this->openrouter_proxy_url, array(
@@ -6265,6 +6284,32 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     $supports_tools = in_array('tools', $model['supported_parameters']);
                 }
                 
+                // Check if model supports web search
+                $supports_web_search = false;
+                if (isset($model['supported_parameters']) && is_array($model['supported_parameters'])) {
+                    // Check for web search related parameters
+                    $supports_web_search = in_array('web_search', $model['supported_parameters']) ||
+                                          in_array('search', $model['supported_parameters']) ||
+                                          in_array('browsing', $model['supported_parameters']) ||
+                                          in_array('internet', $model['supported_parameters']);
+                }
+                
+                // Some models may have web search in their features or capabilities
+                if (!$supports_web_search && isset($model['features']) && is_array($model['features'])) {
+                    $supports_web_search = in_array('web_search', $model['features']) ||
+                                          in_array('browsing', $model['features']) ||
+                                          in_array('internet_access', $model['features']);
+                }
+                
+                // Check model name/description for web search indicators
+                if (!$supports_web_search) {
+                    $model_text = strtolower($model['name'] . ' ' . ($model['description'] ?? ''));
+                    $supports_web_search = strpos($model_text, 'web search') !== false ||
+                                          strpos($model_text, 'internet') !== false ||
+                                          strpos($model_text, 'browsing') !== false ||
+                                          strpos($model_text, 'search') !== false;
+                }
+                
                 // Format the model for the dropdown
                 $formatted_models[] = array(
                     'value' => $model['id'],
@@ -6273,7 +6318,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     'context_length' => $model['context_length'] ?? null,
                     'pricing' => $model['pricing'] ?? null,
                     'top_provider' => $model['top_provider'] ?? null,
-                    'supports_tools' => $supports_tools
+                    'supports_tools' => $supports_tools,
+                    'supports_web_search' => $supports_web_search
                 );
             }
             

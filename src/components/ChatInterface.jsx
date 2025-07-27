@@ -68,6 +68,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
   const [customSystemMessage, setCustomSystemMessage] = useState('')
   const [enableCustomSystem, setEnableCustomSystem] = useState(false)
   const [persistFiles, setPersistFiles] = useState(false)
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false)
   
   // Helper: reset lightbox state when opening
   const resetLightboxState = () => {
@@ -419,6 +420,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
         headers: {
           'Content-Type': 'application/json',
           'X-WP-Nonce': adminData.nonces.wp_rest,
+          'X-Web-Search-Enabled': webSearchEnabled ? 'true' : 'false',
         },
         body: JSON.stringify({
           message: apiMessageContent, // Use the API version with full content
@@ -437,7 +439,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
             content: f.content,
             isImage: f.isImage || false
           })) : undefined,
-          custom_system_message: enableCustomSystem && customSystemMessage ? customSystemMessage : undefined
+          custom_system_message: enableCustomSystem && customSystemMessage ? customSystemMessage : undefined,
+          web_search_enabled: webSearchEnabled
         })
       })
 
@@ -1011,6 +1014,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
         headers: {
           'Content-Type': 'application/json',
           'X-WP-Nonce': adminData.nonces.wp_rest,
+          'X-Web-Search-Enabled': webSearchEnabled ? 'true' : 'false',
         },
         body: JSON.stringify({
           message: editingMessageContent.trim(),
@@ -1023,7 +1027,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
           is_message_edit: true,
           truncate_at_message: editingMessageIndex,
           page_url: pageContext.url,
-          page_context: pageContext
+          page_context: pageContext,
+          web_search_enabled: webSearchEnabled
         })
       })
 
@@ -1976,6 +1981,26 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                   >
                     <svg className="w-4 h-4 text-green-600 dark:text-green-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                  </button>
+                  
+                  {/* Web Search Toggle Button */}
+                  <button
+                    onClick={() => setWebSearchEnabled(!webSearchEnabled)}
+                    disabled={isLoading}
+                    className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors ${
+                      webSearchEnabled
+                        ? 'bg-blue-100 hover:bg-blue-200 dark:bg-blue-900 dark:hover:bg-blue-800'
+                        : 'bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600'
+                    }`}
+                    title={webSearchEnabled ? "Web search enabled" : "Enable web search"}
+                  >
+                    <svg className={`w-4 h-4 ${
+                      webSearchEnabled 
+                        ? 'text-blue-600 dark:text-blue-300' 
+                        : 'text-gray-600 dark:text-gray-300'
+                    }`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
                     </svg>
                   </button>
                 </div>

@@ -344,11 +344,24 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
       const data = await response.json()
       
       if (data.success && data.models) {
-        // Add indicators for tool support to model labels
-        const modelsWithIndicators = data.models.map(model => ({
-          ...model,
-          label: model.supports_tools ? `${model.label} ✓` : `${model.label} (no tools)`
-        }))
+        // Add indicators for tool support and web search to model labels
+        const modelsWithIndicators = data.models.map(model => {
+          let indicators = []
+          if (model.supports_tools) indicators.push('✓')
+          if (model.supports_web_search) indicators.push('🌐')
+          
+          if (indicators.length > 0) {
+            return {
+              ...model,
+              label: `${model.label} ${indicators.join(' ')}`
+            }
+          } else {
+            return {
+              ...model,
+              label: `${model.label} (chat only)`
+            }
+          }
+        })
         setOpenrouterModels(modelsWithIndicators)
       } else {
         throw new Error(data.message || 'Failed to load OpenRouter models')
@@ -1103,7 +1116,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                             {openrouterModels.length} models available
                           </p>
                           <p className="text-xs text-gray-400 dark:text-gray-500">
-                            ✓ = Supports MCP tools | (no tools) = Chat only
+                            ✓ = Supports MCP tools | 🌐 = Web search capable | (chat only) = Basic chat
                           </p>
                         </div>
                       )}
