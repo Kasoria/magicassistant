@@ -65,6 +65,12 @@ class AI_Provider {
             'permission_callback' => array($this, 'check_permissions'),
         ));
         
+        register_rest_route('magicassistant/v1', '/chat-sessions/delete-all', array(
+            'methods' => 'DELETE',
+            'callback' => array($this, 'delete_all_chat_sessions'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
         register_rest_route('magicassistant/v1', '/chat-sessions/(?P<session_id>[a-zA-Z0-9_]+)/title', array(
             'methods' => 'PUT',
             'callback' => array($this, 'update_chat_title'),
@@ -2442,6 +2448,30 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         return array(
             'success' => true,
             'message' => 'Chat session deleted successfully'
+        );
+    }
+    
+    /**
+     * Delete all chat sessions for the current user
+     */
+    public function delete_all_chat_sessions($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+        
+        $user_id = get_current_user_id();
+        
+        // Delete all sessions for the user using the database method
+        $deleted_count = $this->db->delete_all_chat_sessions($user_id);
+        
+        if ($deleted_count === false) {
+            return new WP_Error('delete_failed', 'Failed to delete chat sessions', array('status' => 500));
+        }
+        
+        return array(
+            'success' => true,
+            'message' => 'All chat sessions deleted successfully',
+            'deleted_count' => $deleted_count
         );
     }
     
