@@ -871,6 +871,19 @@ class DB {
     }
     
     /**
+     * Delete all chat sessions for a user
+     */
+    public function delete_all_chat_sessions($user_id) {
+        global $wpdb;
+        
+        return $wpdb->delete(
+            $this->chat_history_table,
+            array('user_id' => $user_id),
+            array('%d')
+        );
+    }
+    
+    /**
      * Truncate chat session at a specific message index
      * This removes all messages from the specified index onwards
      */
