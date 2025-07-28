@@ -32,6 +32,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
   const [chatSessions, setChatSessions] = useState([])
   const [currentSessionId, setCurrentSessionId] = useState(null)
   const [sessionToDelete, setSessionToDelete] = useState(null)
+  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false)
   const [isEditingTitle, setIsEditingTitle] = useState(false)
   const [customTitle, setCustomTitle] = useState('')
   const [editingMessageIndex, setEditingMessageIndex] = useState(null)
@@ -387,6 +388,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
     const userMessage = {
       role: 'user',
       content: displayContent, // This is what shows in the chat UI
+      fullContent: apiMessageContent, // Store the full content for AI context
       timestamp: new Date(),
       userId: adminData?.currentUser?.id,
       userName: adminData?.currentUser?.name,
@@ -426,7 +428,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
           message: apiMessageContent, // Use the API version with full content
           history: messages.filter(msg => msg.role !== 'system').map(msg => ({
             role: msg.role,
-            content: msg.content
+            content: msg.fullContent || msg.content // Use fullContent for AI context if available
           })),
           agent_mode: forceAgentMode,
           session_id: currentSessionId,
@@ -790,23 +792,46 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
         const data = await response.json()
         if (data.success && data.history) {
           // Convert database format to frontend format
-          const formattedMessages = data.history.map(msg => ({
-            role: msg.role,
-            content: msg.content,
-            timestamp: msg.created_at ? new Date(msg.created_at) : new Date(msg.timestamp || Date.now()),
-            provider: msg.provider,
-            model: msg.model,
-            userId: msg.user_id,
-            userName: msg.user_name,
-            userAvatar: msg.user_avatar,
-            agent_mode: msg.agent_mode,
-            reasoning: msg.reasoning,
-            tool_calls_count: msg.tool_calls_count,
-            debug_tool_data: msg.debug_tool_data,
-            tokens_used: msg.tokens_used,
-            cost: msg.cost,
-            response_time: msg.response_time
-          }))
+          const formattedMessages = data.history.map(msg => {
+            const fullContent = msg.content
+            
+            // Extract display content for user messages with file attachments
+            let displayContent = fullContent
+            if (msg.role === 'user' && (fullContent.includes('**File:') || fullContent.includes('**Image:'))) {
+              // Try to extract the original message text before file content
+              const lines = fullContent.split('\n')
+              const fileStartIndex = lines.findIndex(line => line.includes('**File:') || line.includes('**Image:'))
+              if (fileStartIndex > 0) {
+                displayContent = lines.slice(0, fileStartIndex).join('\n').trim()
+                
+                // Add file summary for display
+                const fileLines = lines.slice(fileStartIndex)
+                const fileCount = fileLines.filter(line => line.includes('**File:') || line.includes('**Image:')).length
+                if (fileCount > 0) {
+                  displayContent += displayContent ? `\n\n📎 ${fileCount} file${fileCount > 1 ? 's' : ''} attached` : `📎 ${fileCount} file${fileCount > 1 ? 's' : ''} attached`
+                }
+              }
+            }
+            
+            return {
+              role: msg.role,
+              content: displayContent,
+              fullContent: fullContent, // Store full content for AI context
+              timestamp: msg.created_at ? new Date(msg.created_at) : new Date(msg.timestamp || Date.now()),
+              provider: msg.provider,
+              model: msg.model,
+              userId: msg.user_id,
+              userName: msg.user_name,
+              userAvatar: msg.user_avatar,
+              agent_mode: msg.agent_mode,
+              reasoning: msg.reasoning,
+              tool_calls_count: msg.tool_calls_count,
+              debug_tool_data: msg.debug_tool_data,
+              tokens_used: msg.tokens_used,
+              cost: msg.cost,
+              response_time: msg.response_time
+            }
+          })
           
           setMessages(formattedMessages)
           setCurrentSessionId(session.id)
@@ -869,6 +894,44 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
       deleteSession(sessionToDelete.id)
       setSessionToDelete(null)
     }
+  }
+
+  const deleteAllSessions = async () => {
+    try {
+      const response = await fetch(`${adminData.restUrl}chat-sessions/delete-all`, {
+        method: 'DELETE',
+        headers: {
+          'X-WP-Nonce': adminData.nonces.wp_rest,
+        },
+      })
+      
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success) {
+          // Clear all sessions from state
+          setChatSessions([])
+          // Clear current chat if it was one of the deleted sessions
+          clearChat()
+          showSuccess(`Successfully deleted ${data.deleted_count || 'all'} chat conversations`)
+        } else {
+          showError('Failed to delete all conversations: ' + (data.message || 'Unknown error'))
+        }
+      } else {
+        showError('Failed to delete all conversations')
+      }
+    } catch (error) {
+      console.error('Failed to delete all sessions:', error)
+      showError('Failed to delete all conversations')
+    }
+  }
+
+  const confirmDeleteAllSessions = () => {
+    setShowDeleteAllConfirm(true)
+  }
+
+  const handleDeleteAllConfirm = () => {
+    deleteAllSessions()
+    setShowDeleteAllConfirm(false)
   }
 
   const getChatTitle = () => {
@@ -979,6 +1042,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
     // Update the message content
     const updatedMessages = [...messages]
     updatedMessages[editingMessageIndex].content = editingMessageContent.trim()
+    // Also update fullContent to match the edited content
+    updatedMessages[editingMessageIndex].fullContent = editingMessageContent.trim()
     
     // Ensure user info is preserved for user messages
     if (updatedMessages[editingMessageIndex].role === 'user') {
@@ -1020,7 +1085,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
           message: editingMessageContent.trim(),
           history: messagesUpToEdit.filter(msg => msg.role !== 'system').map(msg => ({
             role: msg.role,
-            content: msg.content
+            content: msg.fullContent || msg.content // Use fullContent for AI context if available
           })),
           agent_mode: forceAgentMode,
           session_id: currentSessionId,
@@ -2058,7 +2123,20 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
         >
           <div className="mb-4 flex items-center justify-between pt-[32px]">
             <h5 className="text-base font-semibold text-gray-500 dark:text-gray-400">Chat History</h5>
-            <Button size="xs" color="light" onClick={() => setIsHistoryOpen(false)}>Close</Button>
+            <div className="flex items-center gap-2">
+              {chatSessions.length > 0 && (
+                <Button 
+                  size="xs" 
+                  color="failure" 
+                  onClick={confirmDeleteAllSessions}
+                  title="Delete all conversations"
+                  className="bg-red-600 text-white"
+                >
+                  Delete All
+                </Button>
+              )}
+              <Button size="xs" color="light" onClick={() => setIsHistoryOpen(false)}>Close</Button>
+            </div>
           </div>
           <ul className="space-y-2">
             {chatSessions.length === 0 && <li className="text-sm text-gray-500">No saved conversations yet.</li>}
@@ -2292,6 +2370,19 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
         title="Delete Chat Conversation"
         message={`Are you sure you want to delete "${sessionToDelete?.title}"? This action cannot be undone.`}
         confirmText="Delete"
+        cancelText="Cancel"
+        confirmButtonClass="bg-red-600 hover:bg-red-700 focus:ring-red-300 dark:bg-red-500 dark:hover:bg-red-600 dark:focus:ring-red-900"
+        icon="delete"
+      />
+
+      {/* Delete All Sessions Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={showDeleteAllConfirm}
+        onClose={() => setShowDeleteAllConfirm(false)}
+        onConfirm={handleDeleteAllConfirm}
+        title="Delete All Chat Conversations"
+        message={`Are you sure you want to delete all ${chatSessions.length} chat conversations? This action cannot be undone.`}
+        confirmText="Delete All"
         cancelText="Cancel"
         confirmButtonClass="bg-red-600 hover:bg-red-700 focus:ring-red-300 dark:bg-red-500 dark:hover:bg-red-600 dark:focus:ring-red-900"
         icon="delete"
