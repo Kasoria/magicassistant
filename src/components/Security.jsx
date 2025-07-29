@@ -406,7 +406,7 @@ RewriteBase /
 9. **Admin Users Audit**: Use security_admin_users_audit to review administrator accounts
 10. **Login Events**: Use security_login_events to analyze recent login activity
 11. **File Integrity Monitoring**: Use security_file_integrity_watch to establish baseline for ongoing monitoring
-12. **Vulnerability Scan**: Use security_vulnerability_scan to check for known vulnerabilities
+12. **Wordfence Vulnerability Scan**: Use security_vulnerability_scan to check for known vulnerabilities using the free Wordfence Intelligence database
 13. **htaccess Protection**: Use security_htaccess_protection to verify htaccess security rules
 
 Please provide actionable security recommendations and highlight any critical issues that need immediate attention.`
@@ -1348,14 +1348,30 @@ Please provide actionable security recommendations and highlight any critical is
           </Card>
         )}
 
-        {/* Vulnerability Scan */}
-        {securityData?.security_vulnerability_scan && (
-          <Card>
+        {/* Wordfence Vulnerability Scan */}
+        <Card>
+          <div className="flex justify-between items-center mb-4">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              🔍 Vulnerability Scan
+              🛡️ Wordfence Vulnerability Scan
             </h3>
-            <div className="space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {(!vulnScan || Object.keys(vulnScan).length === 0 || !vulnScan.vulnerabilities) && (
+              <Button
+                onClick={() => {
+                  const message = 'Please scan my WordPress site for security vulnerabilities using the Wordfence database. Check all active plugins and themes for known vulnerabilities and provide me a detailed report with recommended actions.'
+                  sessionStorage.setItem('mat_prefill_message', message)
+                  window.dispatchEvent(new CustomEvent('mat_switch_tab', { detail: { tab: 'chat' } }))
+                }}
+                size="sm"
+                color="blue"
+              >
+                🤖 Get AI Security Scan
+              </Button>
+            )}
+          </div>
+          
+          {vulnScan && Object.keys(vulnScan).length > 0 ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="text-center p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-700">
                   <p className="text-2xl font-bold text-green-600 dark:text-green-400 mb-1">
                     {vulnScan.scanned_components || 0}
@@ -1377,30 +1393,156 @@ Please provide actionable security recommendations and highlight any critical is
                   </p>
                   <p className="text-sm text-blue-800 dark:text-blue-200">Last Scan</p>
                 </div>
+                <div className="text-center p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-700">
+                  <p className="text-sm font-medium text-purple-600 dark:text-purple-400 mb-1">
+                    {vulnScan.data_source || 'Wordfence Intelligence'}
+                  </p>
+                  <p className="text-xs text-purple-800 dark:text-purple-200">Data Source</p>
+                </div>
               </div>
 
-              {vulnScan.vulnerabilities && vulnScan.vulnerabilities.length > 0 && (
+              {vulnScan.vulnerabilities && vulnScan.vulnerabilities.length > 0 ? (
                 <div className="space-y-3">
-                  <h4 className="font-medium text-gray-900 dark:text-white">Detected Vulnerabilities:</h4>
+                  <div className="flex justify-between items-center">
+                    <h4 className="font-medium text-gray-900 dark:text-white">Detected Vulnerabilities:</h4>
+                    <Button
+                      onClick={() => {
+                        const message = `I have ${vulnScan.vulnerabilities.length} security vulnerabilities found on my WordPress site. Please analyze them and provide detailed recommendations for fixing each vulnerability, prioritizing by severity level.`
+                        sessionStorage.setItem('mat_prefill_message', message)
+                        window.dispatchEvent(new CustomEvent('mat_switch_tab', { detail: { tab: 'chat' } }))
+                      }}
+                      size="sm"
+                      color="orange"
+                    >
+                      🤖 Get AI Remediation Help
+                    </Button>
+                  </div>
                   {vulnScan.vulnerabilities.map((vuln, index) => (
-                    <div key={index} className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg">
-                      <div className="flex items-center gap-3 mb-1">
-                        <Badge color="failure">{vuln.severity || 'Unknown'}</Badge>
-                        <h5 className="font-medium text-red-800 dark:text-red-200">{vuln.component}</h5>
+                    <div key={index} className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-3">
+                          <Badge color={
+                            vuln.severity === 'Critical' ? 'failure' :
+                            vuln.severity === 'High' ? 'warning' :
+                            vuln.severity === 'Medium' ? 'yellow' :
+                            vuln.severity === 'Low' ? 'info' : 'gray'
+                          }>
+                            {vuln.severity || 'Unknown'}
+                          </Badge>
+                          <h5 className="font-medium text-red-800 dark:text-red-200">
+                            {vuln.component_name || vuln.component}
+                          </h5>
+                          {vuln.cvss_score && (
+                            <span className="text-xs bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded">
+                              CVSS: {vuln.cvss_score}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                          v{vuln.component_version}
+                        </span>
                       </div>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">{vuln.description}</p>
-                      {vuln.fix_available && showTips && (
-                        <p className="text-sm text-blue-600 dark:text-blue-400 mt-1">
-                          💡 Fix Available: {vuln.fix_available}
+                      <h6 className="font-medium text-red-900 dark:text-red-100 mb-1">
+                        {vuln.title}
+                      </h6>
+                      {vuln.description && (
+                        <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                          {vuln.description}
                         </p>
+                      )}
+                      <div className="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400">
+                        <div>
+                          {vuln.fixed_in && (
+                            <span className="text-green-600 dark:text-green-400">
+                              Fixed in version: {vuln.fixed_in}
+                            </span>
+                          )}
+                        </div>
+                        <div>
+                          {vuln.published && (
+                            <span>Published: {new Date(vuln.published).toLocaleDateString()}</span>
+                          )}
+                        </div>
+                      </div>
+                      {vuln.references && vuln.references.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-red-200 dark:border-red-700">
+                          <p className="text-xs text-gray-500 dark:text-gray-400">References:</p>
+                          <div className="flex gap-2 mt-1">
+                            {vuln.references.slice(0, 3).map((ref, refIndex) => (
+                              <a
+                                key={refIndex}
+                                href={ref.url || ref}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                              >
+                                {ref.type || 'Reference'} ↗
+                              </a>
+                            ))}
+                          </div>
+                        </div>
                       )}
                     </div>
                   ))}
                 </div>
+              ) : (
+                <div className="text-center py-8 bg-green-50 dark:bg-green-900/20 rounded-lg">
+                  <div className="text-4xl mb-2">✅</div>
+                  <h4 className="text-lg font-medium text-green-800 dark:text-green-200 mb-1">
+                    No Vulnerabilities Found
+                  </h4>
+                  <p className="text-sm text-green-600 dark:text-green-400">
+                    Your active plugins and theme appear to be secure based on the Wordfence database.
+                  </p>
+                  <Button
+                    onClick={() => {
+                      const message = 'Great news! No vulnerabilities were found in my WordPress site scan. Please provide me with additional security recommendations and best practices to keep my site secure.'
+                      sessionStorage.setItem('mat_prefill_message', message)
+                      window.dispatchEvent(new CustomEvent('mat_switch_tab', { detail: { tab: 'chat' } }))
+                    }}
+                    size="sm"
+                    color="green"
+                    className="mt-3"
+                  >
+                    🤖 Get Additional Security Tips
+                  </Button>
+                </div>
               )}
             </div>
-          </Card>
-        )}
+          ) : (
+            <div className="text-center py-8 bg-gray-50 dark:bg-gray-800 rounded-lg">
+              <div className="text-4xl mb-2">🔍</div>
+              <h4 className="text-lg font-medium text-gray-800 dark:text-gray-200 mb-2">
+                No Vulnerability Scan Data
+              </h4>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                Use the AI assistant to scan your WordPress site for security vulnerabilities using the free Wordfence Intelligence database.
+              </p>
+              <div className="flex justify-center gap-3">
+                <Button
+                  onClick={() => {
+                    const message = 'Please scan my WordPress site for security vulnerabilities using the Wordfence database. Check all active plugins and themes for known vulnerabilities and provide me a detailed report with recommended actions.'
+                    sessionStorage.setItem('mat_prefill_message', message)
+                    window.dispatchEvent(new CustomEvent('mat_switch_tab', { detail: { tab: 'chat' } }))
+                  }}
+                  color="blue"
+                >
+                  🤖 Start AI Security Scan
+                </Button>
+                <Button
+                  onClick={() => {
+                    const message = 'Please provide me with a comprehensive WordPress security checklist and best practices to protect my site from common vulnerabilities and attacks.'
+                    sessionStorage.setItem('mat_prefill_message', message)
+                    window.dispatchEvent(new CustomEvent('mat_switch_tab', { detail: { tab: 'chat' } }))
+                  }}
+                  color="gray"
+                >
+                  📋 Security Checklist
+                </Button>
+              </div>
+            </div>
+          )}
+        </Card>
 
         {/* htaccess Protection & Inline Editor */}
         {securityData?.security_htaccess_protection && (

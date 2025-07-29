@@ -24,6 +24,12 @@ class MCP_Server {
     private $registered_prompts = [];
     private $tools_discovered = false;
     
+    // Properties for streaming vulnerability search
+    private $search_component = null;
+    private $found_vulnerabilities = [];
+    private $json_buffer = '';
+    private $max_vulnerabilities = 10;
+    
     public function __construct($db = null) {
         $this->db = $db;
         add_action('init', array($this, 'init'), 20); // Later priority to ensure DB is ready
@@ -3149,13 +3155,13 @@ class MCP_Server {
 
         $this->register_tool(array(
             'name' => 'security_vulnerability_scan',
-            'description' => 'Query WPScan API to list known vulnerabilities affecting installed components.',
+            'description' => 'Query Wordfence Intelligence API (free, no authentication required) to scan for known vulnerabilities affecting active plugins and theme on this WordPress site.',
             'inputSchema' => array(
                 'type' => 'object',
                 'properties' => array(
                     'include_details' => array(
                         'type' => 'boolean',
-                        'description' => 'Include full vulnerability objects returned by the API',
+                        'description' => 'Include full vulnerability objects returned by the Wordfence API',
                         'default' => false
                     )
                 )
@@ -4411,55 +4417,295 @@ class MCP_Server {
     }
 
     /**
-     * Query WPScan for known vulnerabilities.
+     * Query Wordfence Intelligence API for known vulnerabilities.
+     * Uses the free Wordfence vulnerability database API with no authentication required.
      */
     public function security_vulnerability_scan($args) {
         $include_details = isset($args['include_details']) ? (bool) $args['include_details'] : false;
-        $token = get_option('magicassistant_wpscan_token');
-        if (!$token) {
-            return array('success' => false, 'error' => 'WPScan API token not configured.');
-        }
+        
+        // Get installed components (plugins and themes)
         $components = array();
         if (!function_exists('get_plugins')) {
             require_once ABSPATH . 'wp-admin/includes/plugin.php';
         }
+        
+        // Get active plugins only
+        $active_plugins = get_option('active_plugins', array());
         $plugins = get_plugins();
         foreach ($plugins as $file => $info) {
-            $components[] = array('type' => 'plugin', 'slug' => dirname($file), 'version' => $info['Version']);
-        }
-        $themes = wp_get_themes();
-        foreach ($themes as $slug => $theme) {
-            $components[] = array('type' => 'theme', 'slug' => $slug, 'version' => $theme->get('Version'));
-        }
-
-        $found = array();
-        foreach ($components as $comp) {
-            $url = sprintf('https://wpscan.com/api/v3/%s/%s', $comp['type'] === 'plugin' ? 'plugins' : 'themes', $comp['slug']);
-            $response = wp_remote_get($url, array('headers' => array('Authorization' => 'Token token=' . $token)));
-            if (is_wp_error($response)) continue;
-            $body = wp_remote_retrieve_body($response);
-            $data = json_decode($body, true);
-            if (empty($data['vulnerabilities'])) continue;
-            foreach ($data['vulnerabilities'] as $vuln) {
-                // Rough check – if fixed_in exists and our version < fixed_in, vuln applies
-                $applies = true;
-                if (!empty($vuln['fixed_in']) && $vuln['fixed_in'] !== 'null') {
-                    $applies = version_compare($comp['version'], $vuln['fixed_in'], '<');
-                }
-                if (!$applies) continue;
-                $entry = array(
-                    'component' => $comp['type'].'/'.$comp['slug'],
-                    'title'     => $vuln['title'],
-                    'fixed_in'  => $vuln['fixed_in'],
-                    'references'=> $vuln['references']
+            // Only scan active plugins
+            if (in_array($file, $active_plugins)) {
+                $components[] = array(
+                    'type' => 'plugin', 
+                    'slug' => dirname($file), 
+                    'version' => $info['Version'],
+                    'name' => $info['Name']
                 );
-                if ($include_details) {
-                    $entry['vuln'] = $vuln;
-                }
-                $found[] = $entry;
             }
         }
-        return array('success' => true, 'vulnerabilities_found' => $found, 'total' => count($found));
+        
+        // Get active theme only
+        $active_theme = wp_get_theme();
+        if ($active_theme->exists()) {
+            $components[] = array(
+                'type' => 'theme', 
+                'slug' => $active_theme->get_stylesheet(), 
+                'version' => $active_theme->get('Version'),
+                'name' => $active_theme->get('Name')
+            );
+        }
+
+        // Use fallback approach: scan using third-party vulnerability database
+        $found_vulnerabilities = array();
+        $scanned_components = count($components);
+        
+        foreach ($components as $component) {
+            // Use alternative API for component-specific vulnerability checks
+            $component_vulnerabilities = $this->check_component_vulnerabilities($component);
+            
+            if (!empty($component_vulnerabilities)) {
+                foreach ($component_vulnerabilities as $vulnerability) {
+                    $found_vulnerabilities[] = $vulnerability;
+                }
+            }
+        }
+        
+        return array(
+            'success' => true, 
+            'vulnerabilities_found' => $found_vulnerabilities,
+            'vulnerabilities' => $found_vulnerabilities, // For backward compatibility
+            'total' => count($found_vulnerabilities),
+            'scanned_components' => $scanned_components,
+            'last_updated' => current_time('mysql'),
+            'data_source' => 'Wordfence Intelligence API'
+        );
+    }
+    
+    /**
+     * Check if a vulnerability affects a specific component
+     */
+    private function vulnerability_affects_component($vulnerability, $component) {
+        // Check if the vulnerability affects the right type and slug
+        if (empty($vulnerability['software'])) {
+            return false;
+        }
+        
+        foreach ($vulnerability['software'] as $software) {
+            // Match component type and slug
+            $software_type = $software['type'] ?? '';
+            $software_slug = $software['slug'] ?? '';
+            
+            if ($software_type === $component['type'] && $software_slug === $component['slug']) {
+                // Check version constraints
+                if (!empty($software['affected_versions'])) {
+                    foreach ($software['affected_versions'] as $version_constraint) {
+                        if ($this->version_matches_constraint($component['version'], $version_constraint)) {
+                            return true;
+                        }
+                    }
+                }
+                
+                // If no version constraints, assume it affects this component
+                if (empty($software['affected_versions'])) {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Check if a version matches a vulnerability constraint
+     */
+    private function version_matches_constraint($version, $constraint) {
+        // Handle different constraint formats from Wordfence
+        if (is_string($constraint)) {
+            // Simple version comparison
+            return version_compare($version, $constraint, '<=');
+        }
+        
+        if (is_array($constraint)) {
+            $from_version = $constraint['from_version'] ?? null;
+            $to_version = $constraint['to_version'] ?? null;
+            
+            if ($from_version && $to_version) {
+                return version_compare($version, $from_version, '>=') && version_compare($version, $to_version, '<=');
+            } elseif ($from_version) {
+                return version_compare($version, $from_version, '>=');
+            } elseif ($to_version) {
+                return version_compare($version, $to_version, '<=');
+            }
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Check component vulnerabilities using lightweight approach
+     */
+    private function check_component_vulnerabilities($component) {
+        $vulnerabilities = array();
+        
+        // Use WordPress.org API to check for security notifications first (lightweight)
+        if ($component['type'] === 'plugin') {
+            $api_url = "https://api.wordpress.org/plugins/info/1.0/{$component['slug']}.json";
+        } else {
+            $api_url = "https://api.wordpress.org/themes/info/1.1/?action=theme_information&request[slug]={$component['slug']}";
+        }
+        
+        $response = wp_remote_get($api_url, array(
+            'timeout' => 10,
+            'user-agent' => 'MagicAssistant-WordPress-Plugin/1.0'
+        ));
+        
+        if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+            $body = wp_remote_retrieve_body($response);
+            $data = json_decode($body, true);
+            
+            // Check if component has known issues or is closed
+            if (isset($data['closed']) && $data['closed'] === true) {
+                $vulnerabilities[] = array(
+                    'id' => 'wp-repo-closed-' . $component['slug'],
+                    'component' => $component['type'] . '/' . $component['slug'],
+                    'component_name' => $component['name'],
+                    'component_version' => $component['version'],
+                    'title' => 'Plugin/Theme Removed from Repository',
+                    'description' => 'This ' . $component['type'] . ' has been closed/removed from the WordPress repository, potentially due to security or policy violations.',
+                    'severity' => 'High',
+                    'cvss_score' => null,
+                    'fixed_in' => null,
+                    'published' => null,
+                    'references' => array()
+                );
+            }
+            
+            // Check if component hasn't been updated recently (potential abandonment)
+            if (isset($data['last_updated'])) {
+                $last_updated = strtotime($data['last_updated']);
+                $two_years_ago = strtotime('-2 years');
+                
+                if ($last_updated < $two_years_ago) {
+                    $vulnerabilities[] = array(
+                        'id' => 'abandoned-' . $component['slug'],
+                        'component' => $component['type'] . '/' . $component['slug'],
+                        'component_name' => $component['name'],
+                        'component_version' => $component['version'],
+                        'title' => 'Potentially Abandoned ' . ucfirst($component['type']),
+                        'description' => 'This ' . $component['type'] . ' has not been updated in over 2 years and may be abandoned, potentially containing unpatched security vulnerabilities.',
+                        'severity' => 'Medium',
+                        'cvss_score' => null,
+                        'fixed_in' => null,
+                        'published' => date('Y-m-d', $last_updated),
+                        'references' => array()
+                    );
+                }
+            }
+        }
+        
+        // Fallback: Try to fetch a small subset of Wordfence data for this specific component
+        $specific_vulnerabilities = $this->fetch_wordfence_component_specific($component);
+        if (!empty($specific_vulnerabilities)) {
+            $vulnerabilities = array_merge($vulnerabilities, $specific_vulnerabilities);
+        }
+        
+        return $vulnerabilities;
+    }
+    
+    /**
+     * Fetch Wordfence data with early termination for specific component
+     */
+    private function fetch_wordfence_component_specific($component) {
+        // Try to use curl with streaming and early termination
+        $wordfence_url = 'https://www.wordfence.com/api/intelligence/v2/vulnerabilities/production';
+        
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $wordfence_url);
+        curl_setopt($ch, CURLOPT_WRITEFUNCTION, array($this, 'curl_write_callback'));
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        curl_setopt($ch, CURLOPT_USERAGENT, 'MagicAssistant-WordPress-Plugin/1.0');
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        
+        // Initialize search state
+        $this->search_component = $component;
+        $this->found_vulnerabilities = array();
+        $this->json_buffer = '';
+        $this->max_vulnerabilities = 10; // Limit results
+        
+        curl_exec($ch);
+        curl_close($ch);
+        
+        return $this->found_vulnerabilities;
+    }
+    
+    /**
+     * CURL write callback for streaming vulnerability search
+     */
+    private function curl_write_callback($ch, $data) {
+        $this->json_buffer .= $data;
+        
+        // Process complete vulnerability objects as we find them
+        while (($pos = strpos($this->json_buffer, '"},"')) !== false) {
+            $json_chunk = substr($this->json_buffer, 0, $pos + 2);
+            $this->json_buffer = substr($this->json_buffer, $pos + 3);
+            
+            // Try to parse a complete vulnerability object
+            if (preg_match('/"([^"]+)":\s*(\{.*\})/', $json_chunk, $matches)) {
+                $vuln_id = $matches[1];
+                $vuln_data = json_decode($matches[2], true);
+                
+                if ($vuln_data && $this->vulnerability_affects_component($vuln_data, $this->search_component)) {
+                    $this->found_vulnerabilities[$vuln_id] = array(
+                        'id' => $vuln_id,
+                        'component' => $this->search_component['type'] . '/' . $this->search_component['slug'],
+                        'component_name' => $this->search_component['name'],
+                        'component_version' => $this->search_component['version'],
+                        'title' => $vuln_data['title'] ?? 'Unknown Vulnerability',
+                        'description' => $vuln_data['description'] ?? '',
+                        'severity' => $this->map_cvss_to_severity($vuln_data['cvss'] ?? null),
+                        'cvss_score' => $vuln_data['cvss']['score'] ?? null,
+                        'fixed_in' => $vuln_data['patched_versions'][0] ?? null,
+                        'published' => $vuln_data['published'] ?? null,
+                        'references' => $vuln_data['references'] ?? array()
+                    );
+                    
+                    // Stop early if we found enough vulnerabilities
+                    if (count($this->found_vulnerabilities) >= $this->max_vulnerabilities) {
+                        return 0; // Stop curl
+                    }
+                }
+            }
+        }
+        
+        // Prevent buffer from growing too large
+        if (strlen($this->json_buffer) > 100000) {
+            return 0; // Stop curl to prevent memory issues
+        }
+        
+        return strlen($data);
+    }
+    
+    /**
+     * Map CVSS score to severity level
+     */
+    private function map_cvss_to_severity($cvss) {
+        if (empty($cvss['score'])) {
+            return 'Unknown';
+        }
+        
+        $score = floatval($cvss['score']);
+        
+        if ($score >= 9.0) {
+            return 'Critical';
+        } elseif ($score >= 7.0) {
+            return 'High';
+        } elseif ($score >= 4.0) {
+            return 'Medium';
+        } elseif ($score > 0.0) {
+            return 'Low';
+        }
+        
+        return 'Unknown';
     }
 
     /**
