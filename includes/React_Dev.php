@@ -1077,7 +1077,7 @@ class React_Dev {
             if (scripts.length > 0) {
                 // Scripts are already enqueued by WordPress, check if they have module type
                 scripts.forEach(function(script) {
-                    if (script.src.includes('<?php echo MAGIC_ASSISTANT_PLUGIN_URL; ?>')) {
+                    if (script.src.includes('<?php echo esc_js(MAGIC_ASSISTANT_PLUGIN_URL); ?>')) {
                         if (!script.getAttribute('type') || script.getAttribute('type') !== 'module') {
                             script.setAttribute('type', 'module');
                             script.setAttribute('crossorigin', 'anonymous');

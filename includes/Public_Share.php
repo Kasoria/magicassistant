@@ -83,16 +83,17 @@ class Public_Share {
      * Generate HTML for shared conversation page
      */
     private function generate_shared_page_html($conversation) {
-        $site_name = get_bloginfo('name');
-        $site_url = home_url();
+        $site_name = esc_html(get_bloginfo('name'));
+        $site_url = esc_url(home_url());
         $title = esc_html($conversation['title']);
         $view_count = intval($conversation['view_count']);
-        $created_date = date('F j, Y', strtotime($conversation['created_at']));
+        $created_date = esc_html(date('F j, Y', strtotime($conversation['created_at'])));
+        $html_content = wp_kses_post($conversation['html_content']);
         
         // Prepare meta tags for social sharing
-        $description = wp_trim_words(strip_tags($conversation['formatted_content']), 30);
-        $og_image = MAGIC_ASSISTANT_PLUGIN_URL . 'assets/magicassistant-social.png'; // You might want to create this
-        $canonical_url = home_url("/magicassistant/shared/{$conversation['share_id']}");
+        $description = esc_attr(wp_trim_words(strip_tags($conversation['formatted_content']), 30));
+        $og_image = esc_url(MAGIC_ASSISTANT_PLUGIN_URL . 'assets/magicassistant-social.png'); // You might want to create this
+        $canonical_url = esc_url(home_url("/magicassistant/shared/{$conversation['share_id']}"));
         
         return <<<HTML
 <!DOCTYPE html>
@@ -353,7 +354,7 @@ class Public_Share {
         </div>
         
         <div class="content">
-            {$conversation['html_content']}
+            {$html_content}
         </div>
         
         <div class="footer">

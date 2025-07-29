@@ -108,10 +108,6 @@ class PageSpeed_Service {
         
         // Debug logging for troubleshooting
         if (function_exists('error_log')) {
-            error_log('[PageSpeed Service] Making request to: ' . $proxy_url);
-            error_log('[PageSpeed Service] Analyzing URL: ' . $args['url']);
-            error_log('[PageSpeed Service] Site ID: ' . $site_id);
-            error_log('[PageSpeed Service] Request strategy: ' . $args['strategy']);
         }
         
         $response = wp_remote_post($proxy_url, array(
@@ -132,8 +128,6 @@ class PageSpeed_Service {
         
         // Debug logging for troubleshooting
         if (function_exists('error_log')) {
-            error_log('[PageSpeed Service] Proxy response status: ' . $status_code);
-            error_log('[PageSpeed Service] Proxy response body (first 500 chars): ' . substr($body, 0, 500));
         }
         
         if ($status_code !== 200) {

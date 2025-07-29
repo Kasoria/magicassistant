@@ -368,7 +368,6 @@ RewriteBase /
         const json = await response.json()
         console.log('Security data response:', json)
         if (json.success && json.data && Object.keys(json.data).length > 0) {
-          console.log('Security data keys:', Object.keys(json.data))
           setSecurityData(json.data)
           setHasData(true)
         } else {

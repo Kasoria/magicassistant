@@ -61,9 +61,6 @@ class DataForSEO {
             
         } catch (\Exception $e) {
             // Log the error for debugging
-            if (function_exists('error_log')) {
-                error_log('DataForSEO serp_analysis error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
-            }
             
             throw $e;
         }
@@ -99,9 +96,6 @@ class DataForSEO {
             
         } catch (\Exception $e) {
             // Log the error for debugging
-            if (function_exists('error_log')) {
-                error_log('DataForSEO keyword_difficulty error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
-            }
             
             throw $e;
         }
@@ -138,9 +132,6 @@ class DataForSEO {
             
         } catch (\Exception $e) {
             // Log the error for debugging
-            if (function_exists('error_log')) {
-                error_log('DataForSEO domain_analysis error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
-            }
             
             throw $e;
         }
@@ -192,9 +183,6 @@ class DataForSEO {
             
         } catch (\Exception $e) {
             // Log the error for debugging
-            if (function_exists('error_log')) {
-                error_log('DataForSEO competitor_analysis error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
-            }
             
             // Try to get manual competitors first as a better fallback
             try {
@@ -263,9 +251,6 @@ class DataForSEO {
             $this->timeout = 30;
             
             // Log the error for debugging
-            if (function_exists('error_log')) {
-                error_log('DataForSEO technical_audit error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
-            }
             
             throw $e;
         }
@@ -294,9 +279,6 @@ class DataForSEO {
             
         } catch (\Exception $e) {
             // Log the error for debugging
-            if (function_exists('error_log')) {
-                error_log('DataForSEO content_generate error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
-            }
             
             throw $e;
         }
@@ -324,9 +306,6 @@ class DataForSEO {
             
         } catch (\Exception $e) {
             // Log the error for debugging
-            if (function_exists('error_log')) {
-                error_log('DataForSEO content_generate_text error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
-            }
             
             throw $e;
         }
@@ -348,9 +327,6 @@ class DataForSEO {
             
         } catch (\Exception $e) {
             // Log the error for debugging
-            if (function_exists('error_log')) {
-                error_log('DataForSEO content_generate_meta_tags error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
-            }
             
             throw $e;
         }
@@ -372,9 +348,6 @@ class DataForSEO {
             
         } catch (\Exception $e) {
             // Log the error for debugging
-            if (function_exists('error_log')) {
-                error_log('DataForSEO content_generate_sub_topics error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
-            }
             
             throw $e;
         }
@@ -401,9 +374,6 @@ class DataForSEO {
             
         } catch (\Exception $e) {
             // Log the error for debugging
-            if (function_exists('error_log')) {
-                error_log('DataForSEO content_paraphrase error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
-            }
             
             throw $e;
         }
@@ -430,9 +400,6 @@ class DataForSEO {
             
         } catch (\Exception $e) {
             // Log the error for debugging
-            if (function_exists('error_log')) {
-                error_log('DataForSEO content_check_grammar error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
-            }
             
             throw $e;
         }
@@ -459,9 +426,6 @@ class DataForSEO {
             
         } catch (\Exception $e) {
             // Log the error for debugging
-            if (function_exists('error_log')) {
-                error_log('DataForSEO content_text_summary error: ' . $e->getMessage() . ' | Args: ' . wp_json_encode($args));
-            }
             
             throw $e;
         }
@@ -478,9 +442,6 @@ class DataForSEO {
             
         } catch (\Exception $e) {
             // Log the error for debugging
-            if (function_exists('error_log')) {
-                error_log('DataForSEO content_grammar_languages error: ' . $e->getMessage());
-            }
             
             throw $e;
         }
@@ -497,9 +458,6 @@ class DataForSEO {
             
         } catch (\Exception $e) {
             // Log the error for debugging
-            if (function_exists('error_log')) {
-                error_log('DataForSEO content_grammar_rules error: ' . $e->getMessage());
-            }
             
             throw $e;
         }
@@ -516,9 +474,6 @@ class DataForSEO {
             
         } catch (\Exception $e) {
             // Log the error for debugging
-            if (function_exists('error_log')) {
-                error_log('DataForSEO content_summary_languages error: ' . $e->getMessage());
-            }
             
             throw $e;
         }
@@ -536,9 +491,6 @@ class DataForSEO {
             }
             
             // Debug logging for competitor analysis
-            if (function_exists('error_log')) {
-                error_log('DataForSEO competitor analysis - Final cleaned args: ' . wp_json_encode($args));
-            }
         }
         
         // Prepare request data
@@ -593,9 +545,6 @@ class DataForSEO {
         
         if ($status_code !== 200) {
             // Log detailed error information for debugging
-            if (function_exists('error_log')) {
-                error_log('DataForSEO proxy error - Status: ' . $status_code . ' | Action: ' . $action . ' | Body: ' . substr($body, 0, 500));
-            }
             throw new \Exception('DataForSEO proxy returned error: HTTP ' . $status_code . (strlen($body) > 0 ? ' - ' . substr($body, 0, 200) : ''));
         }
         
@@ -981,9 +930,6 @@ class DataForSEO {
             $existing_data['competitors'] = array_slice($existing_competitors, 0, 20); // Limit to 20 competitors
             
             // Debug logging
-            if (function_exists('error_log')) {
-                error_log('DataForSEO SERP analysis extracted ' . count($serp_competitors) . ' competitors: ' . wp_json_encode(array_column($serp_competitors, 'domain')));
-            }
         }
         
         // Save comprehensive serp_analysis data
@@ -1196,12 +1142,6 @@ class DataForSEO {
         $existing_data['last_updated'] = current_time('mysql');
         
         // Debug logging to check what data exists before save
-        if (function_exists('error_log')) {
-            error_log('DataForSEO domain_analysis saving - existing data keys: ' . wp_json_encode(array_keys($existing_data)));
-            if (isset($existing_data['competitors'])) {
-                error_log('DataForSEO domain_analysis preserving ' . count($existing_data['competitors']) . ' existing competitors');
-            }
-        }
         
         $this->ai_provider->get_db()->save_user_setting('seo_data', $existing_data, $user_id);
         
@@ -1232,9 +1172,6 @@ class DataForSEO {
         $competitor_details = array();
         
         // Debug logging
-        if (function_exists('error_log')) {
-            error_log('DataForSEO saving competitor analysis - Input result structure: ' . wp_json_encode(array_keys($result)));
-        }
         
         if (isset($result['tasks']) && is_array($result['tasks'])) {
             foreach ($result['tasks'] as $task) {
@@ -1270,11 +1207,6 @@ class DataForSEO {
         }
         
         // Debug logging
-        if (function_exists('error_log')) {
-            error_log('DataForSEO saved ' . count($competitors) . ' competitors to database');
-            error_log('DataForSEO competitors array: ' . wp_json_encode(array_column($competitors, 'domain')));
-            error_log('DataForSEO existing_data keys before save: ' . wp_json_encode(array_keys($existing_data)));
-        }
         
         // Merge with existing competitors from SERP analysis, avoiding duplicates
         $existing_competitors = $existing_data['competitors'] ?? array();
@@ -1298,23 +1230,10 @@ class DataForSEO {
             'raw_response' => $this->filter_base64_data($result)
         );
         
-        if (function_exists('error_log')) {
-            error_log('DataForSEO existing_data keys after adding competitors: ' . wp_json_encode(array_keys($existing_data)));
-        }
         
         $this->ai_provider->get_db()->save_user_setting('seo_data', $existing_data, $user_id);
         
         // Verify the data was saved correctly
-        if (function_exists('error_log')) {
-            $saved_data = $this->ai_provider->get_db()->get_user_setting('seo_data', $user_id, array());
-            error_log('DataForSEO verification - saved data keys: ' . wp_json_encode(array_keys($saved_data)));
-            if (isset($saved_data['competitors'])) {
-                error_log('DataForSEO verification - competitors count: ' . count($saved_data['competitors']));
-                error_log('DataForSEO verification - competitor domains: ' . wp_json_encode(array_column($saved_data['competitors'], 'domain')));
-            } else {
-                error_log('DataForSEO verification - NO COMPETITORS FOUND in saved data!');
-            }
-        }
         
         // Clear cached analytics data so it gets regenerated with fresh competitor data
         $this->ai_provider->get_db()->delete_setting('seo_analytics_data', $user_id);
@@ -1447,10 +1366,6 @@ class DataForSEO {
         }
         
         // Debug logging to verify what scores we extracted
-        if (function_exists('error_log')) {
-            error_log('DataForSEO Technical Audit - Extracted scores: ' . wp_json_encode($technical_scores));
-            error_log('DataForSEO Technical Audit - URL: ' . $technical_data['url']);
-        }
         
         // Save technical scores in the format expected by analytics
         $existing_data['technical_scores'] = $technical_scores;
@@ -1461,9 +1376,7 @@ class DataForSEO {
         
         // Verify save was successful
         if ($saved && function_exists('error_log')) {
-            error_log('DataForSEO Technical Audit - Data saved successfully to database');
         } elseif (!$saved && function_exists('error_log')) {
-            error_log('DataForSEO Technical Audit - Failed to save data to database');
         }
         
         // Clear cached analytics data so it gets regenerated with fresh technical data
@@ -1702,7 +1615,6 @@ class DataForSEO {
 
         if ( $debug || ( defined( 'WP_DEBUG' ) && WP_DEBUG ) ) {
             if ( function_exists( 'error_log' ) ) {
-                error_log( '[MagicAssistant] License headers (DataForSEO): ' . wp_json_encode( $headers ) );
             }
         }
 

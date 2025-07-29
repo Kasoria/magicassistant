@@ -409,11 +409,9 @@ class SEO_Data_Extractor {
      * Extract structured data with plugin integration
      */
     public function extract_structured_data($url, $post_id = null) {
-        error_log("DEBUG Extract Structured Data - URL: $url, Post ID: $post_id, Primary Plugin: " . $this->primary_seo_plugin);
         
         // First try plugin-specific extraction
         if ($this->primary_seo_plugin && $post_id) {
-            error_log("DEBUG Extract Structured Data - Trying plugin extraction");
             $plugin_data = $this->extract_schema_from_plugin($post_id);
             
             // Check if plugin data has actual structured data content
@@ -422,15 +420,12 @@ class SEO_Data_Extractor {
                                    $plugin_data['structured_data_count'] > 0;
             
             if ($has_structured_data) {
-                error_log("DEBUG Extract Structured Data - Plugin extraction successful with data");
                 $plugin_data['data_source'] = 'plugin';
                 $plugin_data['plugin'] = $this->active_seo_plugins[$this->primary_seo_plugin]['name'];
                 return $plugin_data;
             } else {
-                error_log("DEBUG Extract Structured Data - Plugin extraction returned empty data, trying HTML fallback");
             }
         } else {
-            error_log("DEBUG Extract Structured Data - No plugin or post ID, using HTML fallback");
         }
         
         // Fallback to HTML parsing
@@ -1045,12 +1040,10 @@ class SEO_Data_Extractor {
      * Extract OpenGraph data from HTML (fallback)
      */
     private function extract_opengraph_from_html($url) {
-        error_log("DEBUG HTML OpenGraph Extraction - URL: $url");
         
         $response = wp_remote_get($url, array('timeout' => 10));
         
         if (is_wp_error($response)) {
-            error_log("DEBUG HTML OpenGraph Extraction - Error: " . $response->get_error_message());
             return array(
                 'error' => 'Failed to fetch page: ' . $response->get_error_message(),
                 'opengraph_tags' => array(),
@@ -1111,9 +1104,6 @@ class SEO_Data_Extractor {
             $issues[] = 'Missing og:type';
         }
         
-        error_log("DEBUG HTML OpenGraph Extraction - Found OG tags: " . var_export(array_keys($og_tags), true));
-        error_log("DEBUG HTML OpenGraph Extraction - Found Twitter tags: " . var_export(array_keys($twitter_tags), true));
-        error_log("DEBUG HTML OpenGraph Extraction - Issues: " . var_export($issues, true));
         
         $result = array(
             'opengraph_tags' => $og_tags,
@@ -1124,7 +1114,6 @@ class SEO_Data_Extractor {
             'data_source' => 'html_fallback'
         );
         
-        error_log("DEBUG HTML OpenGraph Extraction - Final result: " . var_export($result, true));
         return $result;
     }
 } 

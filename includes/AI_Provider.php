@@ -1199,11 +1199,9 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
         
         // Debug log the output structure to understand what we're getting
-        error_log('MagicAssistant: Processing Responses API output structure: ' . json_encode($output));
         
         foreach ($output as $item) {
             $type = $item['type'] ?? '';
-            error_log('MagicAssistant: Processing output item type: ' . $type);
             
             switch ($type) {
                 case 'message':
@@ -1213,26 +1211,22 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                             if ($content_type === 'output_text' || $content_type === 'text') {
                                 $text = $content_item['text'] ?? '';
                                 $content .= $text;
-                                error_log('MagicAssistant: Extracted text from message: ' . substr($text, 0, 100) . '...');
                             }
                         }
                     } elseif (isset($item['content']) && is_string($item['content'])) {
                         // Handle case where content is a direct string
                         $content .= $item['content'];
-                        error_log('MagicAssistant: Extracted direct content from message: ' . substr($item['content'], 0, 100) . '...');
                     }
                     break;
                     
                 case 'function_call':
                     $function_calls_found = true;
                     // Log function calls but don't try to execute them - Responses API handles this
-                    error_log('MagicAssistant: Function call detected in output (handled internally): ' . ($item['name'] ?? 'unknown'));
                     
                     // If this is a completed function call with no text output yet,
                     // we might need to wait for the Responses API to process it fully
                     $status = $item['status'] ?? '';
                     if ($status === 'completed') {
-                        error_log('MagicAssistant: Function call completed but no text response found');
                         // For now, provide a placeholder response indicating the tool was called
                         if (empty($content)) {
                             $tool_name = $item['name'] ?? 'unknown tool';
@@ -1243,18 +1237,14 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     
                 case 'function_call_output':
                     // Log function outputs - these are already processed by the API
-                    error_log('MagicAssistant: Function call output detected (already processed internally)');
                     break;
                     
                 default:
                     // Log unknown types for debugging
-                    error_log('MagicAssistant: Unknown output item type: ' . $type);
                     break;
             }
         }
         
-        error_log('MagicAssistant: Final extracted content length: ' . strlen($content));
-        error_log('MagicAssistant: Function calls found: ' . ($function_calls_found ? 'yes' : 'no'));
         
         return [
             'content' => $content,
@@ -2273,7 +2263,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     // Debug view was enabled - copy files to WordPress root
                     $copy_result = $this->copy_debug_files_to_root();
                     if (!$copy_result['success']) {
-                        error_log('MagicAssistant: Failed to copy debug files: ' . $copy_result['message']);
                         // Note: We don't fail the entire settings save if file copy fails
                         // The user can manually copy the files if needed
                     }
@@ -2281,7 +2270,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     // Debug view was disabled - remove files from WordPress root
                     $remove_result = $this->remove_debug_files_from_root();
                     if (!$remove_result['success']) {
-                        error_log('MagicAssistant: Failed to remove debug files: ' . $remove_result['message']);
                         // Note: We don't fail the entire settings save if file removal fails
                     }
                 }
@@ -4339,14 +4327,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             if (!empty($seo_data) && is_array($seo_data)) {
                 // Debug logging to see what competitor data is available
                 if (function_exists('error_log')) {
-                    error_log('SEO Analytics Refresh: Available seo_data keys: ' . wp_json_encode(array_keys($seo_data)));
                     
                     if (isset($seo_data['competitors'])) {
-                        error_log('SEO Analytics Refresh: Found ' . count($seo_data['competitors']) . ' competitors: ' . wp_json_encode(array_column($seo_data['competitors'], 'domain')));
                     }
                     
                     if (isset($seo_data['competitor_analysis']['detailed_competitors'])) {
-                        error_log('SEO Analytics Refresh: Found ' . count($seo_data['competitor_analysis']['detailed_competitors']) . ' detailed competitors: ' . wp_json_encode(array_column($seo_data['competitor_analysis']['detailed_competitors'], 'domain')));
                     }
                 }
                 
@@ -4358,7 +4343,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 
                 // Debug logging of final analytics data
                 if (function_exists('error_log') && isset($analytics_data['competitors'])) {
-                    error_log('SEO Analytics Refresh: Final analytics competitors: ' . wp_json_encode(array_column($analytics_data['competitors'], 'domain')));
                 }
                 
                 return array(
@@ -5500,7 +5484,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 // Copy the file (overwrite if exists)
                 if (copy($paths['source'], $paths['dest'])) {
                     $copied_files[] = $file_name;
-                    error_log("MagicAssistant: Successfully copied {$file_name} to WordPress root");
                 } else {
                     $errors[] = "Failed to copy {$file_name} to {$paths['dest']}";
                 }
@@ -5523,7 +5506,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             if (file_put_contents($stub_index, $stub_code) === false) {
                 $errors[] = 'Failed to write mat-debugging/index.php stub';
             } else {
-                error_log('MagicAssistant: Successfully created/updated mat-debugging/index.php stub');
             }
 
             // -----------------------------------------------------------------------
@@ -5544,7 +5526,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             );
 
         } catch (Exception $e) {
-            error_log('MagicAssistant: Exception copying debug files: ' . $e->getMessage());
             return array(
                 'success' => false,
                 'message' => 'Exception occurred: ' . $e->getMessage()
@@ -5593,7 +5574,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 // Remove the file
                 if (unlink($file_path)) {
                     $removed_files[] = $file_name;
-                    error_log("MagicAssistant: Successfully removed {$file_name} from WordPress root");
                 } else {
                     $errors[] = "Failed to remove {$file_name} from {$file_path}";
                 }
@@ -5641,7 +5621,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             );
 
         } catch (Exception $e) {
-            error_log('MagicAssistant: Exception removing debug files: ' . $e->getMessage());
             return array(
                 'success' => false,
                 'message' => 'Exception occurred: ' . $e->getMessage()
@@ -5723,7 +5702,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             return false;
 
         } catch (Exception $e) {
-            error_log('MagicAssistant: Error verifying debug file ownership: ' . $e->getMessage());
             return false;
         }
     }
@@ -5750,7 +5728,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         if (file_exists($backup_file) && is_file($backup_file)) {
                             if (unlink($backup_file)) {
                                 $removed_files[] = basename($backup_file);
-                                error_log("MagicAssistant: Cleaned up backup file: " . basename($backup_file));
                             } else {
                                 $errors[] = "Failed to remove backup file: " . basename($backup_file);
                             }
@@ -5766,7 +5743,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             );
             
         } catch (Exception $e) {
-            error_log('MagicAssistant: Exception cleaning up backup files: ' . $e->getMessage());
             return array(
                 'success' => false,
                 'removed_files' => $removed_files,

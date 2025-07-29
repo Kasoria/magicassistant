@@ -190,7 +190,6 @@ function get_stored_debug_password() {
         $stmt = $db->prepare("SHOW TABLES LIKE ?");
         $stmt->execute(array($table_name));
         if (!$stmt->fetch()) {
-            error_log('Debug View: Settings table does not exist: ' . $table_name);
             return '';
         }
         
@@ -200,52 +199,39 @@ function get_stored_debug_password() {
         $result = $stmt->fetch();
         
         if (!$result || empty($result['setting_value'])) {
-            error_log('Debug View: No debug password found in database');
             return '';
         }
         
         $stored_password = $result['setting_value'];
-        error_log('Debug View: Found debug password, length: ' . strlen($stored_password));
         
         // Handle WordPress serialization
         if (strpos($stored_password, ':') !== false && preg_match('/^s:\d+:".*";$/', $stored_password)) {
             $stored_password = unserialize($stored_password);
-            error_log('Debug View: Unserialized debug password, new length: ' . strlen($stored_password));
         }
         
         if (empty($stored_password)) {
-            error_log('Debug View: Debug password is empty after processing');
             return '';
         }
         
         // Check if this looks like an encrypted password (base64 encoded, longer than 32 chars)
         if (strlen($stored_password) > 32 && base64_decode($stored_password, true) !== false) {
-            error_log('Debug View: Password appears to be encrypted, attempting decryption');
             
             // Try to decrypt the password
             $decrypted_password = decrypt_debug_password($stored_password, $config['salts']);
             
             if (!empty($decrypted_password)) {
-                error_log('Debug View: Successfully decrypted debug password, length: ' . strlen($decrypted_password));
                 return $decrypted_password;
             } else {
-                error_log('Debug View: Failed to decrypt debug password');
                 // Add more detailed debugging
-                error_log('Debug View: Encrypted password (base64): ' . base64_encode($stored_password));
-                error_log('Debug View: Salt keys available: ' . implode(', ', array_keys($config['salts'])));
-                error_log('Debug View: AUTH_SALT length: ' . strlen($config['salts']['AUTH_SALT'] ?? ''));
-                error_log('Debug View: SECURE_AUTH_SALT length: ' . strlen($config['salts']['SECURE_AUTH_SALT'] ?? ''));
                 
                 // Fall through to try as plain text
             }
         }
         
         // If decryption failed or password doesn't look encrypted, try as plain text
-        error_log('Debug View: Treating password as plain text, length: ' . strlen($stored_password));
         return $stored_password;
         
     } catch (Exception $e) {
-        error_log('Debug View: Exception in get_stored_debug_password: ' . $e->getMessage());
         return '';
     }
 }
@@ -255,22 +241,17 @@ function get_stored_debug_password() {
  */
 function test_debug_database_connection() {
     try {
-        error_log('Debug View: Testing database connection...');
         
         $config = get_wp_db_config_debug_view();
-        error_log('Debug View: Database config - host: ' . $config['host'] . ', name: ' . $config['name'] . ', user: ' . $config['user']);
         
         $db = get_debug_db_connection_debug_view();
-        error_log('Debug View: Database connection successful');
         
         $table_name = $config['prefix'] . 'mat_settings';
-        error_log('Debug View: Looking for table: ' . $table_name);
         
         // Check if table exists
         $stmt = $db->prepare("SHOW TABLES LIKE ?");
         $stmt->execute(array($table_name));
         $table_exists = (bool)$stmt->fetch();
-        error_log('Debug View: Table exists: ' . ($table_exists ? 'yes' : 'no'));
         
         if ($table_exists) {
             // Get all debug-related settings
@@ -278,15 +259,12 @@ function test_debug_database_connection() {
             $stmt->execute();
             $settings = $stmt->fetchAll();
             
-            error_log('Debug View: Found ' . count($settings) . ' debug/password related settings:');
             foreach ($settings as $setting) {
-                error_log('Debug View: - ' . $setting['setting_key'] . ' (length: ' . $setting['value_length'] . ')');
             }
         }
         
         return true;
     } catch (Exception $e) {
-        error_log('Debug View: Database test failed: ' . $e->getMessage());
         return false;
     }
 }
@@ -305,7 +283,6 @@ function get_debug_view_file_editing_setting() {
         $stmt = $db->prepare("SHOW TABLES LIKE ?");
         $stmt->execute(array($table_name));
         if (!$stmt->fetch()) {
-            error_log('Debug View: Settings table does not exist: ' . $table_name);
             return false; // Default to disabled for security
         }
         
@@ -315,7 +292,6 @@ function get_debug_view_file_editing_setting() {
         $result = $stmt->fetch();
         
         if (!$result) {
-            error_log('Debug View: No file editing setting found in database, defaulting to disabled');
             return false; // Default to disabled for security
         }
         
@@ -332,7 +308,6 @@ function get_debug_view_file_editing_setting() {
         return $file_editing_enabled;
         
     } catch (Exception $e) {
-        error_log('Debug View: Exception in get_debug_view_file_editing_setting: ' . $e->getMessage());
         return false; // Default to disabled for security
     }
 }
@@ -364,7 +339,6 @@ if ($wp_loaded && function_exists('MATDB') && MATDB()) {
     try {
         $file_editing_enabled = get_debug_view_file_editing_setting();
     } catch (Exception $e) {
-        error_log('Debug View: Failed to get file editing setting: ' . $e->getMessage());
         $file_editing_enabled = false; // Default to disabled for security
     }
     
@@ -391,7 +365,6 @@ if (isset($_POST['debug_password'])) {
         }
     } else {
         // WordPress failed to load - try direct database access
-        error_log('Debug View: WordPress failed to load, attempting direct database authentication');
         
         // First test database connectivity
         test_debug_database_connection();
@@ -400,15 +373,11 @@ if (isset($_POST['debug_password'])) {
             $stored_password = get_stored_debug_password();
             if (!empty($stored_password) && $password === $stored_password) {
                 $password_matched = true;
-                error_log('Debug View: Authentication successful via direct database access');
             } else {
-                error_log('Debug View: Direct database authentication failed. Stored password length: ' . strlen($stored_password) . ', provided password length: ' . strlen($password));
                 if (!empty($stored_password)) {
-                    error_log('Debug View: Password comparison failed - stored vs provided do not match');
                 }
             }
         } catch (Exception $e) {
-            error_log('Debug View: Database access failed during authentication: ' . $e->getMessage());
         }
         
         // Fallback to environment variable
@@ -416,14 +385,12 @@ if (isset($_POST['debug_password'])) {
             $env_password = getenv('MAGICASSISTANT_DEBUG_PASSWORD');
             if (!empty($env_password) && $password === $env_password) {
                 $password_matched = true;
-                error_log('Debug View: Authentication successful via environment variable');
             }
         }
         
         // Final fallback to hardcoded password (for backwards compatibility)
         if (!$password_matched && $password === 'magicassistant_debug_2024') {
             $password_matched = true;
-            error_log('Debug View: Authentication successful via hardcoded fallback password');
         }
     }
     
@@ -619,14 +586,14 @@ if (!$is_authenticated) {
     <script>
         // Global configuration for the debug view
         window.matDebugConfig = {
-            wpLoaded: <?php echo $wp_loaded ? 'true' : 'false'; ?>,
+            wpLoaded: <?php echo esc_js($wp_loaded ? 'true' : 'false'); ?>,
             restUrl: '',
             pluginUrl: '/wp-content/plugins/magicassistant/',
             apiUrl: '/debug-api.php',
             debugMode: true,
             authenticated: true,
             isStandalone: true,
-            fileEditingEnabled: <?php echo $file_editing_enabled ? 'true' : 'false'; ?>
+            fileEditingEnabled: <?php echo esc_js($file_editing_enabled ? 'true' : 'false'); ?>
         };
     </script>
 
@@ -636,13 +603,14 @@ if (!$is_authenticated) {
     $dist_path = $_SERVER['DOCUMENT_ROOT'] . '/wp-content/plugins/magicassistant/dist/';
     
     // Check if we're in development mode
+    // Use the same logic as the main plugin (React_Dev.php)
     $is_dev_mode = false;
-    if (defined('WP_DEBUG') && WP_DEBUG) {
-        $vite_dev_server = 'http://localhost:3000';
-        $response = @file_get_contents($vite_dev_server, false, stream_context_create([
-            'http' => ['timeout' => 1]
-        ]));
-        $is_dev_mode = ($response !== false);
+    if (defined('MAT_DEV_MODE')) {
+        $is_dev_mode = (bool) MAT_DEV_MODE;
+    } else {
+        // For debug view, always use production mode to avoid CORS issues
+        // since it runs standalone and can't properly handle cross-origin dev assets
+        $is_dev_mode = false;
     }
     
     if ($is_dev_mode): ?>
@@ -658,23 +626,29 @@ if (!$is_authenticated) {
     <?php else: ?>
         <!-- Production mode - load built files -->
         <?php
-        // Load CSS
+        // Load CSS - use same logic as React_Dev.php
         $css_files = glob($dist_path . 'assets/styles-*.css');
         if (!empty($css_files)) {
-            $css_file = str_replace($dist_path, '', $css_files[0]);
-            echo '<link rel="stylesheet" href="' . $plugin_url . 'dist/' . $css_file . '">';
+            // Sort files to ensure consistent loading order
+            sort($css_files);
+            
+            // Load all CSS files
+            foreach ($css_files as $css_file_path) {
+                $css_file = str_replace($dist_path, '', $css_file_path);
+                echo '<link rel="stylesheet" href="' . esc_url($plugin_url . 'dist/' . $css_file) . '">' . "\n        ";
+            }
         }
         
         // Load vendor chunks
         $vendor_files = glob($dist_path . 'vendor-*.js');
         if (!empty($vendor_files)) {
             $vendor_file = str_replace($dist_path, '', $vendor_files[0]);
-            echo '<script type="module" src="' . $plugin_url . 'dist/' . $vendor_file . '"></script>';
+            echo '<script type="module" src="' . esc_url($plugin_url . 'dist/' . $vendor_file) . '"></script>';
         }
         
         // Load main debug script
         if (file_exists($dist_path . 'debug.js')) {
-            echo '<script type="module" src="' . $plugin_url . 'dist/debug.js"></script>';
+            echo '<script type="module" src="' . esc_url($plugin_url . 'dist/debug.js') . '"></script>';
         }
         ?>
     <?php endif; ?>

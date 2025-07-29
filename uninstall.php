@@ -40,12 +40,9 @@ if (!$complete_removal_enabled && !$table_exists) {
 
 // If complete data removal is not enabled, preserve all data and exit
 if (!$complete_removal_enabled) {
-    error_log('MagicAssistant: Uninstall triggered but complete data removal is disabled. Data preserved.');
     return;
 }
 
-// Log that complete removal is proceeding
-error_log('MagicAssistant: Complete data removal enabled. Proceeding with full cleanup.');
 
 // Delete WordPress options created by the plugin
 delete_option('mat_db_version');
@@ -89,5 +86,4 @@ foreach ($tables_to_drop as $table_name) {
 // Clear any cached data
 wp_cache_flush();
 
-// Log cleanup completion for debugging (will be cleaned up with cache)
-error_log('MagicAssistant: Plugin data cleanup completed during uninstall'); 
+ 

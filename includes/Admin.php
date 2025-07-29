@@ -483,7 +483,7 @@ class Admin {
       <option value="custom" <?php selected($position_type, 'custom'); ?>><?php esc_html_e('Custom Position (1-99)', 'magic-assistant'); ?></option>
     </select>
 
-    <div id="relative-position-wrapper" style="<?php echo $position_type === 'relative' ? '' : 'display: none;'; ?>">
+    <div id="relative-position-wrapper" style="<?php echo esc_attr($position_type === 'relative' ? '' : 'display: none;'); ?>">
       <select name="menu_position">
         <option value="after" <?php selected($position, 'after'); ?>><?php esc_html_e('After', 'magic-assistant'); ?></option>
         <option value="before" <?php selected($position, 'before'); ?>><?php esc_html_e('Before', 'magic-assistant'); ?></option>
@@ -496,7 +496,7 @@ class Admin {
       </select>
     </div>
 
-    <div id="custom-position-wrapper" style="<?php echo $position_type === 'custom' ? '' : 'display: none;'; ?>">
+    <div id="custom-position-wrapper" style="<?php echo esc_attr($position_type === 'custom' ? '' : 'display: none;'); ?>">
       <input type="number" name="custom_position" value="<?php echo esc_attr($custom_position); ?>" min="1" max="99" class="small-text">
     </div>
 
