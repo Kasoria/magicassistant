@@ -799,6 +799,7 @@ class DB {
         $api_key_settings = array(
             'openai_api_key',
             'anthropic_api_key',
+            'openrouter_api_key',
             'surecart_license_key', // SureCart license key for debug view access
             'api_key' // Generic fallback
         );
