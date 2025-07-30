@@ -175,23 +175,57 @@ function handle_ai_chat() {
         echo json_encode(array('success' => false, 'message' => 'Message is required'));
         exit;
     }
-    // Prepare request for proxy
-    $proxy_url = $provider === 'anthropic'
-        ? 'https://proxy.magicplugins.io/api/proxy/anthropic'
-        : 'https://proxy.magicplugins.io/api/proxy/openai';
-    $request_data = array(
-        'action' => $provider,
-        'data' => array(
-            'model' => $provider === 'anthropic' ? 'claude-sonnet-4-20240229' : 'gpt-4.1-mini',
-            'messages' => array(
-                array('role' => 'user', 'content' => $message)
+    
+    // Prepare request for proxy based on provider
+    if ($provider === 'anthropic') {
+        $proxy_url = 'https://proxy.magicplugins.io/api/proxy/anthropic';
+        $request_data = array(
+            'action' => 'anthropic',
+            'data' => array(
+                'model' => 'claude-sonnet-4-0',
+                'messages' => array(
+                    array('role' => 'user', 'content' => $message)
+                ),
+                'temperature' => 0.7,
+                'max_tokens' => 800
             ),
-            'temperature' => 0.7,
-            'max_tokens' => 800
-        ),
-        'site_url' => (isset($_SERVER['HTTP_HOST']) ? 'https://' . $_SERVER['HTTP_HOST'] : ''),
-        'timestamp' => time(),
-    );
+            'site_url' => (isset($_SERVER['HTTP_HOST']) ? 'https://' . $_SERVER['HTTP_HOST'] : ''),
+            'timestamp' => time(),
+        );
+    } elseif ($provider === 'openrouter') {
+        $proxy_url = 'https://proxy.magicplugins.io/api/proxy/openrouter';
+        $request_data = array(
+            'action' => 'openrouter',
+            'data' => array(
+                'model' => 'openai/gpt-4o-mini',
+                'messages' => array(
+                    array('role' => 'user', 'content' => $message)
+                ),
+                'temperature' => 0.7,
+                'max_tokens' => 800,
+                'store' => false,
+                'web_search_enabled' => false
+            ),
+            'site_url' => (isset($_SERVER['HTTP_HOST']) ? 'https://' . $_SERVER['HTTP_HOST'] : ''),
+            'timestamp' => time(),
+        );
+    } else {
+        // OpenAI - use new Responses API format
+        $proxy_url = 'https://proxy.magicplugins.io/api/proxy/openai';
+        $request_data = array(
+            'action' => 'openai_responses',
+            'data' => array(
+                'model' => 'gpt-4o-mini',
+                'input' => array(
+                    array('role' => 'user', 'content' => $message)
+                ),
+                'store' => false,
+                'web_search_enabled' => false
+            ),
+            'site_url' => (isset($_SERVER['HTTP_HOST']) ? 'https://' . $_SERVER['HTTP_HOST'] : ''),
+            'timestamp' => time(),
+        );
+    }
     $headers = array('Content-Type: application/json');
     if (!empty($api_key)) {
         $headers[] = 'X-User-Api-Key: ' . $api_key;
@@ -317,10 +351,41 @@ function handle_ai_chat() {
     // Extract response content
     $result = $data['data'] ?? array();
     $content = '';
-    if ($provider === 'openai') {
-        $content = $result['choices'][0]['message']['content'] ?? '';
-    } elseif ($provider === 'anthropic') {
+    if ($provider === 'anthropic') {
         $content = $result['content'] ?? '';
+    } elseif ($provider === 'openrouter') {
+        $content = $result['choices'][0]['message']['content'] ?? '';
+    } else {
+        // OpenAI with new Responses API format
+        // The response may have 'output_text' directly or in 'output' array
+        if (isset($result['output_text'])) {
+            $content = $result['output_text'];
+        } elseif (isset($result['output']) && is_array($result['output'])) {
+            // Look for text content in output array
+            foreach ($result['output'] as $output_item) {
+                if (isset($output_item['type'])) {
+                    if ($output_item['type'] === 'text' && isset($output_item['text'])) {
+                        $content .= $output_item['text'];
+                    } elseif ($output_item['type'] === 'message' && isset($output_item['content'])) {
+                        // Handle message type with content array
+                        if (is_array($output_item['content'])) {
+                            foreach ($output_item['content'] as $content_item) {
+                                if (isset($content_item['type']) && $content_item['type'] === 'output_text' && isset($content_item['text'])) {
+                                    $content .= $content_item['text'];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } elseif (isset($result['output']) && is_string($result['output'])) {
+            $content = $result['output'];
+        }
+        
+        // Fallback if no content found
+        if (empty($content)) {
+            $content = 'No response generated.';
+        }
     }
     echo json_encode(array('success' => true, 'response' => $content));
     exit;
@@ -989,7 +1054,13 @@ function get_stored_api_key($provider) {
         $db = get_debug_db_connection();
         $config = get_wp_db_config();
         $table_name = $config['prefix'] . 'mat_settings';
-        $setting_key = $provider === 'anthropic' ? 'anthropic_api_key' : 'openai_api_key';
+        if ($provider === 'anthropic') {
+            $setting_key = 'anthropic_api_key';
+        } elseif ($provider === 'openrouter') {
+            $setting_key = 'openrouter_api_key';
+        } else {
+            $setting_key = 'openai_api_key';
+        }
         // Check if the table exists
         $stmt = $db->prepare("SHOW TABLES LIKE ?");
         $stmt->execute(array($table_name));

@@ -17,6 +17,7 @@ const DebugApp = () => {
   const [fileContentLoading, setFileContentLoading] = useState(false)
   const [aiAnalysis, setAiAnalysis] = useState('')
   const [analyzingError, setAnalyzingError] = useState(false)
+  const [aiProvider, setAiProvider] = useState('openai')
   const [isEditing, setIsEditing] = useState(false)
   const [editingContent, setEditingContent] = useState('')
   const [saving, setSaving] = useState(false)
@@ -199,7 +200,7 @@ Line: ${log.line_number}
 
 Code Context:
 ${contextCode}`,
-            provider: 'openai'
+            provider: aiProvider
           })
         });
         const data = await response.json();
@@ -716,7 +717,16 @@ ${contextCode}`,
                   <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
                     Log Details
                   </h2>
-                  <div className="flex space-x-2">
+                  <div className="flex items-center space-x-2">
+                    <select
+                      value={aiProvider}
+                      onChange={(e) => setAiProvider(e.target.value)}
+                      className="px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500"
+                    >
+                      <option value="openai">OpenAI</option>
+                      <option value="anthropic">Anthropic</option>
+                      <option value="openrouter">OpenRouter</option>
+                    </select>
                     <button
                       onClick={() => analyzeWithAi(selectedLog)}
                       disabled={analyzingError}
