@@ -429,16 +429,13 @@ class AI_Provider {
             $provider = $this->settings['ai_provider'] ?? 'openai';
             $model = $this->get_model_for_provider($provider);
             
-            // Get the appropriate API key based on provider (decrypt if available)
+            // Get the appropriate API key based on provider (already decrypted in settings)
             if ($provider === 'openai') {
-                $encrypted_key = $this->settings['openai_api_key'] ?? '';
-                $api_key = ($this->db && !empty($encrypted_key)) ? $this->db->decrypt_api_key($encrypted_key) : '';
+                $api_key = $this->settings['openai_api_key'] ?? '';
             } elseif ($provider === 'anthropic') {
-                $encrypted_key = $this->settings['anthropic_api_key'] ?? '';
-                $api_key = ($this->db && !empty($encrypted_key)) ? $this->db->decrypt_api_key($encrypted_key) : '';
+                $api_key = $this->settings['anthropic_api_key'] ?? '';
             } elseif ($provider === 'openrouter') {
-                $encrypted_key = $this->settings['openrouter_api_key'] ?? '';
-                $api_key = ($this->db && !empty($encrypted_key)) ? $this->db->decrypt_api_key($encrypted_key) : '';
+                $api_key = $this->settings['openrouter_api_key'] ?? '';
             } else {
                 $api_key = '';
             }
@@ -2065,26 +2062,26 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         if (isset($data['openai_api_key']) && !empty($data['openai_api_key'])) {
             $api_key = sanitize_text_field($data['openai_api_key']);
-            $encrypted_api_key = $this->db->encrypt_api_key($api_key);
-            $this->db->save_setting('openai_api_key', $encrypted_api_key);
+            // Let save_setting handle the encryption
+            $this->db->save_setting('openai_api_key', $api_key);
         }
         
         if (isset($data['anthropic_api_key']) && !empty($data['anthropic_api_key'])) {
             $api_key = sanitize_text_field($data['anthropic_api_key']);
-            $encrypted_api_key = $this->db->encrypt_api_key($api_key);
-            $this->db->save_setting('anthropic_api_key', $encrypted_api_key);
+            // Let save_setting handle the encryption
+            $this->db->save_setting('anthropic_api_key', $api_key);
         }
         
         if (isset($data['dataforseo_login_id']) && !empty($data['dataforseo_login_id'])) {
             $login_id = sanitize_email($data['dataforseo_login_id']);
-            $encrypted_login_id = $this->db->encrypt_api_key($login_id);
-            $this->db->save_setting('dataforseo_login_id', $encrypted_login_id);
+            // Let save_setting handle the encryption
+            $this->db->save_setting('dataforseo_login_id', $login_id);
         }
 
         if (isset($data['dataforseo_api_key']) && !empty($data['dataforseo_api_key'])) {
             $api_key = sanitize_text_field($data['dataforseo_api_key']);
-            $encrypted_api_key = $this->db->encrypt_api_key($api_key);
-            $this->db->save_setting('dataforseo_api_key', $encrypted_api_key);
+            // Let save_setting handle the encryption
+            $this->db->save_setting('dataforseo_api_key', $api_key);
         }
         
         if (isset($data['complete_data_removal'])) {
@@ -2109,8 +2106,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         if (isset($data['openrouter_api_key']) && !empty($data['openrouter_api_key'])) {
             $api_key = sanitize_text_field($data['openrouter_api_key']);
-            $encrypted_api_key = $this->db->encrypt_api_key($api_key);
-            $this->db->save_setting('openrouter_api_key', $encrypted_api_key);
+            // Let save_setting handle the encryption
+            $this->db->save_setting('openrouter_api_key', $api_key);
         }
         
         if (isset($data['enable_create_tools'])) {

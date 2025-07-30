@@ -134,6 +134,9 @@ class DB {
         
         // Migrate existing settings from wp_options if they exist
         $this->migrate_existing_settings();
+        
+        // Fix any double-encrypted API keys
+        $this->fix_double_encrypted_keys();
     }
     
     /**
@@ -155,6 +158,9 @@ class DB {
         if (version_compare($current_version, $plugin_version, '<')) {
             $this->create_tables();
         }
+        
+        // Also run the fix for double-encrypted keys on version updates
+        $this->fix_double_encrypted_keys();
     }
     
     /**
@@ -431,14 +437,24 @@ class DB {
         // Process global settings
         if (is_array($global_settings)) {
             foreach ($global_settings as $setting) {
-                $settings[$setting['setting_key']] = maybe_unserialize($setting['setting_value']);
+                $value = maybe_unserialize($setting['setting_value']);
+                // Decrypt API keys
+                if ($this->is_api_key_setting($setting['setting_key']) && !empty($value)) {
+                    $value = $this->decrypt_api_key($value);
+                }
+                $settings[$setting['setting_key']] = $value;
             }
         }
         
         // Process user settings (these override global settings)
         if (is_array($user_settings)) {
             foreach ($user_settings as $setting) {
-                $settings[$setting['setting_key']] = maybe_unserialize($setting['setting_value']);
+                $value = maybe_unserialize($setting['setting_value']);
+                // Decrypt API keys
+                if ($this->is_api_key_setting($setting['setting_key']) && !empty($value)) {
+                    $value = $this->decrypt_api_key($value);
+                }
+                $settings[$setting['setting_key']] = $value;
             }
         }
         
@@ -1109,5 +1125,57 @@ class DB {
             array('%d'),
             array('%d', '%s')
         );
+    }
+    
+    /**
+     * Fix double-encrypted API keys
+     * This migrates keys that were accidentally encrypted twice
+     */
+    private function fix_double_encrypted_keys() {
+        global $wpdb;
+        
+        // Check if tables exist first
+        if (!$this->tables_exist()) {
+            return;
+        }
+        
+        // Get all API key settings
+        $api_key_settings = array(
+            'openai_api_key',
+            'anthropic_api_key',
+            'openrouter_api_key',
+            'dataforseo_api_key',
+            'dataforseo_login_id'
+        );
+        
+        foreach ($api_key_settings as $key) {
+            // Get the raw value from database
+            $raw_value = $wpdb->get_var($wpdb->prepare(
+                "SELECT setting_value FROM {$this->settings_table} WHERE setting_key = %s AND user_id IS NULL",
+                $key
+            ));
+            
+            if ($raw_value) {
+                $unserialized = maybe_unserialize($raw_value);
+                
+                if (!empty($unserialized)) {
+                    // Try to decrypt twice to see if it's double-encrypted
+                    $first_decrypt = $this->decrypt_api_key($unserialized);
+                    
+                    if (!empty($first_decrypt)) {
+                        // Try second decryption
+                        $second_decrypt = $this->decrypt_api_key($first_decrypt);
+                        
+                        // If second decryption succeeds and produces a different result,
+                        // it means the key was double-encrypted
+                        if (!empty($second_decrypt) && $second_decrypt !== $first_decrypt) {
+                            // Re-save with single encryption
+                            // Note: save_setting will encrypt it once
+                            $this->save_setting($key, $second_decrypt);
+                        }
+                    }
+                }
+            }
+        }
     }
 }
