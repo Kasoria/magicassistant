@@ -295,6 +295,13 @@ class DB {
             
             // Decrypt API keys if needed
             if ($this->is_api_key_setting($key) && !empty($unserialized)) {
+                // Special handling for OpenRouter API key migration
+                if ($key === 'openrouter_api_key' && !$this->is_encrypted_value($unserialized)) {
+                    // This is a plain text key from before encryption was added
+                    // Re-save it encrypted
+                    $this->save_setting($key, $unserialized);
+                    return $unserialized;
+                }
                 return $this->decrypt_api_key($unserialized);
             }
             
@@ -440,9 +447,20 @@ class DB {
                 $value = maybe_unserialize($setting['setting_value']);
                 // Decrypt API keys
                 if ($this->is_api_key_setting($setting['setting_key']) && !empty($value)) {
-                    $value = $this->decrypt_api_key($value);
+                    // Special handling for OpenRouter API key migration
+                    if ($setting['setting_key'] === 'openrouter_api_key' && !$this->is_encrypted_value($value)) {
+                        // This is a plain text key from before encryption was added
+                        // Re-save it encrypted
+                        $this->save_setting($setting['setting_key'], $value);
+                        // Return the plain text value for this request
+                        $settings[$setting['setting_key']] = $value;
+                    } else {
+                        $value = $this->decrypt_api_key($value);
+                        $settings[$setting['setting_key']] = $value;
+                    }
+                } else {
+                    $settings[$setting['setting_key']] = $value;
                 }
-                $settings[$setting['setting_key']] = $value;
             }
         }
         
@@ -805,6 +823,29 @@ class DB {
         );
         
         return in_array($key, $api_key_settings);
+    }
+    
+    /**
+     * Check if a value appears to be encrypted
+     */
+    private function is_encrypted_value($value) {
+        if (empty($value) || !is_string($value)) {
+            return false;
+        }
+        
+        // Check if it's base64 encoded and has minimum length for encrypted data
+        $decoded = base64_decode($value, true);
+        if ($decoded === false || strlen($decoded) < 16) {
+            return false;
+        }
+        
+        // Additional check: encrypted values should have high entropy
+        // Plain text API keys typically start with specific patterns
+        if (preg_match('/^(sk-|pk-|key-|api-)/i', $value)) {
+            return false;
+        }
+        
+        return true;
     }
     
     /**
