@@ -9287,6 +9287,43 @@ class MCP_Server {
                 ),
                 'callback' => array($dataforseo, 'handle_content_summary_languages')
             ));
+            
+            // Register AI Keyword Data locations and languages tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_ai_keyword_locations_languages',
+                'description' => 'Get available locations and languages for AI Keyword Data API endpoints',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => new \stdClass()
+                ),
+                'callback' => array($dataforseo, 'handle_ai_keyword_locations_languages')
+            ));
+            
+            // Register AI Keyword Data search volume tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_ai_keyword_search_volume',
+                'description' => 'Get AI search volume data for keywords with monthly trends and historical data',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'keywords' => array(
+                            'type' => 'array',
+                            'items' => array('type' => 'string'),
+                            'description' => 'Array of keywords to analyze (max 1000)'
+                        ),
+                        'location_code' => array(
+                            'type' => 'integer',
+                            'description' => 'Location code for search. Use dataforseo_ai_keyword_locations_languages to get available codes.'
+                        ),
+                        'language_code' => array(
+                            'type' => 'string',
+                            'description' => 'Language code. Use dataforseo_ai_keyword_locations_languages to get available codes.'
+                        )
+                    ),
+                    'required' => array('keywords', 'location_code', 'language_code')
+                ),
+                'callback' => array($dataforseo, 'handle_ai_keyword_search_volume')
+            ));
         }
     }
     

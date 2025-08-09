@@ -480,6 +480,47 @@ class DataForSEO {
     }
     
     /**
+     * Handle AI Keyword Data locations and languages request
+     */
+    public function handle_ai_keyword_locations_languages($args = array()) {
+        try {
+            $result = $this->make_proxy_request_with_retry('ai_keyword_locations_languages', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            throw $e;
+        }
+    }
+    
+    /**
+     * Handle AI Keyword Data search volume request
+     */
+    public function handle_ai_keyword_search_volume($args = array()) {
+        try {
+            // Validate required parameters
+            if (empty($args['keywords']) || !is_array($args['keywords'])) {
+                throw new \Exception('Keywords parameter is required and must be an array');
+            }
+            
+            if (empty($args['location_code'])) {
+                throw new \Exception('Location code parameter is required for AI keyword search volume');
+            }
+            
+            if (empty($args['language_code'])) {
+                throw new \Exception('Language code parameter is required for AI keyword search volume');
+            }
+            
+            $result = $this->make_proxy_request_with_retry('ai_keyword_search_volume', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            throw $e;
+        }
+    }
+    
+    /**
      * Make request to magicplugins.io proxy
      */
     private function make_proxy_request($action, $args) {
