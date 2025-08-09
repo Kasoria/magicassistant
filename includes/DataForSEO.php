@@ -521,6 +521,198 @@ class DataForSEO {
     }
     
     /**
+     * Handle ChatGPT models request
+     */
+    public function handle_chatgpt_models($args = array()) {
+        try {
+            $result = $this->make_proxy_request_with_retry('chatgpt_models', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            throw $e;
+        }
+    }
+    
+    /**
+     * Handle ChatGPT LLM responses request
+     */
+    public function handle_chatgpt_llm_responses($args = array()) {
+        try {
+            // Validate required parameters
+            if (empty($args['user_prompt'])) {
+                throw new \Exception('User prompt parameter is required for ChatGPT LLM responses');
+            }
+            
+            // Check user_prompt length (max 500 characters for ChatGPT)
+            if (strlen($args['user_prompt']) > 500) {
+                throw new \Exception('User prompt exceeds 500 character limit for ChatGPT. Current length: ' . strlen($args['user_prompt']) . ' characters');
+            }
+            
+            // Check system_message length if provided (max 500 characters)
+            if (!empty($args['system_message']) && strlen($args['system_message']) > 500) {
+                throw new \Exception('System message exceeds 500 character limit for ChatGPT. Current length: ' . strlen($args['system_message']) . ' characters');
+            }
+            
+            // Set default model if not provided
+            if (empty($args['model_name'])) {
+                $args['model_name'] = 'gpt-4o-mini';
+            }
+            
+            $result = $this->make_proxy_request_with_retry('chatgpt_llm_responses', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            throw $e;
+        }
+    }
+    
+    /**
+     * Handle Claude models request
+     */
+    public function handle_claude_models($args = array()) {
+        try {
+            $result = $this->make_proxy_request_with_retry('claude_models', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            throw $e;
+        }
+    }
+    
+    /**
+     * Handle Claude LLM responses request
+     */
+    public function handle_claude_llm_responses($args = array()) {
+        try {
+            // Validate required parameters
+            if (empty($args['user_prompt'])) {
+                throw new \Exception('User prompt parameter is required for Claude LLM responses');
+            }
+            
+            // Check user_prompt length (max 500 characters for Claude)
+            if (strlen($args['user_prompt']) > 500) {
+                throw new \Exception('User prompt exceeds 500 character limit for Claude. Current length: ' . strlen($args['user_prompt']) . ' characters');
+            }
+            
+            // Check system_message length if provided (max 500 characters)
+            if (!empty($args['system_message']) && strlen($args['system_message']) > 500) {
+                throw new \Exception('System message exceeds 500 character limit for Claude. Current length: ' . strlen($args['system_message']) . ' characters');
+            }
+            
+            // Set default model if not provided
+            if (empty($args['model_name'])) {
+                $args['model_name'] = 'claude-3-5-sonnet-20241022';
+            }
+            
+            $result = $this->make_proxy_request_with_retry('claude_llm_responses', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            throw $e;
+        }
+    }
+    
+    /**
+     * Handle Gemini models request
+     */
+    public function handle_gemini_models($args = array()) {
+        try {
+            $result = $this->make_proxy_request_with_retry('gemini_models', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            throw $e;
+        }
+    }
+    
+    /**
+     * Handle Gemini LLM responses request
+     */
+    public function handle_gemini_llm_responses($args = array()) {
+        try {
+            // Validate required parameters
+            if (empty($args['user_prompt'])) {
+                throw new \Exception('User prompt parameter is required for Gemini LLM responses');
+            }
+            
+            // Check user_prompt length (max 500 characters for Gemini)
+            if (strlen($args['user_prompt']) > 500) {
+                throw new \Exception('User prompt exceeds 500 character limit for Gemini. Current length: ' . strlen($args['user_prompt']) . ' characters');
+            }
+            
+            // Check system_message length if provided (max 500 characters)
+            if (!empty($args['system_message']) && strlen($args['system_message']) > 500) {
+                throw new \Exception('System message exceeds 500 character limit for Gemini. Current length: ' . strlen($args['system_message']) . ' characters');
+            }
+            
+            // Set default model if not provided
+            if (empty($args['model_name'])) {
+                $args['model_name'] = 'gemini-1.5-flash';
+            }
+            
+            $result = $this->make_proxy_request_with_retry('gemini_llm_responses', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            throw $e;
+        }
+    }
+    
+    /**
+     * Handle Perplexity models request
+     */
+    public function handle_perplexity_models($args = array()) {
+        try {
+            $result = $this->make_proxy_request_with_retry('perplexity_models', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            throw $e;
+        }
+    }
+    
+    /**
+     * Handle Perplexity LLM responses request
+     */
+    public function handle_perplexity_llm_responses($args = array()) {
+        try {
+            // Validate required parameters
+            if (empty($args['user_prompt'])) {
+                throw new \Exception('User prompt parameter is required for Perplexity LLM responses');
+            }
+            
+            // Check user_prompt length (max 500 characters for Perplexity)
+            if (strlen($args['user_prompt']) > 500) {
+                throw new \Exception('User prompt exceeds 500 character limit for Perplexity. Current length: ' . strlen($args['user_prompt']) . ' characters');
+            }
+            
+            // Check system_message length if provided (max 500 characters)
+            if (!empty($args['system_message']) && strlen($args['system_message']) > 500) {
+                throw new \Exception('System message exceeds 500 character limit for Perplexity. Current length: ' . strlen($args['system_message']) . ' characters');
+            }
+            
+            // Set default model if not provided
+            if (empty($args['model_name'])) {
+                $args['model_name'] = 'sonar';
+            }
+            
+            $result = $this->make_proxy_request_with_retry('perplexity_llm_responses', $args);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            throw $e;
+        }
+    }
+    
+    /**
      * Make request to magicplugins.io proxy
      */
     private function make_proxy_request($action, $args) {

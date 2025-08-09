@@ -9324,6 +9324,206 @@ class MCP_Server {
                 ),
                 'callback' => array($dataforseo, 'handle_ai_keyword_search_volume')
             ));
+
+            // Register ChatGPT models tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_chatgpt_models',
+                'description' => 'Get available ChatGPT models for LLM responses',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => new \stdClass()
+                ),
+                'callback' => array($dataforseo, 'handle_chatgpt_models')
+            ));
+
+            // Register ChatGPT LLM responses tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_chatgpt_llm_responses',
+                'description' => 'Get LLM responses from ChatGPT models with optional web search. IMPORTANT: user_prompt is limited to 500 characters!',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'user_prompt' => array(
+                            'type' => 'string',
+                            'description' => 'User prompt for the AI model (STRICT LIMIT: max 500 characters)'
+                        ),
+                        'model_name' => array(
+                            'type' => 'string',
+                            'description' => 'AI model name (default: gpt-4o-mini). Use dataforseo_chatgpt_models to get available models.'
+                        ),
+                        'max_output_tokens' => array(
+                            'type' => 'integer',
+                            'description' => 'Maximum output tokens (default: 2048)'
+                        ),
+                        'temperature' => array(
+                            'type' => 'number',
+                            'description' => 'Temperature for response generation (0-2, default: 0.94)'
+                        ),
+                        'web_search' => array(
+                            'type' => 'boolean',
+                            'description' => 'Enable web search for additional context'
+                        ),
+                        'system_message' => array(
+                            'type' => 'string',
+                            'description' => 'System message to guide the AI (max 500 characters)'
+                        )
+                    ),
+                    'required' => array('user_prompt')
+                ),
+                'callback' => array($dataforseo, 'handle_chatgpt_llm_responses')
+            ));
+
+            // Register Claude models tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_claude_models',
+                'description' => 'Get available Claude models for LLM responses',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => new \stdClass()
+                ),
+                'callback' => array($dataforseo, 'handle_claude_models')
+            ));
+
+            // Register Claude LLM responses tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_claude_llm_responses',
+                'description' => 'Get LLM responses from Claude models with optional web search. IMPORTANT: user_prompt is limited to 500 characters!',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'user_prompt' => array(
+                            'type' => 'string',
+                            'description' => 'User prompt for the AI model (STRICT LIMIT: max 500 characters)'
+                        ),
+                        'model_name' => array(
+                            'type' => 'string',
+                            'description' => 'AI model name (default: claude-3-5-sonnet-20241022). Use dataforseo_claude_models to get available models.'
+                        ),
+                        'max_output_tokens' => array(
+                            'type' => 'integer',
+                            'description' => 'Maximum output tokens (default: 2048)'
+                        ),
+                        'temperature' => array(
+                            'type' => 'number',
+                            'description' => 'Temperature for response generation (0-2, default: 0.94)'
+                        ),
+                        'web_search' => array(
+                            'type' => 'boolean',
+                            'description' => 'Enable web search for additional context'
+                        ),
+                        'system_message' => array(
+                            'type' => 'string',
+                            'description' => 'System message to guide the AI (max 500 characters)'
+                        )
+                    ),
+                    'required' => array('user_prompt')
+                ),
+                'callback' => array($dataforseo, 'handle_claude_llm_responses')
+            ));
+
+            // Register Gemini models tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_gemini_models',
+                'description' => 'Get available Gemini models for LLM responses',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => new \stdClass()
+                ),
+                'callback' => array($dataforseo, 'handle_gemini_models')
+            ));
+
+            // Register Gemini LLM responses tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_gemini_llm_responses',
+                'description' => 'Get LLM responses from Gemini models with optional web search. IMPORTANT: user_prompt is limited to 500 characters!',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'user_prompt' => array(
+                            'type' => 'string',
+                            'description' => 'User prompt for the AI model (STRICT LIMIT: max 500 characters)'
+                        ),
+                        'model_name' => array(
+                            'type' => 'string',
+                            'description' => 'AI model name (default: gemini-1.5-flash). Use dataforseo_gemini_models to get available models.'
+                        ),
+                        'max_output_tokens' => array(
+                            'type' => 'integer',
+                            'description' => 'Maximum output tokens (default: 2048)'
+                        ),
+                        'temperature' => array(
+                            'type' => 'number',
+                            'description' => 'Temperature for response generation (0-2, default: 1.3)'
+                        ),
+                        'top_p' => array(
+                            'type' => 'number',
+                            'description' => 'Top-p sampling parameter (0-1, default: 0.9)'
+                        ),
+                        'web_search' => array(
+                            'type' => 'boolean',
+                            'description' => 'Enable web search for additional context'
+                        ),
+                        'system_message' => array(
+                            'type' => 'string',
+                            'description' => 'System message to guide the AI (max 500 characters)'
+                        )
+                    ),
+                    'required' => array('user_prompt')
+                ),
+                'callback' => array($dataforseo, 'handle_gemini_llm_responses')
+            ));
+
+            // Register Perplexity models tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_perplexity_models',
+                'description' => 'Get available Perplexity models for LLM responses',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => new \stdClass()
+                ),
+                'callback' => array($dataforseo, 'handle_perplexity_models')
+            ));
+
+            // Register Perplexity LLM responses tool
+            $this->register_tool(array(
+                'name' => 'dataforseo_perplexity_llm_responses',
+                'description' => 'Get LLM responses from Perplexity models with web search enabled by default. IMPORTANT: user_prompt is limited to 500 characters!',
+                'inputSchema' => array(
+                    'type' => 'object',
+                    'properties' => array(
+                        'user_prompt' => array(
+                            'type' => 'string',
+                            'description' => 'User prompt for the AI model (STRICT LIMIT: max 500 characters)'
+                        ),
+                        'model_name' => array(
+                            'type' => 'string',
+                            'description' => 'AI model name (default: sonar). Use dataforseo_perplexity_models to get available models.'
+                        ),
+                        'max_output_tokens' => array(
+                            'type' => 'integer',
+                            'description' => 'Maximum output tokens (default: 2048)'
+                        ),
+                        'temperature' => array(
+                            'type' => 'number',
+                            'description' => 'Temperature for response generation (0-1.9, default: 0.77)'
+                        ),
+                        'top_p' => array(
+                            'type' => 'number',
+                            'description' => 'Top-p sampling parameter (0-1, default: 0.9)'
+                        ),
+                        'web_search_country_iso_code' => array(
+                            'type' => 'string',
+                            'description' => 'Country code for localized web search (e.g., US, DE, FR). Web search is enabled by default for Sonar models.'
+                        ),
+                        'system_message' => array(
+                            'type' => 'string',
+                            'description' => 'System message to guide the AI (max 500 characters)'
+                        )
+                    ),
+                    'required' => array('user_prompt')
+                ),
+                'callback' => array($dataforseo, 'handle_perplexity_llm_responses')
+            ));
         }
     }
     
