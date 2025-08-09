@@ -556,6 +556,9 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
   }
 
   const openaiModels = [
+    { value: 'gpt-5', label: 'GPT-5' },
+    { value: 'gpt-5-mini', label: 'GPT-5 Mini' },
+    { value: 'gpt-5-nano', label: 'GPT-5 Nano' },
     { value: 'gpt-4.1', label: 'GPT-4.1' },
     { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
     { value: 'gpt-4o', label: 'GPT-4o' },
