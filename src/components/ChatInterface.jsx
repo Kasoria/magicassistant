@@ -533,13 +533,14 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                   // Accumulate content chunks
                   accumulatedContent += data.chunk || '';
                   
-                  // Update the message in real-time
+                  // Update the message in real-time and turn off streaming styling
                   setMessages(prev => {
                     const newMessages = [...prev];
                     if (newMessages[messageIndex]) {
                       newMessages[messageIndex] = {
                         ...newMessages[messageIndex],
-                        content: accumulatedContent
+                        content: accumulatedContent,
+                        isStreaming: false // Turn off streaming styling when content starts
                       };
                     }
                     return newMessages;
@@ -2132,7 +2133,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                     </div>
                   </div>
                 ) : (
-                  <div className={`${message.isError ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
+                  <div className={`${message.isError ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'} ${message.isStreaming ? 'opacity-60 italic' : ''}`}>
                     {formatMessage(message.content)}
                   </div>
                 )}

@@ -11,6 +11,8 @@ const ContentMode = ({ adminData, onExitContentMode }) => {
   
   // Core states
   const [isLoading, setIsLoading] = useState(false)
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [isShowingProcessSteps, setIsShowingProcessSteps] = useState(false)
   const [settings, setSettings] = useState(null)
   const [isOptimizing, setIsOptimizing] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
@@ -768,6 +770,10 @@ Always prioritize accuracy, fairness, and public interest while creating engagin
   }
 
   const generateSingleContentRegular = async (prompt, systemMessage) => {
+    // Clear streaming states for regular generation
+    setIsStreaming(false)
+    setIsShowingProcessSteps(false)
+    
     // Debug: Log web search status
     console.log('🔍 ContentMode - Web Search Debug:', {
       webSearchEnabled,
@@ -889,12 +895,31 @@ Always prioritize accuracy, fairness, and public interest while creating engagin
       })
 
       let accumulatedContent = ''
+      let hasReceivedContent = false
+
+      // Set streaming states
+      setIsStreaming(true)
+      setIsShowingProcessSteps(true)
 
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
           
+          // Handle status updates (process steps)
+          if (data.type === 'status') {
+            // Update content with process step message and keep process styling
+            setGeneratedContent(data.message || 'Processing...')
+            setIsShowingProcessSteps(true)
+            return
+          }
+          
           if (data.type === 'content') {
+            // Mark that we've received actual content and immediately turn off process styling
+            if (!hasReceivedContent) {
+              hasReceivedContent = true
+            }
+            setIsShowingProcessSteps(false) // Turn off process styling immediately when content starts
+            
             // Accumulate content chunks
             accumulatedContent += data.chunk || ''
             
@@ -953,9 +978,16 @@ Always prioritize accuracy, fairness, and public interest while creating engagin
             setTimeout(() => saveContentData(), 100)
             
             showSuccess('Content generated and saved successfully!')
+            
+            // Clear streaming states
+            setIsStreaming(false)
+            setIsShowingProcessSteps(false)
             eventSource.close()
             
           } else if (data.type === 'error') {
+            // Clear streaming states on error
+            setIsStreaming(false)
+            setIsShowingProcessSteps(false)
             throw new Error(data.message || 'Streaming error')
           }
         } catch (parseError) {
@@ -965,12 +997,18 @@ Always prioritize accuracy, fairness, and public interest while creating engagin
 
       eventSource.onerror = (error) => {
         console.error('EventSource failed:', error)
+        // Clear streaming states on error
+        setIsStreaming(false)
+        setIsShowingProcessSteps(false)
         eventSource.close()
         showError('Error during content generation streaming')
       }
 
     } catch (error) {
       console.error('Streaming setup error:', error)
+      // Clear streaming states on error
+      setIsStreaming(false)
+      setIsShowingProcessSteps(false)
       showError('Failed to start content streaming')
     }
   }
@@ -2348,7 +2386,7 @@ Example:
                         
                         {showMarkdownPreview ? (
                           <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-6 bg-white dark:bg-gray-800 max-h-96 overflow-y-auto">
-                            <div className="prose prose-gray dark:prose-invert max-w-none">
+                            <div className={`prose prose-gray dark:prose-invert max-w-none ${isShowingProcessSteps ? 'opacity-80 italic' : ''}`}>
                               <ReactMarkdown 
                                 remarkPlugins={[remarkBreaks]}
                               >
@@ -2363,7 +2401,7 @@ Example:
                             value={generatedContent}
                             onChange={(e) => setGeneratedContent(e.target.value)}
                             placeholder="Your generated content will appear here..."
-                            className="font-mono text-sm"
+                            className={`font-mono text-sm ${isShowingProcessSteps ? 'opacity-80 italic' : ''}`}
                           />
                         )}
                       </div>
@@ -2384,7 +2422,7 @@ Example:
                           value={generatedContent}
                           onChange={(e) => setGeneratedContent(e.target.value)}
                           placeholder="Paste or type your content here..."
-                          className="font-mono text-sm"
+                          className={`font-mono text-sm ${isShowingProcessSteps ? 'opacity-80 italic' : ''}`}
                         />
                       </div>
                     ) : (
