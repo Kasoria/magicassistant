@@ -347,6 +347,9 @@ class MCP_Server {
         // Register SEO analysis tools
         $this->register_seo_analysis_tools();
         
+        // Register Content Mode tools
+        $this->register_content_mode_tools();
+        
         // Register Unsplash tools for image search
         $this->register_unsplash_tools();
         
@@ -11838,6 +11841,424 @@ class MCP_Server {
             ),
             'callback' => array($this, 'wp_get_meta_keys')
         ));
+    }
+    
+    private function register_content_mode_tools() {
+        // Content optimization tool
+        $this->register_tool(array(
+            'name' => 'content_optimize_seo',
+            'description' => 'Optimize content for SEO with keyword density analysis, readability scoring, and structure improvements',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'content' => array('type' => 'string', 'description' => 'The content to optimize'),
+                    'target_keywords' => array('type' => 'string', 'description' => 'Target keywords, comma-separated'),
+                    'content_type' => array('type' => 'string', 'description' => 'Type of content (blog_post, product_description, landing_page, etc.)'),
+                    'target_length' => array('type' => 'integer', 'description' => 'Target word count'),
+                    'include_schema' => array('type' => 'boolean', 'description' => 'Include schema markup suggestions')
+                ),
+                'required' => array('content', 'target_keywords')
+            ),
+            'callback' => array($this, 'content_optimize_seo')
+        ));
+        
+        // Bulk content generation tool
+        $this->register_tool(array(
+            'name' => 'content_bulk_generate',
+            'description' => 'Generate multiple pieces of content based on topics or keywords',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'topics' => array('type' => 'array', 'description' => 'Array of topics to generate content for', 'items' => array('type' => 'string')),
+                    'content_type' => array('type' => 'string', 'description' => 'Type of content to generate'),
+                    'word_count' => array('type' => 'integer', 'description' => 'Target word count per piece'),
+                    'seo_optimized' => array('type' => 'boolean', 'description' => 'Whether to optimize for SEO'),
+                    'include_images' => array('type' => 'boolean', 'description' => 'Whether to suggest images')
+                ),
+                'required' => array('topics')
+            ),
+            'callback' => array($this, 'content_bulk_generate')
+        ));
+        
+        // Content scoring tool
+        $this->register_tool(array(
+            'name' => 'content_score_analysis',
+            'description' => 'Analyze content quality, SEO score, readability, and provide improvement suggestions',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'content' => array('type' => 'string', 'description' => 'The content to analyze'),
+                    'target_keywords' => array('type' => 'string', 'description' => 'Target keywords for SEO analysis'),
+                    'target_audience' => array('type' => 'string', 'description' => 'Target audience (general, technical, business, etc.)'),
+                    'check_plagiarism' => array('type' => 'boolean', 'description' => 'Check for potential plagiarism')
+                ),
+                'required' => array('content')
+            ),
+            'callback' => array($this, 'content_score_analysis')
+        ));
+        
+        // Content template tool
+        $this->register_tool(array(
+            'name' => 'content_get_template',
+            'description' => 'Get content templates for various content types with industry-specific customization',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'template_type' => array('type' => 'string', 'description' => 'Type of template (blog_post, product_page, landing_page, email, social_media)'),
+                    'industry' => array('type' => 'string', 'description' => 'Industry or niche'),
+                    'tone' => array('type' => 'string', 'description' => 'Desired tone (professional, casual, friendly, authoritative)'),
+                    'include_examples' => array('type' => 'boolean', 'description' => 'Include example content')
+                ),
+                'required' => array('template_type')
+            ),
+            'callback' => array($this, 'content_get_template')
+        ));
+        
+        // Content repurposing tool
+        $this->register_tool(array(
+            'name' => 'content_repurpose',
+            'description' => 'Repurpose existing content into different formats (blog to social, long-form to email, etc.)',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'original_content' => array('type' => 'string', 'description' => 'The original content to repurpose'),
+                    'source_format' => array('type' => 'string', 'description' => 'Original format (blog_post, article, video_script, etc.)'),
+                    'target_format' => array('type' => 'string', 'description' => 'Target format (social_media, email, infographic_text, podcast_script)'),
+                    'platform' => array('type' => 'string', 'description' => 'Target platform if applicable (twitter, linkedin, facebook, instagram)')
+                ),
+                'required' => array('original_content', 'target_format')
+            ),
+            'callback' => array($this, 'content_repurpose')
+        ));
+    }
+    
+    // Content Mode tool implementations
+    public function content_optimize_seo($args) {
+        $content = $args['content'] ?? '';
+        $keywords = $args['target_keywords'] ?? '';
+        $content_type = $args['content_type'] ?? 'blog_post';
+        $target_length = $args['target_length'] ?? 1000;
+        
+        if (empty($content)) {
+            throw new Exception('Content is required for optimization');
+        }
+        
+        // Basic SEO analysis
+        $word_count = str_word_count($content);
+        $keyword_list = array_map('trim', explode(',', $keywords));
+        $keyword_density = array();
+        
+        foreach ($keyword_list as $keyword) {
+            $count = substr_count(strtolower($content), strtolower($keyword));
+            $density = ($count / $word_count) * 100;
+            $keyword_density[$keyword] = array(
+                'count' => $count,
+                'density' => round($density, 2)
+            );
+        }
+        
+        // Check for headings
+        $has_h1 = preg_match('/<h1[^>]*>/i', $content) || preg_match('/^# /m', $content);
+        $h2_count = preg_match_all('/<h2[^>]*>/i', $content) + preg_match_all('/^## /m', $content);
+        $h3_count = preg_match_all('/<h3[^>]*>/i', $content) + preg_match_all('/^### /m', $content);
+        
+        // Readability metrics (simplified)
+        $sentences = preg_split('/[.!?]+/', $content);
+        $avg_sentence_length = $word_count / max(1, count($sentences));
+        
+        // Generate optimization suggestions
+        $suggestions = array();
+        
+        if ($word_count < $target_length * 0.8) {
+            $suggestions[] = "Content is shorter than target length. Consider adding " . ($target_length - $word_count) . " more words.";
+        }
+        
+        foreach ($keyword_density as $keyword => $data) {
+            if ($data['density'] < 0.5) {
+                $suggestions[] = "Keyword '{$keyword}' density is low ({$data['density']}%). Consider adding it " . (ceil($word_count * 0.01) - $data['count']) . " more times.";
+            } elseif ($data['density'] > 2.5) {
+                $suggestions[] = "Keyword '{$keyword}' density is high ({$data['density']}%). Consider reducing usage to avoid over-optimization.";
+            }
+        }
+        
+        if (!$has_h1) {
+            $suggestions[] = "Add an H1 heading for better SEO structure.";
+        }
+        
+        if ($h2_count < 2) {
+            $suggestions[] = "Add more H2 subheadings to improve content structure.";
+        }
+        
+        if ($avg_sentence_length > 20) {
+            $suggestions[] = "Average sentence length is high. Consider breaking up long sentences for better readability.";
+        }
+        
+        // Calculate overall SEO score
+        $seo_score = 50; // Base score
+        
+        // Word count scoring
+        if ($word_count >= $target_length * 0.8) $seo_score += 10;
+        if ($word_count >= $target_length) $seo_score += 10;
+        
+        // Keyword optimization scoring
+        foreach ($keyword_density as $data) {
+            if ($data['density'] >= 0.5 && $data['density'] <= 2.5) {
+                $seo_score += 5;
+            }
+        }
+        
+        // Structure scoring
+        if ($has_h1) $seo_score += 10;
+        if ($h2_count >= 2) $seo_score += 10;
+        if ($h3_count >= 1) $seo_score += 5;
+        
+        // Readability scoring
+        if ($avg_sentence_length <= 20) $seo_score += 5;
+        
+        $seo_score = min(100, $seo_score);
+        
+        return array(
+            'seo_score' => $seo_score,
+            'word_count' => $word_count,
+            'keyword_density' => $keyword_density,
+            'structure' => array(
+                'has_h1' => $has_h1,
+                'h2_count' => $h2_count,
+                'h3_count' => $h3_count
+            ),
+            'readability' => array(
+                'avg_sentence_length' => round($avg_sentence_length, 1),
+                'sentence_count' => count($sentences)
+            ),
+            'suggestions' => $suggestions,
+            'optimized' => count($suggestions) === 0
+        );
+    }
+    
+    public function content_bulk_generate($args) {
+        $topics = $args['topics'] ?? array();
+        $content_type = $args['content_type'] ?? 'blog_post';
+        $word_count = $args['word_count'] ?? 500;
+        
+        if (empty($topics)) {
+            throw new Exception('Topics are required for bulk generation');
+        }
+        
+        // This is a placeholder - in real implementation, this would integrate with AI
+        $generated = array();
+        
+        foreach ($topics as $topic) {
+            $generated[] = array(
+                'topic' => $topic,
+                'status' => 'queued',
+                'content_type' => $content_type,
+                'target_word_count' => $word_count,
+                'message' => "Content generation for '{$topic}' has been queued. Use the AI chat to generate the actual content."
+            );
+        }
+        
+        return array(
+            'queued' => count($topics),
+            'items' => $generated,
+            'estimated_time' => count($topics) * 30, // seconds
+            'message' => 'Bulk content generation initiated. Use the AI chat interface to process each topic.'
+        );
+    }
+    
+    public function content_score_analysis($args) {
+        $content = $args['content'] ?? '';
+        $keywords = $args['target_keywords'] ?? '';
+        
+        if (empty($content)) {
+            throw new Exception('Content is required for analysis');
+        }
+        
+        // Perform comprehensive content analysis
+        $analysis = $this->content_optimize_seo(array(
+            'content' => $content,
+            'target_keywords' => $keywords,
+            'target_length' => 1000
+        ));
+        
+        // Add additional quality metrics
+        $analysis['quality_metrics'] = array(
+            'has_introduction' => (bool) preg_match('/^.{50,200}[.!?]/s', $content),
+            'has_conclusion' => (bool) preg_match('/conclus|summar|final|wrap|end/i', substr($content, -500)),
+            'has_lists' => (bool) preg_match('/<[uo]l>|^\s*[-*]\s+/m', $content),
+            'has_links' => (bool) preg_match('/<a\s|\\[.*\\]\\(http/i', $content),
+            'has_images' => (bool) preg_match('/<img|!\\[.*\\]\\(/i', $content)
+        );
+        
+        // Calculate quality score
+        $quality_score = 0;
+        foreach ($analysis['quality_metrics'] as $metric => $value) {
+            if ($value) $quality_score += 20;
+        }
+        
+        $analysis['quality_score'] = $quality_score;
+        $analysis['overall_score'] = round(($analysis['seo_score'] + $quality_score) / 2);
+        
+        return $analysis;
+    }
+    
+    public function content_get_template($args) {
+        $template_type = $args['template_type'] ?? 'blog_post';
+        $industry = $args['industry'] ?? 'general';
+        $tone = $args['tone'] ?? 'professional';
+        
+        $templates = array(
+            'blog_post' => array(
+                'structure' => array(
+                    'title' => '[Compelling Title with Primary Keyword]',
+                    'introduction' => '[Hook + Problem Statement + Solution Preview] (150-200 words)',
+                    'main_sections' => array(
+                        '[Section 1: Background/Context]' => '[Detailed explanation with examples]',
+                        '[Section 2: Main Points]' => '[Core content with subheadings]',
+                        '[Section 3: Implementation/How-to]' => '[Step-by-step guide or process]',
+                        '[Section 4: Benefits/Results]' => '[Value proposition and outcomes]'
+                    ),
+                    'conclusion' => '[Summary + Call-to-action + Next Steps] (100-150 words)'
+                ),
+                'seo_elements' => array(
+                    'meta_title' => '[Primary Keyword] - [Benefit] | [Brand]',
+                    'meta_description' => '[Compelling summary with keywords, 150-160 characters]',
+                    'focus_keyword' => '[Primary keyword phrase]',
+                    'related_keywords' => '[Secondary keywords, LSI terms]'
+                )
+            ),
+            'product_page' => array(
+                'structure' => array(
+                    'hero_section' => '[Product Name + Value Proposition + CTA]',
+                    'features' => '[Key Features with Benefits]',
+                    'specifications' => '[Technical Details Table]',
+                    'benefits' => '[How It Solves Problems]',
+                    'social_proof' => '[Reviews/Testimonials/Case Studies]',
+                    'faq' => '[Common Questions and Answers]',
+                    'cta_section' => '[Final Call-to-action with Urgency]'
+                ),
+                'seo_elements' => array(
+                    'meta_title' => '[Product Name] - [Main Benefit] | Shop Now',
+                    'meta_description' => '[Product summary with benefits and CTA]',
+                    'schema_markup' => 'Product schema with price, availability, reviews'
+                )
+            ),
+            'landing_page' => array(
+                'structure' => array(
+                    'headline' => '[Clear Value Proposition]',
+                    'subheadline' => '[Supporting benefit statement]',
+                    'hero_cta' => '[Primary action button]',
+                    'problem_section' => '[Pain points your audience faces]',
+                    'solution_section' => '[How you solve these problems]',
+                    'features_grid' => '[Key features with icons]',
+                    'testimonials' => '[Social proof section]',
+                    'pricing' => '[Clear pricing options if applicable]',
+                    'final_cta' => '[Closing call-to-action]'
+                ),
+                'conversion_elements' => array(
+                    'trust_badges' => '[Security, certifications, guarantees]',
+                    'urgency' => '[Limited time offers, scarcity]',
+                    'risk_reversal' => '[Money-back guarantee, free trial]'
+                )
+            )
+        );
+        
+        $template = $templates[$template_type] ?? $templates['blog_post'];
+        
+        return array(
+            'template_type' => $template_type,
+            'industry' => $industry,
+            'tone' => $tone,
+            'template' => $template,
+            'customization_tips' => array(
+                'Adapt the language to match your brand voice',
+                'Include industry-specific terminology',
+                'Add relevant statistics and data',
+                'Customize CTAs for your specific goals'
+            )
+        );
+    }
+    
+    public function content_repurpose($args) {
+        $original_content = $args['original_content'] ?? '';
+        $target_format = $args['target_format'] ?? 'social_media';
+        $platform = $args['platform'] ?? '';
+        
+        if (empty($original_content)) {
+            throw new Exception('Original content is required for repurposing');
+        }
+        
+        // Extract key points from original content
+        $word_count = str_word_count($original_content);
+        $sentences = preg_split('/[.!?]+/', $original_content);
+        
+        $repurposed = array();
+        
+        switch ($target_format) {
+            case 'social_media':
+                // Create social media posts
+                if ($platform === 'twitter') {
+                    $repurposed['format'] = 'Twitter Thread';
+                    $repurposed['posts'] = array(
+                        'main_tweet' => substr($sentences[0], 0, 280),
+                        'thread_suggestion' => 'Break down the main points into 3-5 tweets',
+                        'hashtags' => '#ContentMarketing #SEO'
+                    );
+                } elseif ($platform === 'linkedin') {
+                    $repurposed['format'] = 'LinkedIn Post';
+                    $repurposed['content'] = substr($original_content, 0, 1300);
+                    $repurposed['suggestions'] = array(
+                        'Add a compelling hook in the first 2 lines',
+                        'Include 3-5 relevant hashtags',
+                        'End with a question to encourage engagement'
+                    );
+                }
+                break;
+                
+            case 'email':
+                $repurposed['format'] = 'Email Newsletter';
+                $repurposed['structure'] = array(
+                    'subject_line' => '[Extract main benefit from content]',
+                    'preview_text' => substr($sentences[0], 0, 100),
+                    'body' => array(
+                        'greeting' => 'Hi [Name],',
+                        'hook' => $sentences[0],
+                        'main_content' => 'Summarize in 200-300 words',
+                        'cta' => 'Read the full article on our blog',
+                        'signature' => 'Best regards,'
+                    )
+                );
+                break;
+                
+            case 'infographic_text':
+                $repurposed['format'] = 'Infographic Content';
+                $repurposed['sections'] = array(
+                    'title' => 'Extract main topic',
+                    'statistics' => 'Pull out 3-5 key numbers or facts',
+                    'main_points' => 'List 5-7 bullet points',
+                    'conclusion' => 'One-sentence takeaway'
+                );
+                break;
+                
+            case 'podcast_script':
+                $repurposed['format'] = 'Podcast Script Outline';
+                $repurposed['structure'] = array(
+                    'intro' => 'Hook listeners in first 30 seconds',
+                    'main_segments' => 'Break into 3-4 discussion points',
+                    'examples' => 'Add personal stories or case studies',
+                    'outro' => 'Summarize key takeaways and CTA'
+                );
+                break;
+        }
+        
+        $repurposed['original_word_count'] = $word_count;
+        $repurposed['recommendations'] = array(
+            'Adapt tone for the target platform',
+            'Focus on the most engaging aspects',
+            'Add platform-specific elements (hashtags, mentions, etc.)',
+            'Optimize for the platform\'s best practices'
+        );
+        
+        return $repurposed;
     }
 }
 

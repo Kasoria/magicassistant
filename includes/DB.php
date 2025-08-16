@@ -146,6 +146,23 @@ class DB {
         if (!$this->tables_exist()) {
             $this->create_tables();
         }
+        
+        // Run content mode migration if needed
+        $this->run_content_mode_migration();
+    }
+    
+    private function run_content_mode_migration() {
+        // Check if migration has already been run
+        $migration_version = $this->get_setting('content_mode_migration_version', 0);
+        
+        if ($migration_version < 1) {
+            // Run the migration
+            require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'includes/migrations/content-mode-settings.php';
+            
+            if (\MagicAssistant\Migrations\ContentModeSettings::up($this)) {
+                $this->save_setting('content_mode_migration_version', 1);
+            }
+        }
     }
     
     /**
@@ -507,7 +524,7 @@ class DB {
     /**
      * Save or update a chat session with new message
      */
-    public function save_chat_message($user_id, $session_id, $role, $content, $provider = null, $model = null, $tokens_used = null, $response_time = null, $cost = null, $debug_tool_data = null, $agent_mode = null, $reasoning = null, $tool_calls_count = null) {
+    public function save_chat_message($user_id, $session_id, $role, $content, $provider = null, $model = null, $tokens_used = null, $response_time = null, $cost = null, $debug_tool_data = null, $agent_mode = null, $reasoning = null, $tool_calls_count = null, $processing_steps = null) {
         global $wpdb;
         
         // Get existing session
@@ -556,6 +573,10 @@ class DB {
         
         if ($tool_calls_count !== null) {
             $new_message['tool_calls_count'] = $tool_calls_count;
+        }
+        
+        if ($processing_steps !== null) {
+            $new_message['processing_steps'] = $processing_steps;
         }
         
         // Add user info for user messages

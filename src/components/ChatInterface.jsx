@@ -5,8 +5,10 @@ import { useToast } from './Toast'
 import ConfirmationModal from './ConfirmationModal'
 import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
+import ContentMode from './ContentMode'
 
 const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) => {
+  const [isContentMode, setIsContentMode] = useState(false)
   // Helper function to add UTM parameters to Unsplash links
   const addUnsplashUTMParams = (url) => {
     if (!url) return url
@@ -23,6 +25,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
   ])
   const [inputMessage, setInputMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [isStreaming, setIsStreaming] = useState(false)
   const [settings, setSettings] = useState(null)
   const [forceAgentMode, setForceAgentMode] = useState(true)
   const messagesEndRef = useRef(null)
@@ -38,6 +41,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
   const [editingMessageIndex, setEditingMessageIndex] = useState(null)
   const [editingMessageContent, setEditingMessageContent] = useState('')
   const [showingDebugData, setShowingDebugData] = useState({})
+  const [showingChainOfThought, setShowingChainOfThought] = useState({})
   const [isShareModalOpen, setIsShareModalOpen] = useState(false)
   const [shareAsPermanent, setShareAsPermanent] = useState(false)
   const [shareExpiry, setShareExpiry] = useState(30)
@@ -352,6 +356,307 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
     }
   }
 
+  const handleStreamingResponse = async (apiMessageContent, pageContext) => {
+    // Dynamic thinking messages based on context and mode
+    const getThinkingMessages = () => {
+      const commonMessages = [
+        "Analyzing your request...",
+        "Processing information...",
+        "Gathering relevant data...",
+        "Preparing response...",
+        "Checking available tools...",
+        "Optimizing approach..."
+      ];
+
+      const agentMessages = [
+        "Planning multi-step approach...",
+        "Identifying required tools...",
+        "Analyzing task complexity...",
+        "Preparing tool execution...",
+        "Coordinating resources...",
+        "Strategizing solution..."
+      ];
+
+      const contextMessages = [];
+      
+      // Add context-specific messages based on the user's request
+      const messageText = apiMessageContent.toLowerCase();
+      if (messageText.includes('seo') || messageText.includes('search')) {
+        contextMessages.push("Analyzing SEO requirements...", "Checking search optimization...");
+      }
+      if (messageText.includes('content') || messageText.includes('write')) {
+        contextMessages.push("Structuring content approach...", "Analyzing content requirements...");
+      }
+      if (messageText.includes('image') || messageText.includes('photo')) {
+        contextMessages.push("Searching for relevant images...", "Processing image requirements...");
+      }
+      if (messageText.includes('post') || messageText.includes('page')) {
+        contextMessages.push("Accessing WordPress data...", "Analyzing post structure...");
+      }
+      if (messageText.includes('optimize') || messageText.includes('performance')) {
+        contextMessages.push("Running performance analysis...", "Checking optimization opportunities...");
+      }
+
+      const baseMessages = forceAgentMode ? agentMessages : commonMessages;
+      return [...contextMessages, ...baseMessages];
+    };
+
+    // Create a placeholder assistant message that will be updated with streaming chunks
+    const assistantMessage = {
+      role: 'assistant',
+      content: "Initializing request...", // Will be updated by real status events
+      timestamp: new Date(),
+      provider: 'openai', // Default, will be updated
+      agent_mode: forceAgentMode,
+      tool_calls_count: 0,
+      debug_tool_data: [],
+      tokens_used: 0,
+      cost: 0,
+      response_time: 0,
+      isError: false,
+      isStreaming: true, // Flag to indicate this is a streaming message
+      processing_steps: [], // Will be populated during completion
+      html: null,
+      css: null,
+      js: null
+    }
+
+    // Add the placeholder message that will be updated
+    let messageIndex
+    setMessages(prev => {
+      messageIndex = prev.length
+      return [...prev, assistantMessage]
+    })
+
+    // Track status updates from backend - no more fake cycling messages
+    let hasReceivedContent = false;
+
+    try {
+      // Create the streaming request body
+      const requestBody = {
+        message: apiMessageContent,
+        history: messages.filter(msg => msg.role !== 'system').map(msg => ({
+          role: msg.role,
+          content: msg.fullContent || msg.content
+        })),
+        agent_mode: forceAgentMode,
+        session_id: currentSessionId,
+        page_url: pageContext.url,
+        page_context: pageContext,
+        attached_files: attachedFiles.length > 0 ? attachedFiles.map(f => ({
+          name: f.name,
+          type: f.type,
+          size: f.size,
+          content: f.content,
+          isImage: f.isImage || false
+        })) : undefined,
+        custom_system_message: enableCustomSystem && customSystemMessage ? customSystemMessage : undefined,
+        web_search_enabled: webSearchEnabled,
+        streaming: true // Flag to enable streaming
+      }
+
+      // Use fetch for streaming with proper POST data since EventSource doesn't support POST
+      const response = await fetch(`${adminData.restUrl}chat-stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-WP-Nonce': adminData.nonces.wp_rest,
+          'X-Web-Search-Enabled': webSearchEnabled ? 'true' : 'false',
+        },
+        body: JSON.stringify(requestBody),
+        credentials: 'include'
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      if (!response.body) {
+        throw new Error('ReadableStream not supported');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = ''
+
+      let accumulatedContent = ''
+      let responseMetadata = {}
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          
+          if (done) {
+            break;
+          }
+          
+          // Decode the chunk and add to buffer
+          buffer += decoder.decode(value, { stream: true });
+          
+          // Process complete lines
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // Keep incomplete line in buffer
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                
+                // Log debug messages for troubleshooting
+                if (data.type === 'test' || data.type === 'debug') {
+                  console.log('Streaming debug:', data.message);
+                  continue;
+                }
+                
+                // Handle real-time status updates from backend
+                if (data.type === 'status') {
+                  // Update the thinking message with real status from backend
+                  setMessages(prev => {
+                    const newMessages = [...prev];
+                    if (newMessages[messageIndex] && newMessages[messageIndex].isStreaming && !hasReceivedContent) {
+                      newMessages[messageIndex] = {
+                        ...newMessages[messageIndex],
+                        content: data.message
+                      };
+                    }
+                    return newMessages;
+                  });
+                  continue;
+                }
+                
+                if (data.type === 'content') {
+                  // Mark that we've received actual content
+                  if (!hasReceivedContent) {
+                    hasReceivedContent = true;
+                  }
+                  
+                  // Accumulate content chunks
+                  accumulatedContent += data.chunk || '';
+                  
+                  // Update the message in real-time
+                  setMessages(prev => {
+                    const newMessages = [...prev];
+                    if (newMessages[messageIndex]) {
+                      newMessages[messageIndex] = {
+                        ...newMessages[messageIndex],
+                        content: accumulatedContent
+                      };
+                    }
+                    return newMessages;
+                  });
+                } else if (data.type === 'metadata') {
+                  // Store metadata for final message update
+                  responseMetadata = {
+                    provider: data.provider,
+                    tool_calls_count: data.tool_calls_count || 0,
+                    debug_tool_data: data.debug_tool_data || [],
+                    tokens_used: data.tokens_used || 0,
+                    cost: data.cost || 0,
+                    response_time: data.response_time || 0,
+                    session_id: data.session_id
+                  };
+                } else if (data.type === 'complete') {
+                  // Extract HTML, CSS, JS from final content
+                  const { html: extractedHtml, css: extractedCss, js: extractedJs } = getPartsFromResponse(accumulatedContent);
+                  
+                  // Final update with all metadata and extracted parts
+                  setMessages(prev => {
+                    const newMessages = [...prev];
+                    if (newMessages[messageIndex]) {
+                      newMessages[messageIndex] = {
+                        ...newMessages[messageIndex],
+                        ...responseMetadata,
+                        tool_calls_count: data.tool_calls_count || 0,
+                        tokens_used: data.tokens_used || 0,
+                        cost: data.cost || 0,
+                        response_time: data.response_time || 0,
+                        reasoning: data.reasoning || null,
+                        debug_tool_data: data.debug_tool_data || [],
+                        processing_steps: data.processing_steps || [],
+                        isStreaming: false,
+                        html: extractedHtml,
+                        css: extractedCss,
+                        js: extractedJs
+                      };
+                    }
+                    return newMessages;
+                  });
+
+                  // Update session ID if new
+                  if (!currentSessionId && responseMetadata.session_id) {
+                    setCurrentSessionId(responseMetadata.session_id);
+                    loadChatSessions();
+                    saveLastSession(responseMetadata.session_id);
+                  }
+
+                  // Update credits if provided
+                  if (data.credits) {
+                    setCreditsInfo(data.credits);
+                  }
+
+                  // Provide HTML back to parent if present
+                  if (onAiResponseUpdate && extractedHtml) {
+                    onAiResponseUpdate({
+                      html: extractedHtml,
+                      css: extractedCss,
+                      js: extractedJs
+                    });
+                  }
+
+                  // Streaming complete
+                  return; // Exit the streaming loop
+                } else if (data.type === 'error') {
+                  throw new Error(data.message || 'Streaming error');
+                }
+              } catch (parseError) {
+                console.error('Error parsing SSE data:', parseError);
+              }
+            }
+          }
+        }
+      } catch (streamError) {
+        console.error('Streaming error:', streamError);
+        
+        // Streaming error occurred
+        
+        // Update message with error
+        setMessages(prev => {
+          const newMessages = [...prev];
+          if (newMessages[messageIndex]) {
+            newMessages[messageIndex] = {
+              ...newMessages[messageIndex],
+              content: 'Sorry, I encountered an error while streaming the response.',
+              isError: true,
+              isStreaming: false
+            };
+          }
+          return newMessages;
+        });
+      } finally {
+        reader.releaseLock();
+      }
+
+    } catch (error) {
+      console.error('Streaming setup error:', error)
+      
+      // Streaming setup failed
+      
+      // Update message with error
+      setMessages(prev => {
+        const newMessages = [...prev]
+        if (newMessages[messageIndex]) {
+          newMessages[messageIndex] = {
+            ...newMessages[messageIndex],
+            content: `Sorry, I encountered an error: ${error.message}`,
+            isError: true,
+            isStreaming: false
+          }
+        }
+        return newMessages
+      })
+    }
+  }
+
   const sendMessage = async () => {
     if (!inputMessage.trim() && attachedFiles.length === 0) return
     
@@ -402,7 +707,6 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
     if (!persistFiles) {
       setAttachedFiles([])
     }
-    setIsLoading(true)
 
     try {
       // Get current post information from adminData
@@ -417,82 +721,98 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
         context: currentPost.context || 'unknown'
       }
 
-      const response = await fetch(`${adminData.restUrl}chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-WP-Nonce': adminData.nonces.wp_rest,
-          'X-Web-Search-Enabled': webSearchEnabled ? 'true' : 'false',
-        },
-        body: JSON.stringify({
-          message: apiMessageContent, // Use the API version with full content
-          history: messages.filter(msg => msg.role !== 'system').map(msg => ({
-            role: msg.role,
-            content: msg.fullContent || msg.content // Use fullContent for AI context if available
-          })),
-          agent_mode: forceAgentMode,
-          session_id: currentSessionId,
-          page_url: pageContext.url,
-          page_context: pageContext,
-          attached_files: attachedFiles.length > 0 ? attachedFiles.map(f => ({
-            name: f.name,
-            type: f.type,
-            size: f.size,
-            content: f.content,
-            isImage: f.isImage || false
-          })) : undefined,
-          custom_system_message: enableCustomSystem && customSystemMessage ? customSystemMessage : undefined,
-          web_search_enabled: webSearchEnabled
+      // Check if streaming is enabled
+      const isStreamingEnabled = settings?.streaming_enabled === true
+
+      if (isStreamingEnabled) {
+        // Set loading to false to ensure no loading spinner shows
+        setIsLoading(false)
+        // Set streaming state to disable UI during streaming
+        setIsStreaming(true)
+        // Use Server-Sent Events for streaming
+        await handleStreamingResponse(apiMessageContent, pageContext)
+        // Clear streaming state when done
+        setIsStreaming(false)
+      } else {
+        // Only set loading state for non-streaming requests
+        setIsLoading(true)
+        // Use regular fetch for non-streaming
+        const response = await fetch(`${adminData.restUrl}chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-WP-Nonce': adminData.nonces.wp_rest,
+            'X-Web-Search-Enabled': webSearchEnabled ? 'true' : 'false',
+          },
+          body: JSON.stringify({
+            message: apiMessageContent, // Use the API version with full content
+            history: messages.filter(msg => msg.role !== 'system').map(msg => ({
+              role: msg.role,
+              content: msg.fullContent || msg.content // Use fullContent for AI context if available
+            })),
+            agent_mode: forceAgentMode,
+            session_id: currentSessionId,
+            page_url: pageContext.url,
+            page_context: pageContext,
+            attached_files: attachedFiles.length > 0 ? attachedFiles.map(f => ({
+              name: f.name,
+              type: f.type,
+              size: f.size,
+              content: f.content,
+              isImage: f.isImage || false
+            })) : undefined,
+            custom_system_message: enableCustomSystem && customSystemMessage ? customSystemMessage : undefined,
+            web_search_enabled: webSearchEnabled
+          })
         })
-      })
 
-      const data = await response.json()
+        const data = await response.json()
 
-      if (data.success) {
-        // Update current session ID if this is a new session
-        if (!currentSessionId && data.session_id) {
-          setCurrentSessionId(data.session_id)
-          // Refresh chat sessions list to include the new session
-          loadChatSessions() // Don't auto-load, we're already in the new session
-          // Persist as last opened session
-          saveLastSession(data.session_id)
-        }
-        
-        const responseContent = data.response;
-        const chatContent = getTextFromResponse(responseContent)
-        
-        const { html: extractedHtml, css: extractedCss, js: extractedJs } = getPartsFromResponse(responseContent)
+        if (data.success) {
+          // Update current session ID if this is a new session
+          if (!currentSessionId && data.session_id) {
+            setCurrentSessionId(data.session_id)
+            // Refresh chat sessions list to include the new session
+            loadChatSessions() // Don't auto-load, we're already in the new session
+            // Persist as last opened session
+            saveLastSession(data.session_id)
+          }
+          
+          const responseContent = data.response;
+          const chatContent = getTextFromResponse(responseContent)
+          
+          const { html: extractedHtml, css: extractedCss, js: extractedJs } = getPartsFromResponse(responseContent)
 
-        const assistantMessage = {
-          role: 'assistant',
-          content: chatContent,
-          timestamp: new Date(),
-          provider: data.provider,
-          agent_mode: forceAgentMode,
-          tool_calls_count: data.tool_calls_count || 0,
-          debug_tool_data: data.debug_tool_data || [],
-          tokens_used: data.tokens_used,
-          cost: data.cost,
-          response_time: data.response_time,
-          isError: false,
-          html: extractedHtml,
-          css: extractedCss,
-          js: extractedJs
-        }
-        setMessages(prev => [...prev, assistantMessage])
-        // Update credit info from response
-        if (data.credits) {
-          setCreditsInfo(data.credits)
-        }
-        // Provide HTML back to parent (e.g., drawer) if present
-        if (onAiResponseUpdate && extractedHtml) {
-          onAiResponseUpdate({
+          const assistantMessage = {
+            role: 'assistant',
+            content: chatContent,
+            timestamp: new Date(),
+            provider: data.provider,
+            agent_mode: forceAgentMode,
+            tool_calls_count: data.tool_calls_count || 0,
+            debug_tool_data: data.debug_tool_data || [],
+            tokens_used: data.tokens_used,
+            cost: data.cost,
+            response_time: data.response_time,
+            isError: false,
             html: extractedHtml,
             css: extractedCss,
             js: extractedJs
-          });
-        }
-      } else {
+          }
+          setMessages(prev => [...prev, assistantMessage])
+          // Update credit info from response
+          if (data.credits) {
+            setCreditsInfo(data.credits)
+          }
+          // Provide HTML back to parent (e.g., drawer) if present
+          if (onAiResponseUpdate && extractedHtml) {
+            onAiResponseUpdate({
+              html: extractedHtml,
+              css: extractedCss,
+              js: extractedJs
+            });
+          }
+        } else {
         const errorMessage = {
           role: 'assistant',
           content: `Sorry, I encountered an error: ${data.message || 'Unknown error'}`,
@@ -505,6 +825,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
           setCreditsInfo(data.credits)
         }
       }
+      } // End of else block for non-streaming
     } catch (error) {
       console.error('Chat error:', error)
       const errorMessage = {
@@ -517,6 +838,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
     }
 
     setIsLoading(false)
+    setIsStreaming(false)
   }
 
   const handleKeyPress = (e) => {
@@ -827,6 +1149,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
               reasoning: msg.reasoning,
               tool_calls_count: msg.tool_calls_count,
               debug_tool_data: msg.debug_tool_data,
+              processing_steps: msg.processing_steps || [],
               tokens_used: msg.tokens_used,
               cost: msg.cost,
               response_time: msg.response_time
@@ -1173,6 +1496,13 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
 
   const toggleDebugData = (messageIndex) => {
     setShowingDebugData(prev => ({
+      ...prev,
+      [messageIndex]: !prev[messageIndex]
+    }))
+  }
+
+  const toggleChainOfThought = (messageIndex) => {
+    setShowingChainOfThought(prev => ({
       ...prev,
       [messageIndex]: !prev[messageIndex]
     }))
@@ -1583,6 +1913,11 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
     showSuccess('File persistence setting saved!')
   }
 
+  // If in Content Mode, render that instead
+  if (isContentMode && !isDrawerMode) {
+    return <ContentMode adminData={adminData} onExitContentMode={() => setIsContentMode(false)} />
+  }
+
   return (
     
     <div className={`h-[calc(100vh-7.4rem)] mx-auto flex flex-col ${isDrawerMode ? 'h-full' : ''}`}>
@@ -1590,6 +1925,9 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
       {!isDrawerMode && (
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
           <div className="flex items-center space-x-2">
+            <Button size="sm" color="purple" onClick={() => setIsContentMode(true)}>
+              ✨ Content Mode
+            </Button>
             <Button size="sm" color="gray" onClick={() => setIsSettingsOpen(true)}>Settings</Button>
             <Button size="sm" color="gray" onClick={() => setIsHistoryOpen(true)}>History</Button>
             <Button size="sm" color="gray" onClick={openShareModal} disabled={messages.filter(msg => msg.role !== 'system' && !msg.isWelcomeMessage).length === 0}>
@@ -1799,6 +2137,37 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                   </div>
                 )}
                 
+                {/* Chain of Thought */}
+                {showingChainOfThought[index] && message.processing_steps && message.processing_steps.length > 0 && (
+                  <div className="mt-4 p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-700">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-sm font-medium text-purple-700 dark:text-purple-300">🧠 Chain of Thought</span>
+                      <span className="text-xs text-purple-500 dark:text-purple-400">({message.processing_steps.length} steps)</span>
+                    </div>
+                    <div className="space-y-2 max-h-96 overflow-y-auto">
+                      {message.processing_steps.map((step, stepIndex) => {
+                        const timestamp = new Date(step.timestamp * 1000);
+                        const timeString = timestamp.toLocaleTimeString();
+                        return (
+                          <div key={stepIndex} className="flex items-start gap-3 p-2 bg-white/50 dark:bg-gray-800/50 rounded border-l-2 border-purple-300 dark:border-purple-600">
+                            <span className="text-xs text-purple-600 dark:text-purple-400 font-mono min-w-[60px]">
+                              {stepIndex + 1}.
+                            </span>
+                            <div className="flex-1">
+                              <div className="text-sm text-purple-800 dark:text-purple-200">
+                                {step.message}
+                              </div>
+                              <div className="text-xs text-purple-500 dark:text-purple-400 mt-1">
+                                {timeString}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                
                 {/* Debug Tool Data */}
                 {showingDebugData[index] && (
                   <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600">
@@ -1899,6 +2268,16 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                     <span className="px-2 py-1 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 rounded text-xs">
                       {message.tool_calls_count} tools used
                     </span>
+                  )}
+                  {message.processing_steps && message.processing_steps.length > 0 && message.role === 'assistant' && (
+                    <button
+                      type="button"
+                      onClick={() => toggleChainOfThought(index)}
+                      className="px-2 py-1 bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200 hover:bg-purple-200 dark:hover:bg-purple-800 rounded text-xs transition-all cursor-pointer opacity-0 group-hover:opacity-100"
+                      title="View chain of thought - see how AI processed this request"
+                    >
+                      🧠 {message.processing_steps.length} steps
+                    </button>
                   )}
                   {message.role === 'assistant' && (
                     <button
@@ -2016,7 +2395,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
                 onKeyPress={handleKeyPress}
-                disabled={isLoading}
+                disabled={isLoading || isStreaming}
                 rows={isDrawerMode ? 2 : 3}
                 className={`w-full resize-y text-sm leading-relaxed placeholder-gray-500 dark:placeholder-gray-400 ${isDrawerMode ? 'text-sm' : ''}`}
               />
@@ -2030,7 +2409,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                   <Tooltip content="Create custom file" className="z-50">
                     <button
                       onClick={() => setIsFileModalOpen(true)}
-                      disabled={isLoading}
+                      disabled={isLoading || isStreaming}
                       className="flex items-center justify-center w-8 h-8 bg-green-100 hover:bg-green-200 dark:bg-green-700 dark:hover:bg-green-600 rounded-lg transition-colors"
                     >
                       <svg className="w-4 h-4 text-green-600 dark:text-green-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2043,7 +2422,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                   <Tooltip content="Upload file" className="z-50">
                     <button
                       onClick={() => fileInputRef.current?.click()}
-                      disabled={isLoading}
+                      disabled={isLoading || isStreaming}
                       className="flex items-center justify-center w-8 h-8 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 rounded-lg transition-colors"
                     >
                       <svg className="w-4 h-4 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2056,7 +2435,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                   <Tooltip content={webSearchEnabled ? "Web search enabled" : "Enable web search"} className="z-50">
                     <button
                       onClick={() => setWebSearchEnabled(!webSearchEnabled)}
-                      disabled={isLoading}
+                      disabled={isLoading || isStreaming}
                       className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors ${
                         webSearchEnabled
                           ? 'bg-blue-100 hover:bg-blue-200 dark:bg-blue-900 dark:hover:bg-blue-800'
@@ -2077,11 +2456,11 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                 {/* Send button - right side */}
                 <Button
                   onClick={sendMessage}
-                  disabled={isLoading || (!inputMessage.trim() && attachedFiles.length === 0)}
+                  disabled={(isLoading || isStreaming) || (!inputMessage.trim() && attachedFiles.length === 0)}
                   size={isDrawerMode ? "sm" : "default"}
                   className="rounded-full p-2 text-primary-600 hover:bg-primary-100 dark:text-white dark:hover:bg-gray-600"
                 >
-                  {isLoading ? <Spinner size="sm" /> : (
+                  {(isLoading || isStreaming) ? <Spinner size="sm" /> : (
                     <svg
                       xmlns="http://www.w3.org/2000/svg"
                       viewBox="0 0 24 24"

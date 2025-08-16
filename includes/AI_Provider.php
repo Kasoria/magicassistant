@@ -15,6 +15,8 @@ class AI_Provider {
     private $mcp_server;
     private $db;
     private $current_session_id = null;
+    private $is_streaming_mode = false;
+    private $processing_steps = [];
     // Add proxy endpoints for AI
     private $openai_proxy_url = 'https://proxy.magicplugins.io/api/proxy/openai';
     private $anthropic_proxy_url = 'https://proxy.magicplugins.io/api/proxy/anthropic';
@@ -43,6 +45,13 @@ class AI_Provider {
         register_rest_route('magicassistant/v1', '/chat', array(
             'methods' => 'POST',
             'callback' => array($this, 'handle_chat'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        // Chat streaming endpoint
+        register_rest_route('magicassistant/v1', '/chat-stream', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'handle_chat_stream'),
             'permission_callback' => array($this, 'check_permissions'),
         ));
         
@@ -300,6 +309,48 @@ class AI_Provider {
             'permission_callback' => array($this, 'check_permissions'),
         ));
 
+        // SITE INFO ENDPOINT
+        register_rest_route('magicassistant/v1', '/site-info', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_site_info'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        // WP ADD POST ENDPOINT
+        register_rest_route('magicassistant/v1', '/wp_add_post', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'wp_add_post'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        // WP UPDATE POST ENDPOINT
+        register_rest_route('magicassistant/v1', '/wp_update_post', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'wp_update_post'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        // WP ADD PAGE ENDPOINT
+        register_rest_route('magicassistant/v1', '/wp_add_page', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'wp_add_page'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        // WP UPDATE PAGE ENDPOINT
+        register_rest_route('magicassistant/v1', '/wp_update_page', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'wp_update_page'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        // WEB RESEARCH ENDPOINT
+        register_rest_route('magicassistant/v1', '/web-research', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'web_research'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
         // HTACCESS EDITOR ENDPOINTS
         register_rest_route('magicassistant/v1', '/htaccess', array(
             'methods' => 'GET',
@@ -348,6 +399,10 @@ class AI_Provider {
     }
     
     public function handle_chat($request) {
+        // Increase PHP execution time limit for content generation
+        // Each request should have its own timeout, this just ensures PHP doesn't kill the script
+        @set_time_limit(600); // 10 minutes for content generation requests
+        
         $data = $request->get_json_params();
         $message = $data['message'] ?? '';
         $conversation_history = $data['history'] ?? [];
@@ -429,6 +484,14 @@ class AI_Provider {
             $provider = $this->settings['ai_provider'] ?? 'openai';
             $model = $this->get_model_for_provider($provider);
             
+            // Debug: Log web search status
+            error_log('🔍 AI_Provider - Web Search Debug: ' . json_encode([
+                'web_search_enabled_from_data' => $web_search_enabled,
+                'web_search_header' => $_SERVER['HTTP_X_WEB_SEARCH_ENABLED'] ?? 'not_set',
+                'message_preview' => substr($message, 0, 100) . '...',
+                'provider' => $provider
+            ]));
+            
             // Get the appropriate API key based on provider (already decrypted in settings)
             if ($provider === 'openai') {
                 $api_key = $this->settings['openai_api_key'] ?? '';
@@ -472,7 +535,8 @@ class AI_Provider {
                     $result['debug_tool_data'] ?? null,
                     $agent_mode,
                     $result['reasoning'] ?? null,
-                    $result['tool_calls_count'] ?? null
+                    $result['tool_calls_count'] ?? null,
+                    $this->processing_steps ?? null
                 );
                 
                 // Persist the latest credit info globally if present
@@ -551,6 +615,238 @@ class AI_Provider {
             }
             
             return new WP_Error('chat_error', $e->getMessage(), array('status' => 500));
+        }
+    }
+    
+    /**
+     * Handle streaming chat requests via Server-Sent Events
+     */
+    public function handle_chat_stream($request) {
+        // Set up SSE headers immediately
+        header('Content-Type: text/event-stream');
+        header('Cache-Control: no-cache');
+        header('Connection: keep-alive');
+        header('Access-Control-Allow-Origin: *');
+        header('Access-Control-Allow-Headers: Cache-Control, Content-Type, X-WP-Nonce');
+        header('Access-Control-Allow-Credentials: true');
+        header('X-Accel-Buffering: no'); // Disable nginx buffering
+        
+        // Prevent PHP from buffering output
+        while (ob_get_level()) {
+            ob_end_clean();
+        }
+        
+        // Disable output buffering completely
+        if (function_exists('apache_setenv')) {
+            apache_setenv('no-gzip', '1');
+        }
+        ini_set('zlib.output_compression', 0);
+        ini_set('implicit_flush', 1);
+        
+        // Send initial connection test
+        echo "data: " . json_encode(array(
+            'type' => 'test',
+            'message' => 'Connection established'
+        )) . "\n\n";
+        flush();
+        
+        try {
+            // Get JSON data from POST body
+            $data = $request->get_json_params();
+            
+            if (!$data) {
+                echo "data: " . json_encode(array(
+                    'type' => 'error',
+                    'message' => 'Invalid JSON data'
+                )) . "\n\n";
+                flush();
+                exit;
+            }
+            
+            // Verify nonce for security from headers
+            $nonce = $request->get_header('X-WP-Nonce');
+            if ($nonce && !wp_verify_nonce($nonce, 'wp_rest')) {
+                echo "data: " . json_encode(array(
+                    'type' => 'error',
+                    'message' => 'Invalid nonce'
+                )) . "\n\n";
+                flush();
+                exit;
+            }
+            
+            // Send debug info
+            echo "data: " . json_encode(array(
+                'type' => 'debug',
+                'message' => 'About to start streaming chat'
+            )) . "\n\n";
+            flush();
+            
+            // Initialize streaming response
+            $this->handle_streaming_chat($data);
+            
+        } catch (Exception $e) {
+            // Send error event
+            echo "data: " . json_encode(array(
+                'type' => 'error',
+                'message' => $e->getMessage()
+            )) . "\n\n";
+            flush();
+        }
+        
+        // Exit to prevent WordPress from adding extra content
+        exit;
+    }
+    
+    /**
+     * Process streaming chat request and send SSE events
+     */
+    private function handle_streaming_chat($data) {
+        // Increase PHP execution time limit for content generation
+        @set_time_limit(600); // 10 minutes
+        
+        // Prepare request data similar to regular handle_chat
+        $conversation_history = $data['history'] ?? array();
+        $message = $data['message'] ?? '';
+        $agent_mode = $data['agent_mode'] ?? false;
+        $attached_files = $data['attached_files'] ?? array();
+        $custom_system_message = $data['custom_system_message'] ?? null;
+        $web_search_enabled = $data['web_search_enabled'] ?? false;
+        $page_url = $data['page_url'] ?? '';
+        $page_context = $data['page_context'] ?? array();
+        $session_id = $data['session_id'] ?? $this->generate_session_id();
+        
+        $user_id = get_current_user_id();
+        $start_time = microtime(true);
+        
+        // Reset tool discovery flag for new sessions
+        if ($this->current_session_id !== $session_id) {
+            $this->current_session_id = $session_id;
+            if ($this->mcp_server) {
+                $this->mcp_server->reset_tools_discovered();
+            }
+        }
+        
+        try {
+            // Save user message to database immediately
+            if ($this->db) {
+                $this->db->save_chat_message(
+                    $user_id,
+                    $session_id,
+                    'user',
+                    $message
+                );
+                
+                // Persist the mode for this session
+                if (method_exists($this->db, 'set_chat_session_mode')) {
+                    $this->db->set_chat_session_mode($user_id, $session_id, $agent_mode);
+                }
+            }
+            
+            // Build enhanced context message with page information
+            if (!empty($page_url) || !empty($page_context)) {
+                $context_message = $this->build_page_context_message($page_url, $page_context);
+                if (!empty($context_message)) {
+                    array_unshift($conversation_history, array(
+                        'role' => 'system',
+                        'content' => $context_message
+                    ));
+                }
+            }
+            
+            // Get AI provider settings
+            $provider = $this->settings['ai_provider'] ?? 'openai';
+            $model = $this->get_model_for_provider($provider);
+            $api_key = $this->get_api_key($provider);
+            
+            // Send metadata info
+            echo "data: " . json_encode(array(
+                'type' => 'metadata',
+                'provider' => $provider,
+                'model' => $model,
+                'session_id' => $session_id
+            )) . "\n\n";
+            flush();
+            
+            // Send initial processing status
+            echo "data: " . json_encode(array(
+                'type' => 'status',
+                'message' => $this->get_processing_status($message, $provider, $agent_mode, $web_search_enabled)
+            )) . "\n\n";
+            flush();
+            
+            // Use the regular AI handlers but capture response in chunks
+            if ($agent_mode) {
+                $result = $this->handle_agent_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled);
+            } else {
+                $result = $this->handle_chat_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled);
+            }
+            
+            $response_time = microtime(true) - $start_time;
+            
+            // Save AI response to database
+            if ($this->db) {
+                $this->db->save_chat_message(
+                    $user_id,
+                    $session_id,
+                    'assistant',
+                    $result['response'],
+                    $provider,
+                    $model,
+                    $result['tokens_used'] ?? null,
+                    $response_time,
+                    $result['cost'] ?? null,
+                    $result['debug_tool_data'] ?? null,
+                    $agent_mode,
+                    $result['reasoning'] ?? null,
+                    $result['tool_calls_count'] ?? null,
+                    $this->processing_steps ?? null
+                );
+                
+                // Persist the latest credit info globally if present
+                if (isset($result['credits']) && is_array($result['credits'])) {
+                    $this->db->save_setting('current_credits', $result['credits']);
+                }
+            }
+            
+            // Send final completion event
+            echo "data: " . json_encode(array(
+                'type' => 'complete',
+                'session_id' => $session_id,
+                'provider' => $provider,
+                'model' => $model,
+                'tool_calls_count' => $result['tool_calls_count'] ?? 0,
+                'tokens_used' => $result['tokens_used'] ?? null,
+                'cost' => $result['cost'] ?? 0,
+                'response_time' => $response_time,
+                'credits' => $result['credits'] ?? null,
+                'reasoning' => $result['reasoning'] ?? null,
+                'debug_tool_data' => $result['debug_tool_data'] ?? null,
+                'processing_steps' => $this->processing_steps
+            )) . "\n\n";
+            flush();
+            
+        } catch (Exception $e) {
+            $error_response_time = microtime(true) - $start_time;
+            
+            // Save error message to database if we have a session
+            if ($this->db && isset($session_id)) {
+                $this->db->save_chat_message(
+                    $user_id,
+                    $session_id,
+                    'assistant',
+                    'Error: ' . $e->getMessage(),
+                    $provider ?? 'unknown',
+                    $model ?? null,
+                    null,
+                    $error_response_time
+                );
+            }
+            
+            echo "data: " . json_encode(array(
+                'type' => 'error',
+                'message' => $e->getMessage()
+            )) . "\n\n";
+            flush();
         }
     }
     
@@ -1013,8 +1309,17 @@ class AI_Provider {
             $tool_args = json_decode($tool_call['function']['arguments'] ?? '{}', true) ?: $tool_call['input'] ?? [];
             $tool_call_id = $tool_call['id'] ?? null; // Tool call ID (works for both OpenAI and Anthropic)
             
+            if ($this->is_streaming_mode) {
+                $this->send_status_update("Executing tool: $tool_name");
+            }
+            
             try {
                 $result = $this->execute_mcp_tool($tool_name, $tool_args);
+                
+                if ($this->is_streaming_mode) {
+                    $this->send_status_update("✅ Tool '$tool_name' executed successfully");
+                }
+                
                 $tool_results[] = array(
                     'tool' => $tool_name,
                     'tool_call_id' => $tool_call_id, // Preserve the tool call ID
@@ -1022,6 +1327,10 @@ class AI_Provider {
                     'success' => true
                 );
             } catch (Exception $e) {
+                if ($this->is_streaming_mode) {
+                    $this->send_status_update("❌ Tool '$tool_name' failed: " . $e->getMessage());
+                }
+                
                 $tool_results[] = array(
                     'tool' => $tool_name,
                     'tool_call_id' => $tool_call_id, // Preserve the tool call ID even for errors
@@ -1065,13 +1374,35 @@ class AI_Provider {
         }
         $tools_info = "\nYou have access to a comprehensive set of WordPress MCP tools including SEO analysis capabilities through DataForSEO. Use them thoughtfully when they can enhance your answer.\n";
         
+        $content_mode_tools = "
+
+CONTENT MODE TOOLS:
+When the user is in Content Mode or specifically asks for content creation assistance, you have access to specialized content tools:
+- content_optimize_seo: Analyze and optimize content for SEO
+- content_score_analysis: Comprehensive content quality scoring
+- content_get_template: Get industry-specific content templates
+- content_repurpose: Transform content between different formats
+- content_bulk_generate: Handle bulk content generation requests
+
+CONTENT MODE BEST PRACTICES:
+- Always consider SEO optimization in content creation
+- Use structured approaches with clear headings and sections
+- Include relevant keywords naturally (1-2% density)
+- Create engaging, scannable content with lists and subheadings
+- Suggest appropriate internal and external links
+- Consider the target audience and content purpose
+- Provide actionable, valuable information
+
+For content optimization requests, use the content_optimize_seo tool to provide specific SEO recommendations.";
+        
         return "You are MagicAssistant, a helpful AI assistant for WordPress websites operating in AGENT MODE. You can help users manage their WordPress site, create content, perform SEO analysis, and execute complex multi-step operations.
 
-{$tools_info}
+{$tools_info}{$content_mode_tools}
 
 AVAILABLE CAPABILITIES:
 - WordPress content management (posts, pages, media, users, etc.)
 - SEO analysis and optimization (SERP analysis, keyword research, competitor analysis, technical audits)
+- Advanced content creation and optimization
 - Site administration and settings management
 - WooCommerce support (if available)
 - Get images from Unsplash API. Strictly only return the images and their titles, no other text.
@@ -1266,12 +1597,12 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         return null;
     }
     
-    private function call_openai($messages, $api_key, $web_search_enabled = false) {
+    private function call_openai($messages, $api_key, $web_search_enabled = false, $is_streaming = false) {
         // For Responses API, we need to handle tool calls differently
-        return $this->call_openai_responses($messages, $api_key, $web_search_enabled);
+        return $this->call_openai_responses($messages, $api_key, $web_search_enabled, $is_streaming);
     }
     
-    private function call_openai_responses($messages, $api_key, $web_search_enabled = false) {
+    private function call_openai_responses($messages, $api_key, $web_search_enabled = false, $is_streaming = false) {
         // Extract system message and conversation for proper Responses API formatting
         $system_message = '';
         $conversation_messages = [];
@@ -1287,9 +1618,15 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         // Convert chat messages format to Responses API input format
         $input_content = $this->convert_messages_to_responses_input($messages);
         
+        // Ensure input_content is an array for function call iterations
+        if (!is_array($input_content)) {
+            $input_content = [['role' => 'user', 'content' => $input_content]];
+        }
+        
         $total_usage = ['input_tokens' => 0, 'output_tokens' => 0, 'total_tokens' => 0];
         $total_cost = 0;
         $tool_calls_executed = 0;
+        $tool_results_debug = []; // Track detailed tool results like other providers
         $max_iterations = 5; // Prevent infinite loops
         $iteration = 0;
         $userKeyUsed = false;
@@ -1297,6 +1634,10 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         while ($iteration < $max_iterations) {
             $iteration++;
+            
+            if ($is_streaming) {
+                $this->send_status_update("Preparing OpenAI request (iteration $iteration)...");
+            }
             
             $request_data = array(
                 'action'   => 'openai_responses',
@@ -1311,6 +1652,15 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 'site_url'  => home_url(),
                 'timestamp' => time(),
             );
+            
+            // Debug: Log OpenAI request data
+            error_log('📤 AI_Provider - OpenAI Request: ' . json_encode([
+                'web_search_enabled' => $web_search_enabled,
+                'model' => $this->settings['openai_model'] ?? 'gpt-4.1-mini',
+                'has_tools' => !empty($this->get_mcp_tools_for_openai()),
+                'iteration' => $iteration,
+                'timeout_used' => 600
+            ]));
             
             // Add system message as instructions if present
             if (!empty($system_message)) {
@@ -1330,21 +1680,103 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             }
 
 
-            $response = wp_remote_post( $this->openai_proxy_url, array(
+            // Fixed 10-minute timeout for all content generation requests
+            $timeout = 600;
+            
+            // Detect long content requests and use streaming endpoint
+            $user_message = '';
+            if (!empty($request_data['data']['messages'])) {
+                foreach ($request_data['data']['messages'] as $msg) {
+                    if ($msg['role'] === 'user') {
+                        $user_message = $msg['content'];
+                        break;
+                    }
+                }
+            }
+            
+            // Check if streaming is enabled in settings AND it's a long content request
+            $streaming_enabled = $this->settings['streaming_enabled'] ?? false;
+            $is_long_content = $streaming_enabled ? $this->detect_long_content_request($user_message) : false;
+            $proxy_url = $is_long_content ? $this->openai_proxy_url . '/stream' : $this->openai_proxy_url;
+            
+            error_log('📊 AI_Provider - Content Detection: ' . json_encode([
+                'streaming_enabled' => $streaming_enabled,
+                'is_long_content' => $is_long_content,
+                'proxy_url' => $proxy_url,
+                'message_preview' => substr($user_message, 0, 200)
+            ]));
+            
+            if ($is_long_content) {
+                return $this->handle_streaming_response($proxy_url, $headers, $request_data, $timeout);
+            }
+            
+            if ($is_streaming) {
+                $this->send_status_update("Sending request to OpenAI API...");
+            }
+            
+            $response = wp_remote_post( $proxy_url, array(
                 'headers' => $headers,
                 'body'    => wp_json_encode( $request_data ),
-                'timeout' => 120
+                'timeout' => $timeout
             ) );
             
             if (is_wp_error($response)) {
                 throw new Exception('OpenAI proxy request failed: ' . $response->get_error_message());
             }
             
+            if ($is_streaming) {
+                $this->send_status_update("Received response from OpenAI, processing...");
+            }
+            
             $body = wp_remote_retrieve_body($response);
             $data = json_decode($body, true);
             
+            // Debug: Log response data
+            error_log('📥 AI_Provider - OpenAI Response: ' . json_encode([
+                'success' => $data['success'] ?? false,
+                'has_data' => !empty($data['data']),
+                'has_error' => !empty($data['error']),
+                'response_size' => strlen($body),
+                'web_search_used' => strpos($body, 'web search') !== false || strpos($body, 'searched') !== false
+            ]));
+            
+            // Handle timeout or empty responses more gracefully
+            if ($data === null || (empty($data['success']) && empty($data['error']))) {
+                // Log the raw response for debugging
+                error_log('🚨 AI_Provider - FAILED RESPONSE DEBUG: ' . json_encode([
+                    'body_length' => strlen($body),
+                    'body_preview' => substr($body, 0, 1000),
+                    'response_code' => wp_remote_retrieve_response_code($response),
+                    'response_message' => wp_remote_retrieve_response_message($response),
+                    'headers' => wp_remote_retrieve_headers($response),
+                    'data_null' => $data === null,
+                    'data_preview' => $data
+                ]));
+                
+                // Check if it's a nginx/proxy timeout
+                if (strpos($body, '504 Gateway Time-out') !== false || strpos($body, '502 Bad Gateway') !== false) {
+                    throw new Exception('WEB SERVER TIMEOUT DETECTED: 504/502 Gateway timeout from web server/proxy. Check nginx/apache timeout settings. Response: ' . substr($body, 0, 200));
+                } elseif (strlen($body) < 200) {
+                    throw new Exception('SHORT RESPONSE DETECTED: Response too short (' . strlen($body) . ' chars). Possible connection drop. Response: ' . $body);
+                } else {
+                    throw new Exception('INVALID RESPONSE DETECTED: Unknown response format. Length: ' . strlen($body) . '. Preview: ' . substr($body, 0, 300));
+                }
+            }
+            
             if (empty($data['success']) || isset($data['error'])) {
-                throw new Exception('OpenAI proxy error: ' . ($data['error'] ?? 'Unknown error'));
+                // Provide more specific error messages
+                $errorMessage = $data['error'] ?? $data['message'] ?? 'Unknown error';
+                
+                // Check for common error patterns
+                if (strpos($errorMessage, 'timeout') !== false || strpos($errorMessage, 'timed out') !== false) {
+                    throw new Exception('The request timed out. Try reducing the content length or disabling web search.');
+                } elseif (strpos($errorMessage, 'rate limit') !== false) {
+                    throw new Exception('Rate limit exceeded. Please wait a moment before trying again.');
+                } elseif (strpos($errorMessage, 'credit') !== false || strpos($errorMessage, 'quota') !== false) {
+                    throw new Exception('API quota exceeded. Please check your account credits.');
+                } else {
+                    throw new Exception('OpenAI proxy error: ' . $errorMessage);
+                }
             }
             
             $result = $data['data'];
@@ -1406,7 +1838,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     'content' => $text_content,
                     'tool_calls' => [],
                     'tool_calls_executed_count' => $tool_calls_executed,
-                    'debug_tool_data' => null,
+                    'debug_tool_data' => !empty($tool_results_debug) ? $tool_results_debug : null,
                     'usage' => $total_usage,
                     'cost' => $total_cost,
                     'user_key_used' => $userKeyUsed,
@@ -1415,6 +1847,10 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             }
             
             // Execute function calls
+            if ($this->is_streaming_mode) {
+                $tool_count = count($function_calls);
+                $this->send_status_update("AI wants to use $tool_count tool(s) - Executing tools...");
+            }
             
             // Add the function calls to input for next iteration
             foreach ($function_calls as $function_call) {
@@ -1427,8 +1863,26 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 
                 
                 try {
+                    // Send status update for this specific tool
+                    if ($this->is_streaming_mode) {
+                        $this->send_status_update("Executing tool: $function_name");
+                    }
+                    
                     $function_result = $this->execute_function($function_name, $arguments);
                     $tool_calls_executed++;
+                    
+                    // Send success status update
+                    if ($this->is_streaming_mode) {
+                        $this->send_status_update("✅ Tool '$function_name' executed successfully");
+                    }
+                    
+                    // Track detailed tool result like other providers
+                    $tool_results_debug[] = array(
+                        'tool' => $function_name,
+                        'tool_call_id' => $call_id,
+                        'result' => $function_result,
+                        'success' => true
+                    );
                     
                     // Add function result to input
                     $input_content[] = array(
@@ -1440,6 +1894,19 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     
                 } catch (Exception $e) {
                     
+                    // Send error status update
+                    if ($this->is_streaming_mode) {
+                        $this->send_status_update("❌ Tool '$function_name' failed: " . $e->getMessage());
+                    }
+                    
+                    // Track detailed tool error like other providers
+                    $tool_results_debug[] = array(
+                        'tool' => $function_name,
+                        'tool_call_id' => $call_id,
+                        'error' => $e->getMessage(),
+                        'success' => false
+                    );
+                    
                     // Add error result to input
                     $input_content[] = array(
                         'type' => 'function_call_output', 
@@ -1447,6 +1914,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         'output' => 'Error: ' . $e->getMessage()
                     );
                 }
+            }
+            
+            // Send completion status after all tools
+            if ($this->is_streaming_mode && !empty($function_calls)) {
+                $this->send_status_update("All tools completed - Processing results...");
             }
             
             // Continue to next iteration with updated input
@@ -1457,7 +1929,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'content' => 'Task partially completed. Maximum iterations reached.',
             'tool_calls' => [],
             'tool_calls_executed_count' => $tool_calls_executed,
-            'debug_tool_data' => null,
+            'debug_tool_data' => !empty($tool_results_debug) ? $tool_results_debug : null,
             'usage' => $total_usage,
             'cost' => $total_cost,
             'user_key_used' => $userKeyUsed,
@@ -1493,7 +1965,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
     }
     
-    private function call_anthropic($messages, $api_key, $web_search_enabled = false) {
+    private function call_anthropic($messages, $api_key, $web_search_enabled = false, $is_streaming = false) {
         // Separate system and user messages
         $system_message = '';
         $conversation   = [];
@@ -1517,6 +1989,14 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'timestamp' => time(),
         );
         
+        // Debug: Log Anthropic request data
+        error_log('📤 AI_Provider - Anthropic Request: ' . json_encode([
+            'web_search_enabled' => $web_search_enabled,
+            'model' => $this->settings['anthropic_model'] ?? 'claude-3-5-sonnet-20241022',
+            'has_tools' => !empty($tools),
+            'message_count' => count($conversation)
+        ]));
+        
         if (!empty($system_message)) {
             $request_data['data']['system'] = $system_message;
         }
@@ -1532,18 +2012,75 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $headers['X-Web-Search-Enabled'] = 'true';
         }
 
+        // Fixed 10-minute timeout for all content generation requests
+        $timeout = 600;
+
+        if ($is_streaming) {
+            $this->send_status_update("Sending request to Anthropic API...");
+        }
+
         $response = wp_remote_post( $this->anthropic_proxy_url, array(
             'headers' => $headers,
             'body'    => wp_json_encode( $request_data ),
-            'timeout' => 120
+            'timeout' => $timeout
         ) );
         if (is_wp_error($response)) {
             throw new Exception('Anthropic proxy request failed: ' . $response->get_error_message());
         }
+        
+        if ($is_streaming) {
+            $this->send_status_update("Received response from Anthropic, processing...");
+        }
+        
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
+        
+        // Debug: Log Anthropic response data
+        error_log('📥 AI_Provider - Anthropic Response: ' . json_encode([
+            'success' => $data['success'] ?? false,
+            'has_data' => !empty($data['data']),
+            'has_error' => !empty($data['error']),
+            'response_size' => strlen($body),
+            'web_search_used' => strpos($body, 'web search') !== false || strpos($body, 'searched') !== false || strpos($body, 'found') !== false
+        ]));
+        
+        // Handle timeout or empty responses more gracefully
+        if ($data === null || (empty($data['success']) && empty($data['error']))) {
+            // Log comprehensive debugging information
+            error_log('🚨 AI_Provider - FAILED RESPONSE DEBUG (Anthropic): ' . json_encode([
+                'body_length' => strlen($body),
+                'body_preview' => substr($body, 0, 1000),
+                'response_code' => wp_remote_retrieve_response_code($response),
+                'response_message' => wp_remote_retrieve_response_message($response),
+                'headers' => wp_remote_retrieve_headers($response),
+                'data_null' => $data === null,
+                'data_preview' => $data
+            ]));
+            
+            // Check if it's a nginx/proxy timeout
+            if (strpos($body, '504 Gateway Time-out') !== false || strpos($body, '502 Bad Gateway') !== false) {
+                throw new Exception('WEB SERVER TIMEOUT DETECTED (Anthropic): 504/502 Gateway timeout from web server/proxy. Check nginx/apache timeout settings. Response: ' . substr($body, 0, 200));
+            } elseif (strlen($body) < 200) {
+                throw new Exception('SHORT RESPONSE DETECTED (Anthropic): Connection likely dropped. Response length: ' . strlen($body) . '. Response: ' . $body);
+            } else {
+                throw new Exception('INVALID RESPONSE FORMAT (Anthropic): Cannot parse AI service response. Response length: ' . strlen($body) . '. Preview: ' . substr($body, 0, 200));
+            }
+        }
+        
         if (empty($data['success']) || isset($data['error'])) {
-            throw new Exception('Anthropic proxy error: ' . ($data['error'] ?? 'Unknown error'));
+            // Provide more specific error messages
+            $errorMessage = $data['error'] ?? $data['message'] ?? 'Unknown error';
+            
+            // Check for common error patterns
+            if (strpos($errorMessage, 'timeout') !== false || strpos($errorMessage, 'timed out') !== false) {
+                throw new Exception('The request timed out. Try reducing the content length or disabling web search.');
+            } elseif (strpos($errorMessage, 'rate limit') !== false) {
+                throw new Exception('Rate limit exceeded. Please wait a moment before trying again.');
+            } elseif (strpos($errorMessage, 'credit') !== false || strpos($errorMessage, 'quota') !== false) {
+                throw new Exception('API quota exceeded. Please check your account credits.');
+            } else {
+                throw new Exception('Anthropic proxy error: ' . $errorMessage);
+            }
         }
         $result       = $data['data'];
         // NEW: detect if the proxy actually used the user-supplied API key
@@ -1569,7 +2106,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         );
     }
     
-    private function call_openrouter($messages, $api_key, $web_search_enabled = false) {
+    private function call_openrouter($messages, $api_key, $web_search_enabled = false, $is_streaming = false) {
         // Separate system and user messages (similar to Anthropic format)
         $system_message = '';
         $conversation   = [];
@@ -1619,18 +2156,57 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $headers['X-Web-Search-Enabled'] = 'true';
         }
 
+        if ($is_streaming) {
+            $this->send_status_update("Sending request to OpenRouter API...");
+        }
+
         $response = wp_remote_post( $this->openrouter_proxy_url, array(
             'headers' => $headers,
             'body'    => wp_json_encode( $request_data ),
-            'timeout' => 120
+            'timeout' => 600
         ) );
         
         if (is_wp_error($response)) {
             throw new Exception('OpenRouter proxy request failed: ' . $response->get_error_message());
         }
         
+        if ($is_streaming) {
+            $this->send_status_update("Received response from OpenRouter, processing...");
+        }
+        
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
+        
+        // Debug: Log OpenRouter response data
+        error_log('📥 AI_Provider - OpenRouter Response: ' . json_encode([
+            'success' => $data['success'] ?? false,
+            'has_data' => !empty($data['data']),
+            'has_error' => !empty($data['error']),
+            'response_size' => strlen($body)
+        ]));
+        
+        // Handle timeout or empty responses more gracefully
+        if ($data === null || (empty($data['success']) && empty($data['error']))) {
+            // Log comprehensive debugging information
+            error_log('🚨 AI_Provider - FAILED RESPONSE DEBUG (OpenRouter): ' . json_encode([
+                'body_length' => strlen($body),
+                'body_preview' => substr($body, 0, 1000),
+                'response_code' => wp_remote_retrieve_response_code($response),
+                'response_message' => wp_remote_retrieve_response_message($response),
+                'headers' => wp_remote_retrieve_headers($response),
+                'data_null' => $data === null,
+                'data_preview' => $data
+            ]));
+            
+            // Check if it's a nginx/proxy timeout
+            if (strpos($body, '504 Gateway Time-out') !== false || strpos($body, '502 Bad Gateway') !== false) {
+                throw new Exception('WEB SERVER TIMEOUT DETECTED (OpenRouter): 504/502 Gateway timeout from web server/proxy. Check nginx/apache timeout settings. Response: ' . substr($body, 0, 200));
+            } elseif (strlen($body) < 200) {
+                throw new Exception('SHORT RESPONSE DETECTED (OpenRouter): Connection likely dropped. Response length: ' . strlen($body) . '. Response: ' . $body);
+            } else {
+                throw new Exception('INVALID RESPONSE FORMAT (OpenRouter): Cannot parse AI service response. Response length: ' . strlen($body) . '. Preview: ' . substr($body, 0, 200));
+            }
+        }
         
         if (empty($data['success']) || isset($data['error'])) {
             throw new Exception('OpenRouter proxy error: ' . ($data['error'] ?? 'Unknown error'));
@@ -2004,6 +2580,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'floating_chat_button_icon'  => $this->settings['floating_chat_button_icon']  ?? 'chat',
             'floating_chat_custom_color' => $this->settings['floating_chat_custom_color'] ?? '',
             'floating_chat_custom_icon'  => $this->settings['floating_chat_custom_icon']  ?? '',
+            'streaming_enabled' => isset($this->settings['streaming_enabled']) ? (bool) $this->settings['streaming_enabled'] : false,
         );
         
         // Add comprehensive limit information if available
@@ -2145,6 +2722,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         // Debug raw API response logging toggle
         if (isset($data['debug_log_raw_responses'])) {
             $this->db->save_setting('debug_log_raw_responses', (bool) $data['debug_log_raw_responses']);
+        }
+        
+        // Streaming enabled toggle
+        if (isset($data['streaming_enabled'])) {
+            $this->db->save_setting('streaming_enabled', (bool) $data['streaming_enabled']);
         }
         
         // Max tokens per response (to control costs)
@@ -2309,6 +2891,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     public function check_permissions() {
         return current_user_can('manage_options');
     }
+    
     
     /**
      * Delete API key endpoint
@@ -2508,10 +3091,475 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     }
 
     /**
+     * Handle chat mode with streaming responses
+     */
+    private function handle_chat_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false) {
+        // Reset processing steps for new conversation
+        $this->processing_steps = [];
+        // Enable streaming mode for tool execution status updates
+        $this->is_streaming_mode = true;
+        
+        // Send real-time status updates during processing
+        $this->send_status_update("Preparing conversation context...");
+        
+        // Limit the amount of history we send to the model to save tokens
+        $history_limit = $this->settings['conversation_history_limit'] ?? 20;
+        if ($history_limit > 0 && is_array($conversation_history) && count($conversation_history) > $history_limit) {
+            $conversation_history = array_slice($conversation_history, -$history_limit);
+        }
+        
+        $this->send_status_update("Building system message...");
+        
+        // Prepare system message with MCP tools information
+        $system_message = $this->build_system_message($custom_system_message);
+        
+        // Append file attachments information if present
+        if (!empty($attached_files)) {
+            $this->send_status_update("Processing attached files...");
+            $files_info = "\n\nAttached Files:\n";
+            foreach ($attached_files as $file) {
+                $files_info .= "- {$file['name']} ({$file['type']}, " . round($file['size'] / 1024, 1) . "KB)";
+                if (!empty($file['content'])) {
+                    $files_info .= "\n";
+                }
+            }
+            $system_message .= $files_info;
+        }
+        
+        $this->send_status_update("Connecting to " . ucfirst($provider) . " API...");
+        
+        // Build conversation
+        $messages = array_merge(
+            [['role' => 'system', 'content' => $system_message]],
+            $conversation_history,
+            [['role' => 'user', 'content' => $message]]
+        );
+        
+        // Call AI provider
+        if ($provider === 'openai') {
+            $response = $this->call_openai($messages, $api_key, $web_search_enabled, true);
+        } elseif ($provider === 'anthropic') {
+            $response = $this->call_anthropic($messages, $api_key, $web_search_enabled, true);
+        } elseif ($provider === 'openrouter') {
+            $response = $this->call_openrouter($messages, $api_key, $web_search_enabled, true);
+        } else {
+            throw new Exception('Unsupported AI provider: ' . $provider);
+        }
+        
+        $this->send_status_update("Processing AI response...");
+        
+        // Check if AI wants to use tools in chat mode (handle different providers)
+        $has_tool_calls = false;
+        $tool_count = 0;
+        $tool_results = [];
+        
+        if ($provider === 'openai') {
+            // OpenAI handles tools internally and returns metadata
+            if (isset($response['tool_calls_executed_count']) && $response['tool_calls_executed_count'] > 0) {
+                $has_tool_calls = true;
+                $tool_count = $response['tool_calls_executed_count'];
+                $this->send_status_update("OpenAI executed $tool_count tool(s) internally");
+                
+                // For OpenAI, tools are already executed, just note the usage
+                if (isset($response['debug_tool_data'])) {
+                    $tool_results = $response['debug_tool_data'];
+                }
+            }
+        } else {
+            // Anthropic and OpenRouter expose tool_calls directly
+            if (isset($response['tool_calls']) && !empty($response['tool_calls'])) {
+                $has_tool_calls = true;
+                $tool_count = count($response['tool_calls']);
+                $this->send_status_update("AI wants to use $tool_count tool(s) - Executing tools...");
+                
+                // Execute tools
+                $tool_results = $this->execute_tools($response['tool_calls']);
+                $this->send_status_update("All tools completed - Generating final response...");
+            }
+        }
+        
+        // For chat mode, we don't iterate - just execute tools and return the original content plus tool info
+        $content = $response['content'] ?? '';
+        if ($has_tool_calls && !empty($tool_results)) {
+            $tool_names = array_column($tool_results, 'tool');
+            $content .= "\n\n---\n**Tools Used**: " . implode(', ', $tool_names);
+        }
+        
+        // Stream the response content in chunks
+        $this->stream_content_in_chunks($content);
+        
+        // Disable streaming mode
+        $this->is_streaming_mode = false;
+        
+        return [
+            'response' => $content,
+            'tokens_used' => $this->extract_token_count($response, $provider),
+            'cost' => $response['cost'] ?? null,
+            'user_key_used' => $response['user_key_used'] ?? false,
+            'tool_calls_count' => $tool_count,
+            'debug_tool_data' => $has_tool_calls ? $tool_results : null
+        ];
+    }
+    
+    /**
+     * Handle agent mode with streaming responses
+     */
+    private function handle_agent_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false) {
+        // Reset processing steps for new conversation
+        $this->processing_steps = [];
+        // Enable streaming mode for tool execution status updates
+        $this->is_streaming_mode = true;
+        
+        // Send real-time status updates during agent processing
+        $this->send_status_update("Initializing AI agent workflow...");
+        
+        // Limit history length to avoid oversized prompts while keeping recent context
+        $history_limit = $this->settings['conversation_history_limit'] ?? 20;
+        if ($history_limit > 0 && is_array($conversation_history) && count($conversation_history) > $history_limit) {
+            $conversation_history = array_slice($conversation_history, -$history_limit);
+        }
+        
+        $max_iterations = $this->settings['max_agent_iterations'] ?? 10;
+        $iteration = 0;
+        $reasoning_chain = [];
+        $total_tool_calls = 0;
+        $all_tool_results = [];
+        
+        $this->send_status_update("Building enhanced agent system message...");
+        
+        // Prepare enhanced system message for agent mode
+        $system_message = $this->build_agent_system_message($custom_system_message);
+        
+        // Append file attachments information if present
+        if (!empty($attached_files)) {
+            $this->send_status_update("Processing attached files...");
+            $files_info = "\n\nAttached Files:\n";
+            foreach ($attached_files as $file) {
+                $files_info .= "- {$file['name']} ({$file['type']}, " . round($file['size'] / 1024, 1) . "KB)";
+                if (!empty($file['content'])) {
+                    $files_info .= "\n";
+                }
+            }
+            $system_message .= $files_info;
+        }
+        
+        // Build initial conversation
+        $messages = array_merge(
+            [['role' => 'system', 'content' => $system_message]],
+            $conversation_history,
+            [['role' => 'user', 'content' => $message]]
+        );
+        
+        $final_response = '';
+        
+        // Track total tokens & cost across all AI calls in agent mode
+        $total_tokens = 0;
+        $total_cost = 0;
+        $user_key_used_total = false;
+        
+        while ($iteration < $max_iterations) {
+            $iteration++;
+            
+            $this->send_status_update("Agent iteration $iteration of $max_iterations - Connecting to " . ucfirst($provider) . "...");
+            
+            // Call AI provider
+            if ($provider === 'openai') {
+                $response = $this->call_openai($messages, $api_key, $web_search_enabled, true);
+            } elseif ($provider === 'anthropic') {
+                $response = $this->call_anthropic($messages, $api_key, $web_search_enabled, true);
+            } elseif ($provider === 'openrouter') {
+                $response = $this->call_openrouter($messages, $api_key, $web_search_enabled, true);
+            } else {
+                throw new Exception('Unsupported AI provider: ' . $provider);
+            }
+            
+            // Track whether this call counted towards user quota
+            $user_key_used_total = $user_key_used_total || ($response['user_key_used'] ?? false);
+            
+            // Accumulate tokens & cost from this AI call
+            $total_tokens += $this->extract_token_count($response, $provider) ?? 0;
+            $total_cost += $response['cost'] ?? 0;
+            
+            // Check for tool calls (handle different providers)
+            $has_tool_calls = false;
+            $tool_count = 0;
+            $current_tool_results = [];
+            
+            if ($provider === 'openai') {
+                // OpenAI handles tools internally and returns metadata
+                if (isset($response['tool_calls_executed_count']) && $response['tool_calls_executed_count'] > 0) {
+                    $has_tool_calls = true;
+                    $tool_count = $response['tool_calls_executed_count'];
+                    $this->send_status_update("OpenAI executed $tool_count tool(s) internally");
+                    
+                    // For OpenAI, tools are already executed
+                    if (isset($response['debug_tool_data'])) {
+                        $current_tool_results = $response['debug_tool_data'];
+                    }
+                    $total_tool_calls += $tool_count;
+                    
+                    // Store tool results for final display
+                    $all_tool_results = array_merge($all_tool_results, $current_tool_results);
+                }
+            } else {
+                // Anthropic and OpenRouter expose tool_calls directly
+                if (isset($response['tool_calls']) && !empty($response['tool_calls'])) {
+                    $has_tool_calls = true;
+                    $tool_count = count($response['tool_calls']);
+                    $this->send_status_update("AI wants to use $tool_count tool(s) - Executing tools...");
+                    
+                    // Execute tools and continue conversation
+                    $current_tool_results = $this->execute_tools($response['tool_calls']);
+                    $total_tool_calls += count($response['tool_calls']);
+                    
+                    $this->send_status_update("All tools completed - Processing results...");
+                    
+                    // Store tool results for final display
+                    $all_tool_results = array_merge($all_tool_results, $current_tool_results);
+                }
+            }
+            
+            if ($has_tool_calls) {
+                
+                if ($provider === 'openai') {
+                    // OpenAI Responses API handles the full conversation internally
+                    // No need to continue iterating - we have the final response
+                    $final_response = $response['content'] ?? '';
+                    if (!empty($response['content'])) {
+                        $reasoning_chain[] = $response['content'];
+                    }
+                    break; // Exit the loop - OpenAI handled everything
+                }
+                
+                // Add AI response to conversation (format for provider)
+                if ($provider === 'anthropic') {
+                    // Build assistant message content with text and tool uses
+                    $assistant_content = array();
+                    
+                    // Add text content if present
+                    if (!empty($response['content'])) {
+                        $assistant_content[] = array(
+                            'type' => 'text',
+                            'text' => $response['content']
+                        );
+                    }
+                    
+                    // Add tool uses
+                    foreach ($response['tool_calls'] as $tool_call) {
+                        $assistant_content[] = array(
+                            'type' => 'tool_use',
+                            'id' => $tool_call['id'],
+                            'name' => $tool_call['name'],
+                            'input' => $tool_call['input']
+                        );
+                    }
+                    
+                    $messages[] = array(
+                        'role' => 'assistant',
+                        'content' => $assistant_content
+                    );
+                    
+                    // Add tool results for Anthropic
+                    foreach ($tool_results as $result) {
+                        $messages[] = array(
+                            'role' => 'user',
+                            'content' => array(
+                                array(
+                                    'type' => 'tool_result',
+                                    'tool_use_id' => $result['tool_call_id'],
+                                    'content' => json_encode($result)
+                                )
+                            )
+                        );
+                    }
+                } elseif ($provider === 'openrouter') {
+                    // OpenRouter uses OpenAI Chat Completion format
+                    $messages[] = array(
+                        'role' => 'assistant',
+                        'content' => $response['content'] ?? '',
+                        'tool_calls' => $response['tool_calls']
+                    );
+                    
+                    // Add tool results to conversation
+                    foreach ($tool_results as $result) {
+                        $messages[] = array(
+                            'role' => 'tool',
+                            'tool_call_id' => $result['tool_call_id'],
+                            'content' => json_encode($result)
+                        );
+                    }
+                } else {
+                    // OpenAI Responses API format
+                    $messages[] = array(
+                        'role' => 'assistant',
+                        'content' => $response['content'] ?? '',
+                        'tool_calls' => $response['tool_calls']
+                    );
+                    
+                    foreach ($tool_results as $result) {
+                        $messages[] = array(
+                            'role' => 'tool',
+                            'tool_call_id' => $result['tool_call_id'],
+                            'content' => json_encode($result)
+                        );
+                    }
+                }
+                
+                $this->send_status_update("Continuing agent conversation with tool results...");
+                
+                // Store reasoning if available
+                if (!empty($response['content'])) {
+                    $reasoning_chain[] = $response['content'];
+                }
+                
+                // Continue loop for next iteration
+                continue;
+            } else {
+                // No tool calls - this is the final response
+                $this->send_status_update("Agent workflow complete - Generating final response...");
+                
+                $final_response = $response['content'] ?? '';
+                if (!empty($response['content'])) {
+                    $reasoning_chain[] = $response['content'];
+                }
+                break; // Exit the loop
+            }
+        }
+        
+        // Stream the final response content in chunks
+        $this->stream_content_in_chunks($final_response);
+        
+        // Disable streaming mode
+        $this->is_streaming_mode = false;
+        
+        return [
+            'response' => $final_response,
+            'tokens_used' => $total_tokens,
+            'cost' => $total_cost,
+            'user_key_used' => $user_key_used_total,
+            'reasoning' => implode("\n\n", $reasoning_chain),
+            'tool_calls_count' => $total_tool_calls,
+            'debug_tool_data' => $all_tool_results
+        ];
+    }
+    
+    /**
+     * Send a real-time status update via SSE
+     */
+    private function send_status_update($message) {
+        // Store the step for chain-of-thought display
+        $this->processing_steps[] = [
+            'timestamp' => microtime(true),
+            'message' => $message,
+            'type' => 'status'
+        ];
+        
+        echo "data: " . json_encode([
+            'type' => 'status',
+            'message' => $message
+        ]) . "\n\n";
+        flush();
+    }
+    
+    /**
+     * Stream content in chunks to simulate real-time streaming
+     */
+    private function stream_content_in_chunks($content) {
+        if (empty($content)) {
+            return;
+        }
+        
+        // Split content into words to create more natural streaming
+        $words = explode(' ', $content);
+        $chunks = array_chunk($words, 3); // Send 3 words at a time
+        
+        foreach ($chunks as $chunk) {
+            $chunk_text = implode(' ', $chunk) . ' ';
+            
+            echo "data: " . json_encode(array(
+                'type' => 'content',
+                'chunk' => $chunk_text
+            )) . "\n\n";
+            flush();
+            
+            // Small delay to simulate real-time streaming (adjust as needed)
+            usleep(50000); // 50ms delay
+        }
+    }
+    
+    /**
+     * Get API key for the specified provider
+     */
+    private function get_api_key($provider) {
+        switch ($provider) {
+            case 'openai':
+                return $this->settings['openai_api_key'] ?? '';
+            case 'anthropic':
+                return $this->settings['anthropic_api_key'] ?? '';
+            case 'openrouter':
+                return $this->settings['openrouter_api_key'] ?? '';
+            default:
+                return '';
+        }
+    }
+    
+    /**
      * Generate a unique session ID
      */
     private function generate_session_id() {
         return 'session_' . uniqid() . '_' . time();
+    }
+    
+    /**
+     * Get license key from settings
+     */
+    private function get_license_key() {
+        return $this->settings['license_key'] ?? '';
+    }
+    
+    /**
+     * Get appropriate processing status message based on context
+     */
+    private function get_processing_status($message, $provider, $agent_mode, $web_search_enabled) {
+        $message_lower = strtolower($message);
+        
+        // Context-specific messages
+        if (strpos($message_lower, 'seo') !== false || strpos($message_lower, 'search') !== false) {
+            return 'Accessing SEO analysis tools...';
+        }
+        if (strpos($message_lower, 'content') !== false || strpos($message_lower, 'write') !== false) {
+            return 'Preparing content generation...';
+        }
+        if (strpos($message_lower, 'image') !== false || strpos($message_lower, 'photo') !== false) {
+            return 'Connecting to Unsplash API...';
+        }
+        if (strpos($message_lower, 'post') !== false || strpos($message_lower, 'page') !== false) {
+            return 'Querying WordPress database...';
+        }
+        if (strpos($message_lower, 'optimize') !== false || strpos($message_lower, 'performance') !== false) {
+            return 'Running performance diagnostics...';
+        }
+        
+        // Mode-specific messages
+        if ($agent_mode) {
+            return 'Initializing AI agent workflow...';
+        }
+        
+        if ($web_search_enabled) {
+            return 'Preparing web search capabilities...';
+        }
+        
+        // Provider-specific messages
+        switch ($provider) {
+            case 'openai':
+                return 'Connecting to OpenAI API...';
+            case 'anthropic':
+                return 'Connecting to Anthropic Claude...';
+            case 'openrouter':
+                return 'Routing through OpenRouter...';
+            default:
+                return 'Processing your request...';
+        }
     }
     
     /**
@@ -5304,6 +6352,374 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     }
 
     /**
+     * Get site information for Content Mode
+     */
+    public function get_site_info($request) {
+        $site_info = array(
+            'site_url' => get_site_url(),
+            'site_name' => get_bloginfo('name'),
+            'site_description' => get_bloginfo('description'),
+            'site_language' => get_locale(),
+            'admin_email' => get_option('admin_email'),
+            'theme' => array(
+                'name' => wp_get_theme()->get('Name'),
+                'version' => wp_get_theme()->get('Version'),
+            ),
+            'wp_version' => get_bloginfo('version'),
+            'active_plugins' => array_values(get_option('active_plugins', array())),
+            'timezone' => get_option('timezone_string') ?: get_option('gmt_offset'),
+            'date_format' => get_option('date_format'),
+            'time_format' => get_option('time_format'),
+            'users_can_register' => get_option('users_can_register'),
+            'start_of_week' => get_option('start_of_week'),
+        );
+        
+        return new WP_REST_Response($site_info, 200);
+    }
+
+    /**
+     * Add a new WordPress post
+     */
+    public function wp_add_post($request) {
+        $params = $request->get_params();
+        
+        // Check if user can create posts
+        if (!current_user_can('edit_posts')) {
+            return new WP_Error('insufficient_permissions', 'You do not have permission to create posts.', array('status' => 403));
+        }
+        
+        // Validate required fields
+        if (empty($params['title']) || empty($params['content'])) {
+            return new WP_Error('missing_fields', 'Title and content are required fields.', array('status' => 400));
+        }
+        
+        // Convert markdown content to Gutenberg blocks
+        $gutenberg_content = $this->convert_markdown_to_gutenberg($params['content']);
+        
+        // Prepare post data
+        $post_data = array(
+            'post_title' => sanitize_text_field($params['title']),
+            'post_content' => $gutenberg_content,
+            'post_status' => isset($params['status']) ? sanitize_text_field($params['status']) : 'draft',
+            'post_type' => isset($params['post_type']) ? sanitize_text_field($params['post_type']) : 'post',
+        );
+        
+        // Add optional fields
+        if (!empty($params['excerpt'])) {
+            $post_data['post_excerpt'] = sanitize_textarea_field($params['excerpt']);
+        }
+        
+        if (!empty($params['slug'])) {
+            $post_data['post_name'] = sanitize_title($params['slug']);
+        }
+        
+        if (!empty($params['post_author'])) {
+            $post_data['post_author'] = intval($params['post_author']);
+        }
+        
+        if (!empty($params['post_date'])) {
+            $post_data['post_date'] = sanitize_text_field($params['post_date']);
+        }
+        
+        // Create the post
+        $post_id = wp_insert_post($post_data, true);
+        
+        if (is_wp_error($post_id)) {
+            return $post_id;
+        }
+        
+        // Set categories if provided
+        if (!empty($params['categories']) && is_array($params['categories'])) {
+            wp_set_post_categories($post_id, array_map('intval', $params['categories']));
+        }
+        
+        // Set tags if provided
+        if (!empty($params['tags']) && is_array($params['tags'])) {
+            wp_set_post_tags($post_id, array_map('intval', $params['tags']));
+        }
+        
+        // Set featured image if provided
+        if (!empty($params['featured_media'])) {
+            if (is_numeric($params['featured_media'])) {
+                // It's an attachment ID
+                set_post_thumbnail($post_id, intval($params['featured_media']));
+            } else {
+                // It's a URL - we could potentially create an attachment or store as meta
+                // For now, store as custom meta field
+                update_post_meta($post_id, '_featured_image_url', esc_url($params['featured_media']));
+            }
+        }
+        
+        // Return the created post data
+        $post = get_post($post_id);
+        return new WP_REST_Response(array(
+            'success' => true,
+            'post_id' => $post_id,
+            'post_url' => get_permalink($post_id),
+            'edit_url' => get_edit_post_link($post_id, 'raw'),
+            'post_status' => $post->post_status,
+            'message' => 'Post created successfully'
+        ), 201);
+    }
+
+    /**
+     * Update an existing WordPress post
+     */
+    public function wp_update_post($request) {
+        $params = $request->get_params();
+        
+        // Validate required fields
+        if (empty($params['id'])) {
+            return new WP_Error('missing_id', 'Post ID is required for updates.', array('status' => 400));
+        }
+        
+        $post_id = intval($params['id']);
+        
+        // Check if post exists and user can edit it
+        if (!current_user_can('edit_post', $post_id)) {
+            return new WP_Error('insufficient_permissions', 'You do not have permission to edit this post.', array('status' => 403));
+        }
+        
+        $existing_post = get_post($post_id);
+        if (!$existing_post) {
+            return new WP_Error('post_not_found', 'Post not found.', array('status' => 404));
+        }
+        
+        // Convert markdown content to Gutenberg blocks if content is provided
+        $post_data = array('ID' => $post_id);
+        
+        if (!empty($params['content'])) {
+            $gutenberg_content = $this->convert_markdown_to_gutenberg($params['content']);
+            $post_data['post_content'] = $gutenberg_content;
+        }
+        
+        if (!empty($params['title'])) {
+            $post_data['post_title'] = sanitize_text_field($params['title']);
+        }
+        
+        if (isset($params['status'])) {
+            $post_data['post_status'] = sanitize_text_field($params['status']);
+        }
+        
+        if (!empty($params['excerpt'])) {
+            $post_data['post_excerpt'] = sanitize_textarea_field($params['excerpt']);
+        }
+        
+        if (!empty($params['slug'])) {
+            $post_data['post_name'] = sanitize_title($params['slug']);
+        }
+        
+        if (!empty($params['post_author'])) {
+            $post_data['post_author'] = intval($params['post_author']);
+        }
+        
+        if (!empty($params['post_date'])) {
+            $post_data['post_date'] = sanitize_text_field($params['post_date']);
+        }
+        
+        // Update the post
+        $result = wp_update_post($post_data, true);
+        
+        if (is_wp_error($result)) {
+            return $result;
+        }
+        
+        // Update categories if provided
+        if (!empty($params['categories']) && is_array($params['categories'])) {
+            wp_set_post_categories($post_id, array_map('intval', $params['categories']));
+        }
+        
+        // Update tags if provided
+        if (!empty($params['tags']) && is_array($params['tags'])) {
+            wp_set_post_tags($post_id, array_map('intval', $params['tags']));
+        }
+        
+        // Update featured image if provided
+        if (!empty($params['featured_media'])) {
+            if (is_numeric($params['featured_media'])) {
+                // It's an attachment ID
+                set_post_thumbnail($post_id, intval($params['featured_media']));
+            } else {
+                // It's a URL - we could potentially create an attachment or store as meta
+                // For now, store as custom meta field
+                update_post_meta($post_id, '_featured_image_url', esc_url($params['featured_media']));
+            }
+        }
+        
+        // Return the updated post data
+        $post = get_post($post_id);
+        return new WP_REST_Response(array(
+            'success' => true,
+            'post_id' => $post_id,
+            'post_url' => get_permalink($post_id),
+            'edit_url' => get_edit_post_link($post_id, 'raw'),
+            'post_status' => $post->post_status,
+            'message' => 'Post updated successfully'
+        ), 200);
+    }
+
+    /**
+     * Add a new WordPress page
+     */
+    public function wp_add_page($request) {
+        $params = $request->get_params();
+        $params['post_type'] = 'page'; // Force post type to page
+        return $this->wp_add_post($request);
+    }
+
+    /**
+     * Update an existing WordPress page
+     */
+    public function wp_update_page($request) {
+        $params = $request->get_params();
+        
+        // Validate that we're updating a page
+        if (!empty($params['id'])) {
+            $post = get_post(intval($params['id']));
+            if ($post && $post->post_type !== 'page') {
+                return new WP_Error('invalid_post_type', 'The specified post is not a page.', array('status' => 400));
+            }
+        }
+        
+        return $this->wp_update_post($request);
+    }
+
+    /**
+     * Web Research - Fetch and summarize content from URLs
+     */
+    public function web_research($request) {
+        $url = $request->get_param('url');
+        
+        if (empty($url)) {
+            return new WP_Error('missing_url', 'URL is required', array('status' => 400));
+        }
+        
+        // Validate URL
+        if (!filter_var($url, FILTER_VALIDATE_URL)) {
+            return new WP_Error('invalid_url', 'Invalid URL format', array('status' => 400));
+        }
+        
+        try {
+            // Fetch the webpage content
+            $response = wp_remote_get($url, array(
+                'timeout' => 30,
+                'user-agent' => 'MagicAssistant Web Research Bot 1.0',
+                'headers' => array(
+                    'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                )
+            ));
+            
+            if (is_wp_error($response)) {
+                return new WP_Error('fetch_failed', 'Failed to fetch URL: ' . $response->get_error_message(), array('status' => 500));
+            }
+            
+            $body = wp_remote_retrieve_body($response);
+            $status_code = wp_remote_retrieve_response_code($response);
+            
+            if ($status_code !== 200) {
+                return new WP_Error('http_error', 'HTTP error: ' . $status_code, array('status' => $status_code));
+            }
+            
+            // Extract text content from HTML
+            $text_content = $this->extract_text_from_html($body);
+            
+            if (empty($text_content)) {
+                return new WP_Error('no_content', 'No readable content found', array('status' => 404));
+            }
+            
+            // Truncate content to reasonable length for summarization
+            $text_content = substr($text_content, 0, 8000);
+            
+            // Use AI to summarize the content
+            $summary = $this->summarize_web_content($text_content, $url);
+            
+            return new WP_REST_Response(array(
+                'success' => true,
+                'url' => $url,
+                'content' => $text_content,
+                'summary' => $summary,
+                'length' => strlen($text_content)
+            ), 200);
+            
+        } catch (Exception $e) {
+            return new WP_Error('research_error', 'Research failed: ' . $e->getMessage(), array('status' => 500));
+        }
+    }
+    
+    /**
+     * Extract readable text content from HTML
+     */
+    private function extract_text_from_html($html) {
+        // Remove script and style elements
+        $html = preg_replace('/<script[^>]*>.*?<\/script>/is', '', $html);
+        $html = preg_replace('/<style[^>]*>.*?<\/style>/is', '', $html);
+        
+        // Convert HTML entities
+        $html = html_entity_decode($html, ENT_QUOTES, 'UTF-8');
+        
+        // Strip HTML tags but keep content
+        $text = strip_tags($html);
+        
+        // Clean up whitespace
+        $text = preg_replace('/\s+/', ' ', $text);
+        $text = trim($text);
+        
+        return $text;
+    }
+    
+    /**
+     * Summarize web content using AI
+     */
+    private function summarize_web_content($content, $url) {
+        try {
+            $system_message = "You are a web content summarizer. Extract the key information and main points from the provided web content. Focus on factual information, statistics, and actionable insights. Keep the summary concise but informative.";
+            
+            $user_message = "Please summarize the key points from this web content (from {$url}):\n\n" . $content;
+            
+            // Build messages array for the AI API
+            $messages = array(
+                array('role' => 'system', 'content' => $system_message),
+                array('role' => 'user', 'content' => $user_message)
+            );
+            
+            // Get AI provider settings
+            $provider = $this->settings['ai_provider'] ?? 'openai';
+            $api_key = '';
+            
+            // Get the appropriate API key based on provider
+            if ($provider === 'openai') {
+                $api_key = $this->settings['openai_api_key'] ?? '';
+            } elseif ($provider === 'anthropic') {
+                $api_key = $this->settings['anthropic_api_key'] ?? '';
+            } elseif ($provider === 'openrouter') {
+                $api_key = $this->settings['openrouter_api_key'] ?? '';
+            }
+            
+            // Call the appropriate AI provider
+            if ($provider === 'openai') {
+                $response = $this->call_openai($messages, $api_key, false);
+            } elseif ($provider === 'anthropic') {
+                $response = $this->call_anthropic($messages, $api_key, false);
+            } elseif ($provider === 'openrouter') {
+                $response = $this->call_openrouter($messages, $api_key, false);
+            } else {
+                throw new Exception('Unsupported AI provider: ' . $provider);
+            }
+            
+            // Extract the content from the response based on provider
+            if (isset($response['content']) && !empty($response['content'])) {
+                return trim($response['content']);
+            }
+            
+            return "Content summary not available";
+            
+        } catch (Exception $e) {
+            error_log('Web content summarization failed: ' . $e->getMessage());
+            return "Content retrieved but summarization failed";
+        }
+    }
+
+    /**
      * Get Security scan data
      */
     public function get_security_data($request) {
@@ -6340,6 +7756,342 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         } catch (Exception $e) {
             return new WP_Error('exception', 'Error fetching OpenRouter models: ' . $e->getMessage(), array('status' => 500));
         }
+    }
+
+    /**
+     * Convert markdown content to Gutenberg blocks
+     * 
+     * @param string $content Markdown content
+     * @return string Gutenberg blocks HTML
+     */
+    private function convert_markdown_to_gutenberg($content) {
+        // Remove any markdown code block wrapper
+        $content = preg_replace('/^```markdown\s*\n/', '', $content);
+        $content = preg_replace('/\n```\s*$/', '', $content);
+        $content = preg_replace('/^```\s*\n/', '', $content);
+        $content = preg_replace('/\n```\s*$/', '', $content);
+        
+        // Filter out meta descriptions, quotes, and notices from content
+        $content = $this->filter_content_for_post($content);
+        
+        $lines = explode("\n", $content);
+        $blocks = array();
+        $current_paragraph = array();
+        $in_list = false;
+        $list_items = array();
+        $in_code_block = false;
+        $code_lines = array();
+        $code_language = '';
+        
+        foreach ($lines as $line) {
+            $trimmed = trim($line);
+            
+            // Code block detection (```)
+            if (preg_match('/^```(\w*)/', $trimmed, $matches)) {
+                if (!$in_code_block) {
+                    // Starting a code block
+                    $in_code_block = true;
+                    $code_language = $matches[1] ?? '';
+                    $code_lines = array();
+                    
+                    // Finish any pending paragraph/list
+                    if (!empty($current_paragraph)) {
+                        $blocks[] = $this->create_paragraph_block(implode(' ', $current_paragraph));
+                        $current_paragraph = array();
+                    }
+                    if ($in_list && !empty($list_items)) {
+                        $blocks[] = $this->create_list_block($list_items);
+                        $list_items = array();
+                        $in_list = false;
+                    }
+                } else {
+                    // Ending a code block
+                    $in_code_block = false;
+                    $blocks[] = $this->create_code_block(implode("\n", $code_lines), $code_language);
+                    $code_lines = array();
+                    $code_language = '';
+                }
+                continue;
+            }
+            
+            // If we're in a code block, collect the lines
+            if ($in_code_block) {
+                $code_lines[] = $line; // Keep original indentation
+                continue;
+            }
+            
+            // Skip horizontal rules/separators (---)
+            if (preg_match('/^-{3,}$/', $trimmed)) {
+                continue;
+            }
+            
+            // Empty line - process any pending paragraph/list
+            if (empty($trimmed)) {
+                if (!empty($current_paragraph)) {
+                    $blocks[] = $this->create_paragraph_block(implode(' ', $current_paragraph));
+                    $current_paragraph = array();
+                }
+                if ($in_list && !empty($list_items)) {
+                    $blocks[] = $this->create_list_block($list_items);
+                    $list_items = array();
+                    $in_list = false;
+                }
+                continue;
+            }
+            
+            // Headers (# ## ###)
+            if (preg_match('/^(#{1,6})\s+(.+)$/', $trimmed, $matches)) {
+                // Finish any pending paragraph/list
+                if (!empty($current_paragraph)) {
+                    $blocks[] = $this->create_paragraph_block(implode(' ', $current_paragraph));
+                    $current_paragraph = array();
+                }
+                if ($in_list && !empty($list_items)) {
+                    $blocks[] = $this->create_list_block($list_items);
+                    $list_items = array();
+                    $in_list = false;
+                }
+                
+                $level = strlen($matches[1]);
+                $text = $this->process_inline_markdown($matches[2]);
+                $blocks[] = $this->create_heading_block($text, $level);
+                continue;
+            }
+            
+            // List items (- * +)
+            if (preg_match('/^[-*+]\s+(.+)$/', $trimmed, $matches)) {
+                // Finish any pending paragraph
+                if (!empty($current_paragraph)) {
+                    $blocks[] = $this->create_paragraph_block(implode(' ', $current_paragraph));
+                    $current_paragraph = array();
+                }
+                
+                $in_list = true;
+                $item_text = $this->process_inline_markdown($matches[1]);
+                $list_items[] = $item_text;
+                continue;
+            }
+            
+            // Numbered list items (1. 2. etc)
+            if (preg_match('/^\d+\.\s+(.+)$/', $trimmed, $matches)) {
+                // Finish any pending paragraph
+                if (!empty($current_paragraph)) {
+                    $blocks[] = $this->create_paragraph_block(implode(' ', $current_paragraph));
+                    $current_paragraph = array();
+                }
+                
+                $in_list = true;
+                $item_text = $this->process_inline_markdown($matches[1]);
+                $list_items[] = $item_text;
+                continue;
+            }
+            
+            // Regular paragraph text
+            if ($in_list && !empty($list_items)) {
+                $blocks[] = $this->create_list_block($list_items);
+                $list_items = array();
+                $in_list = false;
+            }
+            
+            $current_paragraph[] = $this->process_inline_markdown($trimmed);
+        }
+        
+        // Process any remaining content
+        if (!empty($current_paragraph)) {
+            $blocks[] = $this->create_paragraph_block(implode(' ', $current_paragraph));
+        }
+        if ($in_list && !empty($list_items)) {
+            $blocks[] = $this->create_list_block($list_items);
+        }
+        if ($in_code_block && !empty($code_lines)) {
+            $blocks[] = $this->create_code_block(implode("\n", $code_lines), $code_language);
+        }
+        
+        return implode("\n\n", $blocks);
+    }
+    
+    /**
+     * Process inline markdown (bold, italic, code)
+     */
+    private function process_inline_markdown($text) {
+        // Bold (**text** or __text__)
+        $text = preg_replace('/\*\*(.*?)\*\*/', '<strong>$1</strong>', $text);
+        $text = preg_replace('/__(.*?)__/', '<strong>$1</strong>', $text);
+        
+        // Italic (*text* or _text_)
+        $text = preg_replace('/\*(.*?)\*/', '<em>$1</em>', $text);
+        $text = preg_replace('/_(.*?)_/', '<em>$1</em>', $text);
+        
+        // Inline code (`text`)
+        $text = preg_replace('/`([^`]+)`/', '<code>$1</code>', $text);
+        
+        // Links [text](url)
+        $text = preg_replace('/\[([^\]]+)\]\(([^)]+)\)/', '<a href="$2">$1</a>', $text);
+        
+        return $text;
+    }
+    
+    /**
+     * Create a Gutenberg heading block
+     */
+    private function create_heading_block($content, $level) {
+        $content = wp_kses_post($content);
+        return '<!-- wp:heading {"level":' . $level . '} -->
+<h' . $level . '>' . $content . '</h' . $level . '>
+<!-- /wp:heading -->';
+    }
+    
+    /**
+     * Create a Gutenberg paragraph block
+     */
+    private function create_paragraph_block($content) {
+        $content = wp_kses_post($content);
+        return '<!-- wp:paragraph -->
+<p>' . $content . '</p>
+<!-- /wp:paragraph -->';
+    }
+    
+    /**
+     * Create a Gutenberg list block
+     */
+    private function create_list_block($items) {
+        $list_items = '';
+        foreach ($items as $item) {
+            $item = wp_kses_post($item);
+            $list_items .= '<li>' . $item . '</li>';
+        }
+        
+        return '<!-- wp:list -->
+<ul>' . $list_items . '</ul>
+<!-- /wp:list -->';
+    }
+    
+    /**
+     * Create a Gutenberg code block
+     */
+    private function create_code_block($content, $language = '') {
+        $content = esc_html($content);
+        $lang_attr = !empty($language) ? ' language-' . esc_attr($language) : '';
+        
+        return '<!-- wp:code -->
+<pre class="wp-block-code"><code' . $lang_attr . '>' . $content . '</code></pre>
+<!-- /wp:code -->';
+    }
+    
+    /**
+     * Filter content to prepare for post - minimal filtering only
+     */
+    private function filter_content_for_post($content) {
+        // Only remove markdown code block wrapper if present
+        $content = preg_replace('/^```markdown\s*\n/', '', $content);
+        $content = preg_replace('/\n```\s*$/', '', $content);
+        
+        // Remove meta description section that appears at the end
+        $content = preg_replace('/---\s*\nMeta Description:.*$/s', '', $content);
+        
+        // Clean up excessive line breaks
+        $content = preg_replace('/\n{4,}/', "\n\n\n", $content);
+        
+        // Trim whitespace
+        return trim($content);
+    }
+
+    /**
+     * Detect if the request is for long content that should use streaming
+     */
+    private function detect_long_content_request($message) {
+        // Convert to lowercase for case-insensitive matching
+        $message_lower = strtolower($message);
+        
+        // Keywords that indicate long content
+        $long_content_indicators = [
+            'comprehensive',
+            '3000+',
+            '3000 word',
+            '4000 word',
+            '5000 word',
+            'long article',
+            'detailed guide',
+            'complete guide',
+            'in-depth',
+            'thorough analysis',
+            'comprehensive review'
+        ];
+        
+        foreach ($long_content_indicators as $indicator) {
+            if (strpos($message_lower, $indicator) !== false) {
+                return true;
+            }
+        }
+        
+        // Check if Content Length is specified as long/comprehensive
+        if (preg_match('/content length:\s*(long|comprehensive)/i', $message)) {
+            return true;
+        }
+        
+        // If message is very long (>2000 chars), likely needs streaming
+        if (strlen($message) > 2000) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    /**
+     * Handle streaming response from MagicProxy
+     */
+    private function handle_streaming_response($proxy_url, $headers, $request_data, $timeout) {
+        error_log('🔄 AI_Provider - Starting streaming request to: ' . $proxy_url);
+        
+        // Use WordPress HTTP API with streaming
+        $args = array(
+            'headers' => $headers,
+            'body' => wp_json_encode($request_data),
+            'timeout' => $timeout,
+            'stream' => true,
+            'filename' => null // This forces streaming mode
+        );
+        
+        $response = wp_remote_post($proxy_url, $args);
+        
+        if (is_wp_error($response)) {
+            throw new Exception('Streaming proxy request failed: ' . $response->get_error_message());
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        
+        // Parse Server-Sent Events format
+        $lines = explode("\n", $body);
+        $full_content = '';
+        $usage = null;
+        
+        foreach ($lines as $line) {
+            if (strpos($line, 'data: ') === 0) {
+                $data_str = substr($line, 6);
+                $data = json_decode($data_str, true);
+                
+                if ($data && isset($data['type'])) {
+                    switch ($data['type']) {
+                        case 'content':
+                            $full_content = $data['fullContent'] ?? $full_content;
+                            break;
+                        case 'done':
+                            $full_content = $data['content'] ?? $full_content;
+                            $usage = $data['usage'] ?? null;
+                            break;
+                        case 'error':
+                            throw new Exception('Streaming error: ' . ($data['error'] ?? 'Unknown error'));
+                    }
+                }
+            }
+        }
+        
+        // Return in the expected format
+        return array(
+            'output_text' => $full_content,
+            'usage' => $usage,
+            'streaming' => true
+        );
     }
 
 }

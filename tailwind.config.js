@@ -75,5 +75,9 @@ export default {
       }
     },
   },
-  plugins: [require('flowbite/plugin'), flowbiteReact],
+  plugins: [
+    require('@tailwindcss/typography'),
+    require('flowbite/plugin'),
+    flowbiteReact
+  ],
 } 

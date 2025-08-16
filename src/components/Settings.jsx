@@ -76,6 +76,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         debug_log_raw_responses: settings.debug_log_raw_responses === true,
         max_response_tokens: parseInt(settings.max_response_tokens) || 1500,
         conversation_history_limit: parseInt(settings.conversation_history_limit) || 20,
+        streaming_enabled: settings.streaming_enabled === true,
         manual_competitors: settings.manual_competitors || '',
         show_tips: settings.show_tips === undefined ? true : settings.show_tips,
         seo_target_location: settings.seo_target_location || '',
@@ -523,6 +524,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           debug_log_raw_responses: localSettings.debug_log_raw_responses,
           max_response_tokens: parseInt(localSettings.max_response_tokens),
           conversation_history_limit: parseInt(localSettings.conversation_history_limit),
+          streaming_enabled: localSettings.streaming_enabled,
           enable_sql_queries: localSettings.enable_sql_queries,
           enable_dangerous_sql_queries: localSettings.enable_dangerous_sql_queries,
           debug_view_enabled: localSettings.debug_view_enabled,
@@ -1442,6 +1444,39 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                     How many previous messages are sent with each request (default 20).
                   </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Streaming Section */}
+            <div className="space-y-4 border-t border-gray-200 dark:border-gray-600 pt-4">
+              <h5 className="font-medium text-brand-dark dark:text-white">Real-time Streaming (Beta)</h5>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                  <div className="flex-1 mr-4">
+                    <Label htmlFor="streaming-enabled" className="text-sm font-medium">
+                      Enable Real-time Response Streaming
+                    </Label>
+                    <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                      Shows AI responses as they're generated, word-by-word. Applies to all chat interfaces and content generation.
+                      <span className="block mt-1 text-yellow-600 dark:text-yellow-400">
+                        ⚠️ Beta feature - disable if you experience connection issues.
+                      </span>
+                    </p>
+                  </div>
+                  <label className="inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={localSettings.streaming_enabled === true}
+                      onChange={(e) => handleLocalChange('streaming_enabled', e.target.checked)}
+                      disabled={isSavingSettings}
+                      className="sr-only peer"
+                    />
+                    <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-accent/20 dark:peer-focus:ring-brand-accent/30 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-brand-accent dark:peer-checked:bg-brand-accent peer-disabled:opacity-50 peer-disabled:cursor-not-allowed"></div>
+                    <span className="ms-3 text-sm font-medium text-gray-900 dark:text-gray-300">
+                      Enable streaming
+                    </span>
+                  </label>
                 </div>
               </div>
             </div>
