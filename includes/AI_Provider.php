@@ -485,14 +485,6 @@ class AI_Provider {
             $provider = $this->settings['ai_provider'] ?? 'openai';
             $model = $this->get_model_for_provider($provider);
             
-            // Debug: Log web search status
-            error_log('🔍 AI_Provider - Web Search Debug: ' . json_encode([
-                'web_search_enabled_from_data' => $web_search_enabled,
-                'web_search_header' => $_SERVER['HTTP_X_WEB_SEARCH_ENABLED'] ?? 'not_set',
-                'message_preview' => substr($message, 0, 100) . '...',
-                'provider' => $provider
-            ]));
-            
             // Get the appropriate API key based on provider (already decrypted in settings)
             if ($provider === 'openai') {
                 $api_key = $this->settings['openai_api_key'] ?? '';
@@ -1756,15 +1748,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $body = wp_remote_retrieve_body($response);
             $data = json_decode($body, true);
             
-            // Debug: Log response data
-            error_log('📥 AI_Provider - OpenAI Response: ' . json_encode([
-                'success' => $data['success'] ?? false,
-                'has_data' => !empty($data['data']),
-                'has_error' => !empty($data['error']),
-                'response_size' => strlen($body),
-                'web_search_used' => strpos($body, 'web search') !== false || strpos($body, 'searched') !== false
-            ]));
-            
             // Handle timeout or empty responses more gracefully
             if ($data === null || (empty($data['success']) && empty($data['error']))) {
                 // Log the raw response for debugging
@@ -2065,15 +2048,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
         
-        // Debug: Log Anthropic response data
-        error_log('📥 AI_Provider - Anthropic Response: ' . json_encode([
-            'success' => $data['success'] ?? false,
-            'has_data' => !empty($data['data']),
-            'has_error' => !empty($data['error']),
-            'response_size' => strlen($body),
-            'web_search_used' => strpos($body, 'web search') !== false || strpos($body, 'searched') !== false || strpos($body, 'found') !== false
-        ]));
-        
         // Handle timeout or empty responses more gracefully
         if ($data === null || (empty($data['success']) && empty($data['error']))) {
             // Log comprehensive debugging information
@@ -2211,14 +2185,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
-        
-        // Debug: Log OpenRouter response data
-        error_log('📥 AI_Provider - OpenRouter Response: ' . json_encode([
-            'success' => $data['success'] ?? false,
-            'has_data' => !empty($data['data']),
-            'has_error' => !empty($data['error']),
-            'response_size' => strlen($body)
-        ]));
         
         // Handle timeout or empty responses more gracefully
         if ($data === null || (empty($data['success']) && empty($data['error']))) {
