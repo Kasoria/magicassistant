@@ -86,7 +86,7 @@ class GeneralSiteInfo {
 		$roles = array();
 		foreach ( $users as $user ) {
 			$user_roles = $user->roles;
-			if ( !empty( $user_roles ) ) {
+			if ( !empty( $user_roles ) && isset( $user_roles[0] ) ) {
 				$primary_role = $user_roles[0];
 				if ( !isset( $roles[ $primary_role ] ) ) {
 					$roles[ $primary_role ] = 0;

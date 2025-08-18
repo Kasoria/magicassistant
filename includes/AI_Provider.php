@@ -50,7 +50,7 @@ class AI_Provider {
         
         // Chat streaming endpoint
         register_rest_route('magicassistant/v1', '/chat-stream', array(
-            'methods' => 'POST',
+            'methods' => array('GET', 'POST'),
             'callback' => array($this, 'handle_chat_stream'),
             'permission_callback' => array($this, 'check_permissions'),
         ));
@@ -415,6 +415,7 @@ class AI_Provider {
         $attached_files = $data['attached_files'] ?? [];
         $custom_system_message = $data['custom_system_message'] ?? null;
         $web_search_enabled = $data['web_search_enabled'] ?? false;
+        $max_tokens = $data['max_tokens'] ?? null;
         
         // Reset tool discovery flag for new sessions
         if ($this->current_session_id !== $session_id) {
@@ -512,10 +513,10 @@ class AI_Provider {
             
             if ($agent_mode) {
                 // Use agent mode for complex multi-step tasks
-                $result = $this->handle_agent_mode($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled);
+                $result = $this->handle_agent_mode($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens);
             } else {
                 // Use simple chat mode
-                $result = $this->handle_chat_mode($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled);
+                $result = $this->handle_chat_mode($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens);
             }
             
             $response_time = microtime(true) - $start_time;
@@ -651,20 +652,34 @@ class AI_Provider {
         flush();
         
         try {
-            // Get JSON data from POST body
-            $data = $request->get_json_params();
+            // Handle both GET and POST requests
+            if ($request->get_method() === 'GET') {
+                // Get data from URL parameters for EventSource
+                $data = array(
+                    'message' => $request->get_param('message') ?? '',
+                    'history' => json_decode($request->get_param('history') ?? '[]', true),
+                    'agent_mode' => $request->get_param('agent_mode') === 'true',
+                    'custom_system_message' => $request->get_param('custom_system_message') ?? null,
+                    'web_search_enabled' => $request->get_param('web_search_enabled') === 'true',
+                    'max_tokens' => $request->get_param('max_tokens') ? intval($request->get_param('max_tokens')) : null,
+                    'streaming' => true
+                );
+            } else {
+                // Get JSON data from POST body
+                $data = $request->get_json_params();
+            }
             
-            if (!$data) {
+            if (!$data || empty($data['message'])) {
                 echo "data: " . json_encode(array(
                     'type' => 'error',
-                    'message' => 'Invalid JSON data'
+                    'message' => 'Invalid or missing data'
                 )) . "\n\n";
                 flush();
                 exit;
             }
             
-            // Verify nonce for security from headers
-            $nonce = $request->get_header('X-WP-Nonce');
+            // Verify nonce for security from headers or URL params
+            $nonce = $request->get_header('X-WP-Nonce') ?? $request->get_param('_wpnonce');
             if ($nonce && !wp_verify_nonce($nonce, 'wp_rest')) {
                 echo "data: " . json_encode(array(
                     'type' => 'error',
@@ -711,6 +726,7 @@ class AI_Provider {
         $attached_files = $data['attached_files'] ?? array();
         $custom_system_message = $data['custom_system_message'] ?? null;
         $web_search_enabled = $data['web_search_enabled'] ?? false;
+        $max_tokens = $data['max_tokens'] ?? null;
         $page_url = $data['page_url'] ?? '';
         $page_context = $data['page_context'] ?? array();
         $session_id = $data['session_id'] ?? $this->generate_session_id();
@@ -776,9 +792,9 @@ class AI_Provider {
             
             // Use the regular AI handlers but capture response in chunks
             if ($agent_mode) {
-                $result = $this->handle_agent_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled);
+                $result = $this->handle_agent_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens);
             } else {
-                $result = $this->handle_chat_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled);
+                $result = $this->handle_chat_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens);
             }
             
             $response_time = microtime(true) - $start_time;
@@ -917,7 +933,7 @@ class AI_Provider {
         return false; // Always return false since auto mode is removed
     }
     
-    private function handle_chat_mode($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false) {
+    private function handle_chat_mode($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null) {
         // Limit the amount of history we send to the model to save tokens
         $history_limit = $this->settings['conversation_history_limit'] ?? 20;
         if ($history_limit > 0 && is_array($conversation_history) && count($conversation_history) > $history_limit) {
@@ -956,11 +972,11 @@ class AI_Provider {
         
         // Initial AI call
         if ($provider === 'openai') {
-            $response = $this->call_openai($messages, $api_key, $web_search_enabled);
+            $response = $this->call_openai($messages, $api_key, $web_search_enabled, false, $max_tokens);
         } elseif ($provider === 'anthropic') {
-            $response = $this->call_anthropic($messages, $api_key, $web_search_enabled);
+            $response = $this->call_anthropic($messages, $api_key, $web_search_enabled, false, $max_tokens);
         } elseif ($provider === 'openrouter') {
-            $response = $this->call_openrouter($messages, $api_key, $web_search_enabled);
+            $response = $this->call_openrouter($messages, $api_key, $web_search_enabled, false, $max_tokens);
         } else {
             throw new Exception('Unsupported AI provider: ' . $provider);
         }
@@ -1026,7 +1042,7 @@ class AI_Provider {
                     }
                     
                     // Call AI again to get final response with the tool data
-                    $final_response = $this->call_anthropic($messages, $api_key, $web_search_enabled);
+                    $final_response = $this->call_anthropic($messages, $api_key, $web_search_enabled, false, $max_tokens);
                 } else {
                     // OpenRouter uses OpenAI Chat Completion format
                     $messages[] = array(
@@ -1045,7 +1061,7 @@ class AI_Provider {
                     }
                     
                     // Call AI again to get final response with the tool data
-                    $final_response = $this->call_openrouter($messages, $api_key, $web_search_enabled);
+                    $final_response = $this->call_openrouter($messages, $api_key, $web_search_enabled, false, $max_tokens);
                 }
                 
                 // Track flag for the second call as well
@@ -1097,7 +1113,7 @@ class AI_Provider {
         );
     }
     
-    private function handle_agent_mode($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false) {
+    private function handle_agent_mode($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null) {
         // Limit history length to avoid oversized prompts while keeping recent context
         $history_limit = $this->settings['conversation_history_limit'] ?? 20;
         if ($history_limit > 0 && is_array($conversation_history) && count($conversation_history) > $history_limit) {
@@ -1143,11 +1159,11 @@ class AI_Provider {
             
             // Call AI provider
             if ($provider === 'openai') {
-                $response = $this->call_openai($messages, $api_key, $web_search_enabled);
+                $response = $this->call_openai($messages, $api_key, $web_search_enabled, false, $max_tokens);
             } elseif ($provider === 'anthropic') {
-                $response = $this->call_anthropic($messages, $api_key, $web_search_enabled);
+                $response = $this->call_anthropic($messages, $api_key, $web_search_enabled, false, $max_tokens);
             } elseif ($provider === 'openrouter') {
-                $response = $this->call_openrouter($messages, $api_key, $web_search_enabled);
+                $response = $this->call_openrouter($messages, $api_key, $web_search_enabled, false, $max_tokens);
             } else {
                 throw new Exception('Unsupported AI provider: ' . $provider);
             }
@@ -1597,12 +1613,12 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         return null;
     }
     
-    private function call_openai($messages, $api_key, $web_search_enabled = false, $is_streaming = false) {
+    private function call_openai($messages, $api_key, $web_search_enabled = false, $is_streaming = false, $max_tokens = null) {
         // For Responses API, we need to handle tool calls differently
-        return $this->call_openai_responses($messages, $api_key, $web_search_enabled, $is_streaming);
+        return $this->call_openai_responses($messages, $api_key, $web_search_enabled, $is_streaming, $max_tokens);
     }
     
-    private function call_openai_responses($messages, $api_key, $web_search_enabled = false, $is_streaming = false) {
+    private function call_openai_responses($messages, $api_key, $web_search_enabled = false, $is_streaming = false, $max_tokens = null) {
         // Extract system message and conversation for proper Responses API formatting
         $system_message = '';
         $conversation_messages = [];
@@ -1653,13 +1669,22 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 'timestamp' => time(),
             );
             
+            // Add max_tokens if specified (proxy will convert to max_output_tokens for OpenAI Responses API)
+            if ($max_tokens !== null) {
+                $request_data['data']['max_tokens'] = intval($max_tokens);
+                error_log('🔧 AI_Provider - Setting max_tokens for proxy: ' . intval($max_tokens));
+            } else {
+                error_log('🔧 AI_Provider - max_tokens is null, not setting');
+            }
+            
             // Debug: Log OpenAI request data
             error_log('📤 AI_Provider - OpenAI Request: ' . json_encode([
                 'web_search_enabled' => $web_search_enabled,
                 'model' => $this->settings['openai_model'] ?? 'gpt-4.1-mini',
                 'has_tools' => !empty($this->get_mcp_tools_for_openai()),
                 'iteration' => $iteration,
-                'timeout_used' => 600
+                'timeout_used' => 600,
+                'max_tokens' => $max_tokens
             ]));
             
             // Add system message as instructions if present
@@ -1696,7 +1721,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             
             // Check if streaming is enabled in settings AND it's a long content request
             $streaming_enabled = $this->settings['streaming_enabled'] ?? false;
-            $is_long_content = $streaming_enabled ? $this->detect_long_content_request($user_message) : false;
+            $is_long_content = $streaming_enabled ? $this->detect_long_content_request($user_message, $system_message) : false;
             $proxy_url = $is_long_content ? $this->openai_proxy_url . '/stream' : $this->openai_proxy_url;
             
             error_log('📊 AI_Provider - Content Detection: ' . json_encode([
@@ -1965,7 +1990,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
     }
     
-    private function call_anthropic($messages, $api_key, $web_search_enabled = false, $is_streaming = false) {
+    private function call_anthropic($messages, $api_key, $web_search_enabled = false, $is_streaming = false, $max_tokens = null) {
         // Separate system and user messages
         $system_message = '';
         $conversation   = [];
@@ -1988,6 +2013,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'site_url'  => home_url(),
             'timestamp' => time(),
         );
+        
+        // Add max_tokens if specified
+        if ($max_tokens !== null) {
+            $request_data['data']['max_tokens'] = intval($max_tokens);
+        }
         
         // Debug: Log Anthropic request data
         error_log('📤 AI_Provider - Anthropic Request: ' . json_encode([
@@ -2106,7 +2136,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         );
     }
     
-    private function call_openrouter($messages, $api_key, $web_search_enabled = false, $is_streaming = false) {
+    private function call_openrouter($messages, $api_key, $web_search_enabled = false, $is_streaming = false, $max_tokens = null) {
         // Separate system and user messages (similar to Anthropic format)
         $system_message = '';
         $conversation   = [];
@@ -2130,6 +2160,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'site_url'  => home_url(),
             'timestamp' => time(),
         );
+        
+        // Add max_tokens if specified
+        if ($max_tokens !== null) {
+            $request_data['data']['max_tokens'] = intval($max_tokens);
+        }
         
         // Only include tools if the model supports them
         if ($this->openrouter_model_supports_tools($model)) {
@@ -3093,7 +3128,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     /**
      * Handle chat mode with streaming responses
      */
-    private function handle_chat_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false) {
+    private function handle_chat_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null) {
         // Reset processing steps for new conversation
         $this->processing_steps = [];
         // Enable streaming mode for tool execution status updates
@@ -3137,11 +3172,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         // Call AI provider
         if ($provider === 'openai') {
-            $response = $this->call_openai($messages, $api_key, $web_search_enabled, true);
+            $response = $this->call_openai($messages, $api_key, $web_search_enabled, true, $max_tokens);
         } elseif ($provider === 'anthropic') {
-            $response = $this->call_anthropic($messages, $api_key, $web_search_enabled, true);
+            $response = $this->call_anthropic($messages, $api_key, $web_search_enabled, true, $max_tokens);
         } elseif ($provider === 'openrouter') {
-            $response = $this->call_openrouter($messages, $api_key, $web_search_enabled, true);
+            $response = $this->call_openrouter($messages, $api_key, $web_search_enabled, true, $max_tokens);
         } else {
             throw new Exception('Unsupported AI provider: ' . $provider);
         }
@@ -3152,6 +3187,14 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $has_tool_calls = false;
         $tool_count = 0;
         $tool_results = [];
+        $total_tokens = 0;
+        $total_cost = 0;
+        $user_key_used = $response['user_key_used'] ?? false;
+        $credits = $response['credits'] ?? null;
+        
+        // Track initial response usage
+        $total_tokens += $this->extract_token_count($response, $provider) ?? 0;
+        $total_cost += $response['cost'] ?? 0;
         
         if ($provider === 'openai') {
             // OpenAI handles tools internally and returns metadata
@@ -3174,37 +3217,151 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 
                 // Execute tools
                 $tool_results = $this->execute_tools($response['tool_calls']);
-                $this->send_status_update("All tools completed - Generating final response...");
+                $this->send_status_update("All tools completed - Getting final response...");
+                
+                // Need to make a follow-up call to get the final response with tool results
+                if ($provider === 'anthropic') {
+                    // Build assistant message content with text and tool uses
+                    $assistant_content = array();
+                    
+                    // Add text content if present
+                    if (!empty($response['content'])) {
+                        $assistant_content[] = array(
+                            'type' => 'text',
+                            'text' => $response['content']
+                        );
+                    }
+                    
+                    // Add tool uses
+                    foreach ($response['tool_calls'] as $tool_call) {
+                        $assistant_content[] = array(
+                            'type' => 'tool_use',
+                            'id' => $tool_call['id'],
+                            'name' => $tool_call['name'],
+                            'input' => $tool_call['input']
+                        );
+                    }
+                    
+                    $messages[] = array(
+                        'role' => 'assistant',
+                        'content' => $assistant_content
+                    );
+                    
+                    // Add tool results for Anthropic
+                    foreach ($tool_results as $result) {
+                        $messages[] = array(
+                            'role' => 'user',
+                            'content' => array(
+                                array(
+                                    'type' => 'tool_result',
+                                    'tool_use_id' => $result['tool_call_id'],
+                                    'content' => json_encode($result)
+                                )
+                            )
+                        );
+                    }
+                    
+                    // Get final response from Anthropic
+                    $this->send_status_update("Getting final response from Anthropic...");
+                    $final_response = $this->call_anthropic($messages, $api_key, $web_search_enabled, true, $max_tokens);
+                    
+                    // Track additional usage
+                    $total_tokens += $this->extract_token_count($final_response, $provider) ?? 0;
+                    $total_cost += $final_response['cost'] ?? 0;
+                    $user_key_used = $user_key_used || ($final_response['user_key_used'] ?? false);
+                    $credits = $final_response['credits'] ?? $credits;
+                    
+                    // Use the final response content
+                    $response = $final_response;
+                    
+                } elseif ($provider === 'openrouter') {
+                    // OpenRouter uses OpenAI Chat Completion format
+                    $messages[] = array(
+                        'role' => 'assistant',
+                        'content' => $response['content'] ?? '',
+                        'tool_calls' => $response['tool_calls']
+                    );
+                    
+                    // Add tool results for OpenRouter
+                    foreach ($tool_results as $result) {
+                        $messages[] = array(
+                            'role' => 'tool',
+                            'tool_call_id' => $result['tool_call_id'],
+                            'content' => json_encode($result)
+                        );
+                    }
+                    
+                    // Get final response from OpenRouter
+                    $this->send_status_update("Getting final response from OpenRouter...");
+                    $final_response = $this->call_openrouter($messages, $api_key, $web_search_enabled, true, $max_tokens);
+                    
+                    // Debug log the final response
+                    error_log('🔍 OpenRouter Final Response in Streaming: ' . json_encode([
+                        'has_content' => !empty($final_response['content']),
+                        'content_preview' => substr($final_response['content'] ?? '', 0, 100),
+                        'has_tool_calls' => !empty($final_response['tool_calls']),
+                        'usage' => $final_response['usage'] ?? null
+                    ]));
+                    
+                    // Track additional usage
+                    $total_tokens += $this->extract_token_count($final_response, $provider) ?? 0;
+                    $total_cost += $final_response['cost'] ?? 0;
+                    $user_key_used = $user_key_used || ($final_response['user_key_used'] ?? false);
+                    $credits = $final_response['credits'] ?? $credits;
+                    
+                    // Use the final response content
+                    $response = $final_response;
+                    
+                    $this->send_status_update("Processing final response...");
+                }
             }
         }
         
-        // For chat mode, we don't iterate - just execute tools and return the original content plus tool info
+        // Use the final response content
         $content = $response['content'] ?? '';
+        
+        // Debug log what we're about to stream
+        error_log('🎯 Content to Stream: ' . json_encode([
+            'provider' => $provider,
+            'has_content' => !empty($content),
+            'content_length' => strlen($content),
+            'content_preview' => substr($content, 0, 200),
+            'had_tool_calls' => $has_tool_calls
+        ]));
+        
+        // Only add tool summary if we have tool results
         if ($has_tool_calls && !empty($tool_results)) {
-            $tool_names = array_column($tool_results, 'tool');
-            $content .= "\n\n---\n**Tools Used**: " . implode(', ', $tool_names);
+            // Don't append tool names to content - let the AI's response speak for itself
+            // The AI should naturally mention what tools it used if relevant
         }
         
         // Stream the response content in chunks
-        $this->stream_content_in_chunks($content);
+        if (!empty($content)) {
+            $this->stream_content_in_chunks($content);
+        } else {
+            error_log('⚠️ WARNING: No content to stream for provider: ' . $provider);
+            // Send an error message if we have no content
+            $this->stream_content_in_chunks("I apologize, but I didn't receive a proper response. Please try again.");
+        }
         
         // Disable streaming mode
         $this->is_streaming_mode = false;
         
         return [
             'response' => $content,
-            'tokens_used' => $this->extract_token_count($response, $provider),
-            'cost' => $response['cost'] ?? null,
-            'user_key_used' => $response['user_key_used'] ?? false,
+            'tokens_used' => $total_tokens,
+            'cost' => $total_cost,
+            'user_key_used' => $user_key_used,
             'tool_calls_count' => $tool_count,
-            'debug_tool_data' => $has_tool_calls ? $tool_results : null
+            'debug_tool_data' => $has_tool_calls ? $tool_results : null,
+            'credits' => $credits
         ];
     }
     
     /**
      * Handle agent mode with streaming responses
      */
-    private function handle_agent_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false) {
+    private function handle_agent_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null) {
         // Reset processing steps for new conversation
         $this->processing_steps = [];
         // Enable streaming mode for tool execution status updates
@@ -3264,11 +3421,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             
             // Call AI provider
             if ($provider === 'openai') {
-                $response = $this->call_openai($messages, $api_key, $web_search_enabled, true);
+                $response = $this->call_openai($messages, $api_key, $web_search_enabled, true, $max_tokens);
             } elseif ($provider === 'anthropic') {
-                $response = $this->call_anthropic($messages, $api_key, $web_search_enabled, true);
+                $response = $this->call_anthropic($messages, $api_key, $web_search_enabled, true, $max_tokens);
             } elseif ($provider === 'openrouter') {
-                $response = $this->call_openrouter($messages, $api_key, $web_search_enabled, true);
+                $response = $this->call_openrouter($messages, $api_key, $web_search_enabled, true, $max_tokens);
             } else {
                 throw new Exception('Unsupported AI provider: ' . $provider);
             }
@@ -3360,7 +3517,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     );
                     
                     // Add tool results for Anthropic
-                    foreach ($tool_results as $result) {
+                    foreach ($current_tool_results as $result) {
                         $messages[] = array(
                             'role' => 'user',
                             'content' => array(
@@ -3372,6 +3529,20 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                             )
                         );
                     }
+                    
+                    $this->send_status_update("Getting final response from Anthropic...");
+                    
+                    // Call AI again to get final response with the tool data
+                    $final_response_data = $this->call_anthropic($messages, $api_key, $web_search_enabled, true, $max_tokens);
+                    
+                    // Track the additional API call usage
+                    $user_key_used_total = $user_key_used_total || ($final_response_data['user_key_used'] ?? false);
+                    $total_tokens += $this->extract_token_count($final_response_data, $provider) ?? 0;
+                    $total_cost += $final_response_data['cost'] ?? 0;
+                    
+                    $final_response = $final_response_data['content'] ?? '';
+                    break; // Exit the loop with final response
+                    
                 } elseif ($provider === 'openrouter') {
                     // OpenRouter uses OpenAI Chat Completion format
                     $messages[] = array(
@@ -3381,13 +3552,24 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     );
                     
                     // Add tool results to conversation
-                    foreach ($tool_results as $result) {
+                    foreach ($current_tool_results as $result) {
                         $messages[] = array(
                             'role' => 'tool',
                             'tool_call_id' => $result['tool_call_id'],
                             'content' => json_encode($result)
                         );
                     }
+                    
+                    $this->send_status_update("Continuing agent conversation with tool results...");
+                    
+                    // Store reasoning if available
+                    if (!empty($response['content'])) {
+                        $reasoning_chain[] = $response['content'];
+                    }
+                    
+                    // Continue loop for OpenRouter to process tool results
+                    // OpenRouter needs another iteration to generate the final response
+                    continue;
                 } else {
                     // OpenAI Responses API format
                     $messages[] = array(
@@ -3396,7 +3578,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         'tool_calls' => $response['tool_calls']
                     );
                     
-                    foreach ($tool_results as $result) {
+                    foreach ($current_tool_results as $result) {
                         $messages[] = array(
                             'role' => 'tool',
                             'tool_call_id' => $result['tool_call_id'],
@@ -3412,7 +3594,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     $reasoning_chain[] = $response['content'];
                 }
                 
-                // Continue loop for next iteration
+                // Continue loop for next iteration (only for OpenAI)
                 continue;
             } else {
                 // No tool calls - this is the final response
@@ -3426,8 +3608,38 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             }
         }
         
+        // Handle case where we exited loop due to max iterations
+        if ($iteration >= $max_iterations && empty($final_response)) {
+            $final_response = "I've reached the maximum number of iterations while processing your request. ";
+            if ($total_tool_calls > 0) {
+                $final_response .= "I executed " . $total_tool_calls . " tool(s) during the process.";
+            }
+        }
+        
+        // Debug log what we're about to stream
+        error_log('🎯 Agent Mode - Final Content to Stream: ' . json_encode([
+            'provider' => $provider,
+            'has_content' => !empty($final_response),
+            'content_length' => strlen($final_response),
+            'content_preview' => substr($final_response, 0, 200),
+            'iterations_used' => $iteration,
+            'total_tool_calls' => $total_tool_calls
+        ]));
+        
         // Stream the final response content in chunks
-        $this->stream_content_in_chunks($final_response);
+        if (!empty($final_response)) {
+            $this->send_status_update("Streaming response...");
+            $this->stream_content_in_chunks($final_response);
+        } else {
+            error_log('⚠️ WARNING: No final response content from agent mode for provider: ' . $provider);
+            // Send a fallback message if we have no content
+            $fallback_message = "I've completed the requested tools but didn't generate a final response. ";
+            if ($total_tool_calls > 0) {
+                $fallback_message .= "I executed " . $total_tool_calls . " tool(s) successfully.";
+            }
+            $this->send_status_update("Generating fallback response...");
+            $this->stream_content_in_chunks($fallback_message);
+        }
         
         // Disable streaming mode
         $this->is_streaming_mode = false;
@@ -7999,11 +8211,22 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     /**
      * Detect if the request is for long content that should use streaming
      */
-    private function detect_long_content_request($message) {
+    private function detect_long_content_request($message, $system_message = '') {
         // Convert to lowercase for case-insensitive matching
         $message_lower = strtolower($message);
+        $system_message_lower = strtolower($system_message);
         
-        // Keywords that indicate long content
+        // DISABLE STREAMING for ContentMode requests to avoid nginx timeouts
+        // ContentMode requests are identified by "CONTENT MODE" in the system message
+        if (strpos($system_message_lower, 'content mode') !== false || 
+            strpos($system_message_lower, 'you are in content mode') !== false ||
+            strpos($message_lower, 'content mode') !== false || 
+            strpos($message_lower, 'you are in content mode') !== false) {
+            error_log('🚫 AI_Provider - Disabling streaming for ContentMode request to avoid timeouts');
+            return false;
+        }
+        
+        // Keywords that indicate long content (for regular chat)
         $long_content_indicators = [
             'comprehensive',
             '3000+',

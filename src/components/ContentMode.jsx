@@ -79,6 +79,7 @@ const ContentMode = ({ adminData, onExitContentMode }) => {
   const [generateInlineImages, setGenerateInlineImages] = useState(false)
   const [webSearchEnabled, setWebSearchEnabled] = useState(true)
   const [showMarkdownPreview, setShowMarkdownPreview] = useState(true)
+  const [showAnthropicWarning, setShowAnthropicWarning] = useState(false)
   
   const contentAreaRef = useRef(null)
   const seoAnalysisRef = useRef(null)
@@ -409,6 +410,16 @@ Always prioritize accuracy, fairness, and public interest while creating engagin
     }
   }, [generatedContent, targetKeywords])
 
+  // Check for Anthropic usage and show warning modal
+  useEffect(() => {
+    if (settings) {
+      const isUsingAnthropic = checkIfUsingAnthropic(settings)
+      if (isUsingAnthropic) {
+        setShowAnthropicWarning(true)
+      }
+    }
+  }, [settings])
+
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -426,6 +437,30 @@ Always prioritize accuracy, fairness, and public interest while creating engagin
       saveContentData()
     }
   }, [generatedContent, contentHistory, seoAnalysis, contentScore, keywordDensity, featuredImage, targetKeywords, targetLocation, currentStep])
+
+  // Function to check if user is using Anthropic (directly or through OpenRouter)
+  const checkIfUsingAnthropic = (settings) => {
+    // Check if directly using Anthropic provider
+    if (settings.ai_provider === 'anthropic') {
+      return true
+    }
+    
+    // Check if using OpenRouter with Claude/Anthropic models
+    if (settings.ai_provider === 'openrouter' && settings.openrouter_model) {
+      const model = settings.openrouter_model.toLowerCase()
+      return model.includes('claude') || model.includes('anthropic')
+    }
+    
+    return false
+  }
+
+  // Function to open settings page
+  const openAISettings = () => {
+    // Navigate to the AI settings
+    if (window.location.href.includes('wp-admin')) {
+      window.location.href = window.location.href.replace(/page=.*/, 'page=magicassistant-settings#ai-configuration')
+    }
+  }
 
   const loadSiteContext = async () => {
     try {
@@ -594,6 +629,13 @@ Always prioritize accuracy, fairness, and public interest while creating engagin
   }
 
   const generateContent = async () => {
+    // Check if using Anthropic and block the request
+    if (settings && checkIfUsingAnthropic(settings)) {
+      showError('Anthropic/Claude models are not supported in Content Mode. Please switch to OpenAI or OpenRouter with non-Claude models.')
+      setShowAnthropicWarning(true)
+      return
+    }
+
     if (!contentPrompt.trim() && !bulkMode) {
       showError('Please provide a content prompt')
       return
@@ -762,10 +804,185 @@ Always prioritize accuracy, fairness, and public interest while creating engagin
     // Check if streaming is enabled
     const isStreamingEnabled = settings?.streaming_enabled === true
 
-    if (isStreamingEnabled) {
+    // Check if prompt is too long for URL-based streaming
+    const promptTooLongForStreaming = prompt.length > 1000 || 
+      (additionalContext && additionalContext.length > 500)
+
+    // For long and comprehensive content, use chunked generation
+    if ((contentLength === 'long' || contentLength === 'comprehensive') && 
+        (!isStreamingEnabled || promptTooLongForStreaming)) {
+      await generateChunkedContent(prompt, systemMessage)
+    } else if (isStreamingEnabled && !promptTooLongForStreaming) {
       await generateSingleContentStreaming(prompt, systemMessage)
     } else {
       await generateSingleContentRegular(prompt, systemMessage)
+    }
+  }
+
+  const generateChunkedContent = async (prompt, systemMessage) => {
+    setIsLoading(true)
+    showInfo('Generating long-form content in sections...')
+    
+    // Determine number of chunks based on content length
+    const chunkConfig = {
+      long: {
+        chunks: 2,
+        wordTargets: [750, 750], // Total ~1500 words
+        descriptions: ['first half', 'second half']
+      },
+      comprehensive: {
+        chunks: 3,
+        wordTargets: [1000, 1000, 1000], // Total ~3000 words
+        descriptions: ['introduction and first section', 'middle sections', 'final sections and conclusion']
+      }
+    }
+    
+    const config = chunkConfig[contentLength] || chunkConfig.long
+    let fullContent = ''
+    let currentOutline = ''
+    
+    try {
+      // Step 1: Generate detailed outline
+      showInfo('Creating comprehensive outline...')
+      const outlinePrompt = `${prompt}\n\nIMPORTANT: First, create a DETAILED OUTLINE for this ${contentLength === 'comprehensive' ? '3000+ word' : '1500-2500 word'} article. Include all main sections, subsections, and key points. This outline will guide the content generation.`
+      
+      const outlineResponse = await fetch(`${adminData.restUrl}chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-WP-Nonce': adminData.nonces.wp_rest,
+          'X-Web-Search-Enabled': webSearchEnabled ? 'true' : 'false'
+        },
+        body: JSON.stringify({
+          message: outlinePrompt,
+          history: [],
+          agent_mode: false,
+          custom_system_message: systemMessage,
+          web_search_enabled: webSearchEnabled,
+          max_tokens: 2000
+        }),
+        signal: AbortSignal.timeout(120000)
+      })
+      
+      const outlineData = await outlineResponse.json()
+      if (outlineData.success) {
+        currentOutline = outlineData.response
+        setGeneratedContent(`📝 **Article Outline:**\n\n${currentOutline}\n\n---\n\n⏳ *Generating full content...*`)
+      }
+      
+      // Step 2: Generate content in chunks
+      for (let i = 0; i < config.chunks; i++) {
+        showInfo(`Generating ${config.descriptions[i]} (${i + 1}/${config.chunks})...`)
+        
+        let chunkPrompt = ''
+        if (i === 0) {
+          // First chunk
+          chunkPrompt = `Based on this outline:\n\n${currentOutline}\n\n${prompt}\n\nGenerate the ${config.descriptions[i]} of the article (approximately ${config.wordTargets[i]} words). Start with an engaging introduction and cover the first main sections. DO NOT write a conclusion yet - more content will follow.`
+        } else if (i === config.chunks - 1) {
+          // Last chunk
+          chunkPrompt = `Continue this article:\n\n[Previous content already written - ${fullContent.split(' ').length} words]\n\nOutline:\n${currentOutline}\n\n${prompt}\n\nNow complete the article by writing the ${config.descriptions[i]} (approximately ${config.wordTargets[i]} words). Include the remaining sections and a strong conclusion. Continue naturally from where the previous content ended.`
+        } else {
+          // Middle chunks
+          chunkPrompt = `Continue this article:\n\n[Previous content already written - ${fullContent.split(' ').length} words]\n\nOutline:\n${currentOutline}\n\n${prompt}\n\nContinue with the ${config.descriptions[i]} (approximately ${config.wordTargets[i]} words). DO NOT write a conclusion yet - more content will follow.`
+        }
+        
+        const chunkResponse = await fetch(`${adminData.restUrl}chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-WP-Nonce': adminData.nonces.wp_rest,
+            'X-Web-Search-Enabled': webSearchEnabled ? 'true' : 'false'
+          },
+          body: JSON.stringify({
+            message: chunkPrompt,
+            history: [],
+            agent_mode: false,
+            custom_system_message: systemMessage + '\n\nYou are generating part of a longer article. Focus on depth, detail, and quality. Use proper markdown formatting.',
+            web_search_enabled: webSearchEnabled,
+            max_tokens: 8000 // Stay within proxy limits
+          }),
+          signal: AbortSignal.timeout(300000)
+        })
+        
+        const chunkData = await chunkResponse.json()
+        if (chunkData.success) {
+          // Clean and append the chunk
+          let chunkContent = chunkData.response
+          
+          // Remove any markdown code block wrappers
+          chunkContent = chunkContent.replace(/^```markdown\s*\n/, '').replace(/\n```\s*$/, '')
+          chunkContent = chunkContent.replace(/^```\s*\n/, '').replace(/\n```\s*$/, '')
+          
+          if (i === 0) {
+            fullContent = chunkContent
+          } else {
+            // Add spacing between chunks
+            fullContent += '\n\n' + chunkContent
+          }
+          
+          // Update display with current progress
+          setGeneratedContent(fullContent + `\n\n---\n\n⏳ *Generating section ${i + 2} of ${config.chunks}...*`)
+        } else {
+          throw new Error(`Failed to generate ${config.descriptions[i]}`)
+        }
+      }
+      
+      // Step 3: Generate meta description
+      showInfo('Finalizing content and generating meta description...')
+      const metaResponse = await fetch(`${adminData.restUrl}chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-WP-Nonce': adminData.nonces.wp_rest
+        },
+        body: JSON.stringify({
+          message: `Create a compelling 150-160 character meta description for this article:\n\n${fullContent.substring(0, 1000)}`,
+          history: [],
+          agent_mode: false,
+          custom_system_message: 'You are an SEO expert. Generate only the meta description, nothing else.',
+          max_tokens: 100
+        }),
+        signal: AbortSignal.timeout(60000)
+      })
+      
+      const metaData = await metaResponse.json()
+      if (metaData.success) {
+        setMetaDescription(metaData.response.trim())
+      }
+      
+      // Final update
+      setGeneratedContent(fullContent)
+      
+      // Save to history
+      setContentHistory(prev => [{
+        id: Date.now(),
+        prompt: contentPrompt,
+        content: fullContent,
+        timestamp: new Date(),
+        keywords: targetKeywords,
+        type: contentType
+      }, ...prev].slice(0, 10))
+      
+      if (autoOptimize) {
+        await performSEOAnalysis(fullContent)
+      }
+      
+      if (generateFeaturedImage) {
+        // Don't await - let it run in background
+        generateFeaturedImageForContent().catch(err => {
+          console.error('Featured image generation failed:', err)
+        })
+      }
+      
+      setCurrentStep(3)
+      setTimeout(() => saveContentData(), 100)
+      showSuccess(`Long-form content generated successfully! (${fullContent.split(' ').length} words)`)
+      
+    } catch (error) {
+      console.error('Chunked generation error:', error)
+      showError('Failed to generate long-form content: ' + error.message)
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -783,15 +1000,34 @@ Always prioritize accuracy, fairness, and public interest while creating engagin
       }
     })
 
+    // For short and medium content, use single generation with realistic token limits
+    const maxTokensMap = {
+      short: 2000,       // 300-500 words
+      medium: 4000,      // 800-1200 words
+      long: 8000,        // This shouldn't be reached as long uses chunked generation
+      comprehensive: 8000 // This shouldn't be reached as comprehensive uses chunked generation
+    }
+
     const requestBody = {
       message: prompt,
       history: [],
       agent_mode: true,
       custom_system_message: systemMessage + '\n\nYou are in CONTENT MODE. Generate high-quality, SEO-optimized content that is ready to publish.\n\nAt the end of your content, add:\n---\nMeta Description: [Write a compelling 150-160 character meta description]',
-      web_search_enabled: webSearchEnabled
+      web_search_enabled: webSearchEnabled,
+      max_tokens: maxTokensMap[contentLength] || 2000
     }
 
     console.log('📤 ContentMode - Request Body:', requestBody)
+    console.log('🔧 ContentMode - Max Tokens Debug:', {
+      contentLength,
+      maxTokens: requestBody.max_tokens,
+      mapping: {
+        short: 5000,
+        medium: 10000,
+        long: 15000,
+        comprehensive: 30000
+      }
+    })
 
     const response = await fetch(`${adminData.restUrl}chat`, {
       method: 'POST',
@@ -856,7 +1092,10 @@ Always prioritize accuracy, fairness, and public interest while creating engagin
       }
       
       if (generateFeaturedImage) {
-        await generateFeaturedImageForContent()
+        // Don't await - let it run in background
+        generateFeaturedImageForContent().catch(err => {
+          console.error('Featured image generation failed:', err)
+        })
       }
       
       // Automatically advance to step 3 when content is generated
@@ -873,24 +1112,192 @@ Always prioritize accuracy, fairness, and public interest while creating engagin
 
   const generateSingleContentStreaming = async (prompt, systemMessage) => {
     try {
+      // For streaming, we can use higher token limits but should stay reasonable
+      // The streaming endpoint can handle larger requests better
+      const maxTokensMap = {
+        short: 2000,       // 300-500 words
+        medium: 4000,      // 800-1200 words
+        long: 8000,        // 1500-2500 words (stay within proxy limits)
+        comprehensive: 8000 // 3000+ words (will need special handling in prompt)
+      }
+
+      // Enhance prompt for comprehensive content
+      let enhancedPrompt = prompt
+      if (contentLength === 'comprehensive') {
+        enhancedPrompt = prompt + '\n\nIMPORTANT: Generate a COMPREHENSIVE article of 3000+ words. Include:\n- Detailed introduction\n- Multiple main sections with subsections\n- In-depth explanations and examples\n- Thorough analysis and insights\n- Strong conclusion\n\nFocus on providing maximum value and depth.'
+      } else if (contentLength === 'long') {
+        enhancedPrompt = prompt + '\n\nIMPORTANT: Generate a DETAILED article of 1500-2500 words. Include multiple sections with thorough explanations and examples.'
+      }
+      
       // Create the streaming request body
       const requestBody = {
-        message: prompt,
+        message: enhancedPrompt,
         history: [],
         agent_mode: true,
         custom_system_message: systemMessage + '\n\nYou are in CONTENT MODE. Generate high-quality, SEO-optimized content that is ready to publish.\n\nAt the end of your content, add:\n---\nMeta Description: [Write a compelling 150-160 character meta description]',
         web_search_enabled: webSearchEnabled,
+        max_tokens: maxTokensMap[contentLength] || 1600,
         streaming: true
       }
 
-      // Use EventSource for Server-Sent Events
-      const eventSource = new EventSource(`${adminData.restUrl}chat-stream?` + new URLSearchParams({
-        ...requestBody,
-        '_wpnonce': adminData.nonces.wp_rest,
-        'X-Web-Search-Enabled': webSearchEnabled ? 'true' : 'false',
+      // Check if we need to use POST due to long prompt
+      const testUrl = `${adminData.restUrl}chat-stream?message=${encodeURIComponent(requestBody.message)}`
+      const usePost = testUrl.length > 1800
+      
+      if (usePost) {
+        console.log('📝 Using POST streaming due to long prompt')
+        
+        // Use fetch with POST for streaming when URL would be too long
+        const response = await fetch(`${adminData.restUrl}chat-stream`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-WP-Nonce': adminData.nonces.wp_rest,
+            'Accept': 'text/event-stream',
+            'Cache-Control': 'no-cache'
+          },
+          body: JSON.stringify(requestBody)
+        })
+        
+        if (!response.ok) {
+          throw new Error(`Streaming request failed: ${response.status}`)
+        }
+
+        // Process the stream manually
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let accumulatedContent = ''
+        let hasReceivedContent = false
+
+        // Set streaming states
+        setIsStreaming(true)
+        setIsShowingProcessSteps(true)
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            
+            if (done) break
+            
+            // Decode and add to buffer
+            buffer += decoder.decode(value, { stream: true })
+            
+            // Process complete SSE events
+            const lines = buffer.split('\n')
+            buffer = lines.pop() || '' // Keep incomplete line in buffer
+            
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const data = JSON.parse(line.slice(6))
+                  
+                  // Handle status updates (process steps)
+                  if (data.type === 'status') {
+                    setGeneratedContent(data.message || 'Processing...')
+                    setIsShowingProcessSteps(true)
+                    continue
+                  }
+                  
+                  if (data.type === 'content') {
+                    // Mark that we've received actual content
+                    if (!hasReceivedContent) {
+                      hasReceivedContent = true
+                    }
+                    setIsShowingProcessSteps(false)
+                    
+                    // Accumulate content chunks
+                    accumulatedContent += data.chunk || ''
+                    
+                    // Clean and display content
+                    let cleanContent = accumulatedContent
+                    if (cleanContent && typeof cleanContent === 'string') {
+                      cleanContent = cleanContent.replace(/^```markdown\s*\n/, '').replace(/\n```\s*$/, '')
+                      cleanContent = cleanContent.replace(/^```\s*\n/, '').replace(/\n```\s*$/, '')
+                    }
+                    
+                    const contentWithoutMeta = cleanContent.replace(/---\s*\nMeta Description:.*$/s, '').trim()
+                    setGeneratedContent(contentWithoutMeta)
+                    
+                  } else if (data.type === 'complete') {
+                    // Final processing
+                    let cleanContent = accumulatedContent
+                    if (cleanContent && typeof cleanContent === 'string') {
+                      cleanContent = cleanContent.replace(/^```markdown\s*\n/, '').replace(/\n```\s*$/, '')
+                      cleanContent = cleanContent.replace(/^```\s*\n/, '').replace(/\n```\s*$/, '')
+                    }
+                    
+                    // Extract and set meta description
+                    const metaDesc = extractMetaDescription(cleanContent)
+                    if (metaDesc) {
+                      setMetaDescription(metaDesc)
+                    }
+                    
+                    const contentWithoutMeta = cleanContent.replace(/---\s*\nMeta Description:.*$/s, '').trim()
+                    setGeneratedContent(contentWithoutMeta)
+                    
+                    // Save to history
+                    setContentHistory(prev => [{
+                      id: Date.now(),
+                      prompt: contentPrompt,
+                      content: cleanContent,
+                      timestamp: new Date(),
+                      keywords: targetKeywords,
+                      type: contentType
+                    }, ...prev].slice(0, 10))
+                    
+                    if (autoOptimize) {
+                      performSEOAnalysis(cleanContent)
+                    }
+                    
+                    if (generateFeaturedImage) {
+                      generateFeaturedImageForContent().catch(err => {
+                        console.error('Featured image generation failed:', err)
+                      })
+                    }
+                    
+                    setCurrentStep(3)
+                    setTimeout(() => saveContentData(), 100)
+                    showSuccess('Content generated and saved successfully!')
+                    
+                    // Clear streaming states
+                    setIsStreaming(false)
+                    setIsShowingProcessSteps(false)
+                    return
+                    
+                  } else if (data.type === 'error') {
+                    setIsStreaming(false)
+                    setIsShowingProcessSteps(false)
+                    throw new Error(data.message || 'Streaming error')
+                  }
+                } catch (parseError) {
+                  console.error('Error parsing streaming data:', parseError)
+                }
+              }
+            }
+          }
+        } finally {
+          reader.releaseLock()
+          setIsStreaming(false)
+          setIsShowingProcessSteps(false)
+        }
+        
+        return
+      }
+      
+      // Use EventSource for shorter prompts (GET method)
+      const params = new URLSearchParams({
+        message: requestBody.message,
         history: JSON.stringify(requestBody.history),
-        custom_system_message: requestBody.custom_system_message
-      }), {
+        agent_mode: requestBody.agent_mode.toString(),
+        custom_system_message: requestBody.custom_system_message,
+        web_search_enabled: requestBody.web_search_enabled.toString(),
+        max_tokens: requestBody.max_tokens.toString(),
+        streaming: 'true',
+        '_wpnonce': adminData.nonces.wp_rest
+      })
+
+      const eventSource = new EventSource(`${adminData.restUrl}chat-stream?${params.toString()}`, {
         withCredentials: true
       })
 
@@ -968,7 +1375,10 @@ Always prioritize accuracy, fairness, and public interest while creating engagin
             }
             
             if (generateFeaturedImage) {
-              generateFeaturedImageForContent()
+              // Don't await - let it run in background
+              generateFeaturedImageForContent().catch(err => {
+                console.error('Featured image generation failed:', err)
+              })
             }
             
             // Automatically advance to step 3 when content is generated
@@ -1100,7 +1510,8 @@ Content to analyze:
 ${content.substring(0, 1000)}...`,
           history: [],
           agent_mode: false,
-          web_search_enabled: webSearchEnabled
+          web_search_enabled: webSearchEnabled,
+          max_tokens: 4000 // SEO analysis doesn't need extreme length
         }),
         // Add timeout for SEO analysis
         signal: AbortSignal.timeout(300000) // 5 minutes for SEO analysis
@@ -1134,25 +1545,60 @@ ${content.substring(0, 1000)}...`,
           'X-Web-Search-Enabled': webSearchEnabled ? 'true' : 'false'
         },
         body: JSON.stringify({
-          message: `Search for a professional, high-quality image on Unsplash that would be perfect as a featured image for an article about: "${firstHeading}". Return only the most relevant image.`,
+          message: `Find an Unsplash image for: "${firstHeading}". Return only one relevant image.`,
           history: [],
           agent_mode: true,
-          web_search_enabled: webSearchEnabled
+          web_search_enabled: false, // Disable web search for featured images to avoid timeouts
+          max_tokens: 1000 // Reduce tokens for faster response
         }),
         // Add timeout for featured image generation
-        signal: AbortSignal.timeout(120000) // 2 minutes for image search
+        signal: AbortSignal.timeout(30000) // 30 seconds for image search
       })
 
-      const data = await response.json()
+      // Check if response is ok before trying to parse JSON
+      if (!response.ok) {
+        console.error('Featured image request failed:', response.status, response.statusText)
+        
+        // Try to get error text (might be HTML error page)
+        const errorText = await response.text()
+        console.error('Error response:', errorText.substring(0, 500))
+        
+        // Don't show error to user, just skip featured image
+        return
+      }
+
+      // Try to parse JSON response
+      let data
+      try {
+        const responseText = await response.text()
+        
+        // Check if response looks like HTML (error page)
+        if (responseText.trim().startsWith('<')) {
+          console.error('Received HTML instead of JSON:', responseText.substring(0, 500))
+          return
+        }
+        
+        data = JSON.parse(responseText)
+      } catch (parseError) {
+        console.error('Failed to parse featured image response:', parseError)
+        return
+      }
+
       if (data.success) {
         // Extract image URL from response
         const imageMatch = data.response.match(/!\[.*?\]\((https:\/\/images\.unsplash\.com[^)]+)\)/)
         if (imageMatch) {
           setFeaturedImage(imageMatch[1])
+          console.log('Featured image set:', imageMatch[1])
+        } else {
+          console.log('No Unsplash image URL found in response')
         }
+      } else {
+        console.error('Featured image generation failed:', data.message || 'Unknown error')
       }
     } catch (error) {
-      console.error('Featured image generation failed:', error)
+      console.error('Featured image generation error:', error)
+      // Don't show error to user, featured image is optional
     }
   }
 
@@ -1185,7 +1631,17 @@ Content:
 ${generatedContent}`,
           history: [],
           agent_mode: true,
-          web_search_enabled: webSearchEnabled
+          web_search_enabled: webSearchEnabled,
+          max_tokens: (() => {
+            // Use realistic token limits for optimization
+            const maxTokensMap = {
+              short: 2000,
+              medium: 4000,
+              long: 8000,
+              comprehensive: 8000
+            };
+            return maxTokensMap[contentLength] || 4000;
+          })()
         }),
         // Add timeout for content optimization
         signal: AbortSignal.timeout(600000) // 10 minutes for content optimization
@@ -1285,7 +1741,8 @@ ${contentSnippet}`
           message: prompt,
           history: [],
           agent_mode: false,
-          custom_system_message: 'You are an SEO expert. Generate only the requested meta description, nothing else.'
+          custom_system_message: 'You are an SEO expert. Generate only the requested meta description, nothing else.',
+          max_tokens: 500 // Meta descriptions are very short
         }),
         // Add timeout for meta description generation
         signal: AbortSignal.timeout(60000) // 1 minute for meta description
@@ -2737,6 +3194,19 @@ Example:
           </div>
         )}
       </div>
+
+      {/* Anthropic Warning Modal */}
+      <ConfirmationModal
+        isOpen={showAnthropicWarning}
+        onClose={() => setShowAnthropicWarning(false)}
+        onConfirm={openAISettings}
+        title="⚠️ Anthropic/Claude Not Supported"
+        message="Content Mode does not support Anthropic or Claude models due to suboptimal results. Please switch to OpenAI or OpenRouter with non-Claude models for the best content generation experience."
+        confirmText="Open AI Settings"
+        cancelText="Close"
+        icon="warning"
+        confirmButtonClass="bg-blue-600 hover:bg-blue-700 focus:ring-blue-300 dark:bg-blue-500 dark:hover:bg-blue-600 dark:focus:ring-blue-900"
+      />
 
       {/* Reset Modal */}
       <ConfirmationModal
