@@ -152,14 +152,31 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
   // Helper: detect Bricks editor
   const isBricksEditor = new URLSearchParams(window.location.search).get('bricks') === 'run';
 
-  // Agent mode options for react-select
-  const agentModeOptions = [
-    { value: 'false', label: 'Chat Mode' },
-    { value: 'true', label: 'Agent Mode' }
+  // Chat mode options for react-select (exclude Content Mode in drawer mode)
+  const chatModeOptions = [
+    { value: 'chat', label: 'Chat Mode' },
+    { value: 'agent', label: 'Agent Mode' },
+    ...(isDrawerMode ? [] : [{ value: 'content', label: 'Content Mode' }])
   ]
 
   // Determine if we're in dark mode by checking the document class
   const isDarkMode = document.documentElement.classList.contains('dark')
+
+  // Helper to get current chat mode value
+  const getCurrentChatMode = () => {
+    if (isContentMode) return 'content'
+    return forceAgentMode ? 'agent' : 'chat'
+  }
+
+  // Handler for chat mode changes
+  const handleChatModeChange = (option) => {
+    if (option.value === 'content') {
+      setIsContentMode(true)
+    } else {
+      setIsContentMode(false)
+      setForceAgentMode(option.value === 'agent')
+    }
+  }
 
   // Helper: extract main textual content from various response formats (Anthropic, OpenAI, etc.)
   const getTextFromResponse = (resp) => {
@@ -1926,9 +1943,6 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
       {!isDrawerMode && (
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
           <div className="flex items-center space-x-2">
-            <Button size="sm" color="purple" onClick={() => setIsContentMode(true)}>
-              ✨ Content Mode
-            </Button>
             <Button size="sm" color="gray" onClick={() => setIsSettingsOpen(true)}>Settings</Button>
             <Button size="sm" color="gray" onClick={() => setIsHistoryOpen(true)}>History</Button>
             <Button size="sm" color="gray" onClick={openShareModal} disabled={messages.filter(msg => msg.role !== 'system' && !msg.isWelcomeMessage).length === 0}>
@@ -1990,9 +2004,9 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                 </span>
               )}
               <CustomSelect
-                value={agentModeOptions.find(option => option.value === forceAgentMode.toString())}
-                onChange={(option) => setForceAgentMode(option.value === 'true')}
-                options={agentModeOptions}
+                value={chatModeOptions.find(option => option.value === getCurrentChatMode())}
+                onChange={handleChatModeChange}
+                options={chatModeOptions}
                 isDisabled={false}
                 darkMode={isDarkMode}
                 size="compact"
@@ -2055,9 +2069,9 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
               </span>
             )}
             <CustomSelect
-              value={agentModeOptions.find(option => option.value === forceAgentMode.toString())}
-              onChange={(option) => setForceAgentMode(option.value === 'true')}
-              options={agentModeOptions}
+              value={chatModeOptions.find(option => option.value === getCurrentChatMode())}
+              onChange={handleChatModeChange}
+              options={chatModeOptions}
               isDisabled={false}
               darkMode={isDarkMode}
               size="compact"

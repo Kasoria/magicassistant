@@ -84,16 +84,6 @@ const ContentMode = ({ adminData, onExitContentMode }) => {
   const contentAreaRef = useRef(null)
   const seoAnalysisRef = useRef(null)
 
-  // Debug: Log web search status on component mount
-  useEffect(() => {
-    console.log('🔍 ContentMode - Component mounted with web search:', webSearchEnabled)
-  }, [])
-
-  // Debug: Log web search status changes
-  useEffect(() => {
-    console.log('🔍 ContentMode - Web search enabled changed to:', webSearchEnabled)
-  }, [webSearchEnabled])
-
   // Content type options
   const contentTypeOptions = [
     { value: 'blog_post', label: '📝 Blog Post' },
@@ -990,15 +980,6 @@ Always prioritize accuracy, fairness, and public interest while creating engagin
     // Clear streaming states for regular generation
     setIsStreaming(false)
     setIsShowingProcessSteps(false)
-    
-    // Debug: Log web search status
-    console.log('🔍 ContentMode - Web Search Debug:', {
-      webSearchEnabled,
-      prompt: prompt.substring(0, 100) + '...',
-      headers: {
-        'X-Web-Search-Enabled': webSearchEnabled ? 'true' : 'false'
-      }
-    })
 
     // For short and medium content, use single generation with realistic token limits
     const maxTokensMap = {
@@ -1017,18 +998,6 @@ Always prioritize accuracy, fairness, and public interest while creating engagin
       max_tokens: maxTokensMap[contentLength] || 2000
     }
 
-    console.log('📤 ContentMode - Request Body:', requestBody)
-    console.log('🔧 ContentMode - Max Tokens Debug:', {
-      contentLength,
-      maxTokens: requestBody.max_tokens,
-      mapping: {
-        short: 5000,
-        medium: 10000,
-        long: 15000,
-        comprehensive: 30000
-      }
-    })
-
     const response = await fetch(`${adminData.restUrl}chat`, {
       method: 'POST',
       headers: {
@@ -1043,18 +1012,7 @@ Always prioritize accuracy, fairness, and public interest while creating engagin
 
     const data = await response.json()
     
-    // Debug: Log response data
-    console.log('📥 ContentMode - Response Data:', {
-      success: data.success,
-      hasResponse: !!data.response,
-      responseLength: data.response?.length || 0,
-      fullResponse: data
-    })
-    
     if (data.success) {
-      console.log('Raw response data:', data.response)
-      console.log('Response type:', typeof data.response)
-      console.log('Response length:', data.response?.length)
       
       // Strip markdown code block wrapper if present
       let cleanContent = data.response
@@ -1065,11 +1023,8 @@ Always prioritize accuracy, fairness, and public interest while creating engagin
         cleanContent = cleanContent.replace(/^```\s*\n/, '').replace(/\n```\s*$/, '')
       }
       
-      console.log('Cleaned content (first 200 chars):', cleanContent?.substring(0, 200))
-      
       // Extract meta description from the generated content
       const metaDesc = extractMetaDescription(cleanContent)
-      console.log('Extracted meta description:', metaDesc)
       if (metaDesc) {
         setMetaDescription(metaDesc)
       }
@@ -1789,7 +1744,6 @@ ${contentSnippet}`
         }
       })
       const users = await response.json()
-      console.log('Fetched authors:', users)
       setAvailableAuthors(users || [])
       
       // Set current user as default author if not already set
