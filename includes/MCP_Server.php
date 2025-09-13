@@ -419,11 +419,11 @@ class MCP_Server {
         // wp_upload_media - Upload a new media file to WordPress
         $this->register_tool(array(
             'name' => 'wp_upload_media',
-            'description' => 'Upload a new media file to WordPress',
+            'description' => 'Upload a new media file to WordPress from either a URL or base64 encoded data',
             'inputSchema' => array(
                 'type' => 'object',
                 'properties' => array(
-                    'file' => array('type' => 'string', 'description' => 'The file to upload (base64 encoded)'),
+                    'file' => array('type' => 'string', 'description' => 'The file to upload. Can be either a URL to download the file from, or base64 encoded file data'),
                     'title' => array('type' => 'string', 'description' => 'The title of the media item'),
                     'caption' => array('type' => 'string', 'description' => 'The caption of the media item'),
                     'description' => array('type' => 'string', 'description' => 'The description of the media item'),
@@ -1029,31 +1029,78 @@ class MCP_Server {
             throw new Exception('File data is required');
         }
         
-        // Process base64 file data
-        $base64_data = $args['file'];
+        $file_input = $args['file'];
+        $file_data = null;
+        $filename = isset($args['title']) ? sanitize_file_name($args['title']) : 'upload';
+        $mime_type = null;
         
-        // Remove data URI prefix if present
-        if (strpos($base64_data, 'data:') === 0) {
-            $base64_data = preg_replace('/^data:.*?;base64,/', '', $base64_data);
+        // Check if input is a URL or base64 data
+        if (filter_var($file_input, FILTER_VALIDATE_URL)) {
+            // Handle URL input - download the file
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+            require_once ABSPATH . 'wp-admin/includes/media.php';
+            require_once ABSPATH . 'wp-admin/includes/image.php';
+            
+            // Download the file to a temp location
+            $tmp = download_url($file_input);
+            if (is_wp_error($tmp)) {
+                throw new Exception('Failed to download file from URL: ' . $tmp->get_error_message());
+            }
+            
+            // Read the downloaded file
+            $file_data = file_get_contents($tmp);
+            if ($file_data === false) {
+                @unlink($tmp);
+                throw new Exception('Failed to read downloaded file');
+            }
+            
+            // Determine MIME type from downloaded file
+            $finfo = finfo_open(FILEINFO_MIME_TYPE);
+            $mime_type = finfo_buffer($finfo, $file_data);
+            finfo_close($finfo);
+            
+            // Get filename from URL if not provided via title
+            if ($filename === 'upload') {
+                $url_path = parse_url($file_input, PHP_URL_PATH);
+                $path_info = pathinfo($url_path);
+                if (!empty($path_info['filename'])) {
+                    $filename = sanitize_file_name($path_info['filename']);
+                }
+            }
+            
+            // Clean up temp file
+            @unlink($tmp);
+            
+        } else {
+            // Handle base64 input
+            $base64_data = $file_input;
+            
+            // Remove data URI prefix if present
+            if (strpos($base64_data, 'data:') === 0) {
+                $base64_data = preg_replace('/^data:.*?;base64,/', '', $base64_data);
+            }
+            
+            // Decode the base64 data
+            $file_data = base64_decode($base64_data, true);
+            if ($file_data === false) {
+                throw new Exception('Invalid base64 data');
+            }
+            
+            // Determine file type
+            $finfo = finfo_open(FILEINFO_MIME_TYPE);
+            $mime_type = finfo_buffer($finfo, $file_data);
+            finfo_close($finfo);
         }
-        
-        // Decode the base64 data
-        $file_data = base64_decode($base64_data, true);
-        if ($file_data === false) {
-            throw new Exception('Invalid base64 data');
-        }
-        
-        // Determine file type
-        $finfo = finfo_open(FILEINFO_MIME_TYPE);
-        $mime_type = finfo_buffer($finfo, $file_data);
-        finfo_close($finfo);
         
         if (empty($mime_type)) {
             throw new Exception('Could not determine file type');
         }
         
-        // Generate filename
-        $filename = isset($args['title']) ? sanitize_file_name($args['title']) : 'upload';
+        if (empty($file_data)) {
+            throw new Exception('No file data available');
+        }
+        
+        // Generate filename with proper extension
         $filename .= '.' . $this->get_extension_from_mime_type($mime_type);
         
         // Upload the file
