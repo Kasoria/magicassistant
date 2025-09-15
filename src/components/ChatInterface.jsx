@@ -74,6 +74,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
   const [enableCustomSystem, setEnableCustomSystem] = useState(false)
   const [persistFiles, setPersistFiles] = useState(false)
   const [webSearchEnabled, setWebSearchEnabled] = useState(false)
+  const [selectedAgentId, setSelectedAgentId] = useState(null)
+  const [availableAgents, setAvailableAgents] = useState([])
   
   // Helper: reset lightbox state when opening
   const resetLightboxState = () => {
@@ -262,6 +264,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
   useEffect(() => {
     loadSettings()
     loadChatSessions(true) // Auto-load last session only on initial mount
+    loadAvailableAgents() // Load AI agents
     
     // Check for prefilled message from SEO Analytics
     const prefillMessage = sessionStorage.getItem('mat_prefill_message')
@@ -302,6 +305,27 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
       }
     } catch (error) {
       console.error('Failed to load settings:', error)
+    }
+  }
+
+  const loadAvailableAgents = async () => {
+    try {
+      const response = await fetch(`${adminData.restUrl}ai-agents`, {
+        headers: {
+          'X-WP-Nonce': adminData.nonces.wp_rest,
+        },
+      })
+      
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success) {
+          // Only load active agents
+          const activeAgents = (data.data || []).filter(agent => agent.is_active === '1' || agent.is_active === 1)
+          setAvailableAgents(activeAgents)
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load agents:', error)
     }
   }
 
@@ -469,8 +493,18 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
         })) : undefined,
         custom_system_message: enableCustomSystem && customSystemMessage ? customSystemMessage : undefined,
         web_search_enabled: webSearchEnabled,
+        agent_id: selectedAgentId,
         streaming: true // Flag to enable streaming
       }
+      
+      // DEBUG: Log the request body
+      console.log('🔍 ChatInterface DEBUG - Streaming request body:', {
+        agent_mode: forceAgentMode,
+        session_id: currentSessionId,
+        agent_id: selectedAgentId,
+        custom_system_message: enableCustomSystem && customSystemMessage ? 'PROVIDED' : 'NULL',
+        message_preview: apiMessageContent.substring(0, 100)
+      })
 
       // Use fetch for streaming with proper POST data since EventSource doesn't support POST
       const response = await fetch(`${adminData.restUrl}chat-stream`, {
@@ -754,6 +788,16 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
       } else {
         // Only set loading state for non-streaming requests
         setIsLoading(true)
+        
+        // DEBUG: Log the regular chat request
+        console.log('🔍 ChatInterface DEBUG - Regular chat request:', {
+          agent_mode: forceAgentMode,
+          session_id: currentSessionId,
+          agent_id: selectedAgentId,
+          custom_system_message: enableCustomSystem && customSystemMessage ? 'PROVIDED' : 'NULL',
+          message_preview: apiMessageContent.substring(0, 100)
+        })
+        
         // Use regular fetch for non-streaming
         const response = await fetch(`${adminData.restUrl}chat`, {
           method: 'POST',
@@ -780,7 +824,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
               isImage: f.isImage || false
             })) : undefined,
             custom_system_message: enableCustomSystem && customSystemMessage ? customSystemMessage : undefined,
-            web_search_enabled: webSearchEnabled
+            web_search_enabled: webSearchEnabled,
+            agent_id: selectedAgentId
           })
         })
 
@@ -1106,6 +1151,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
     setCustomTitle('') // Reset custom title
     setIsEditingTitle(false) // Stop editing if in edit mode
     setForceAgentMode(true)   // Default back to Agent Mode
+    setSelectedAgentId(null)  // Reset AI agent selection
     // Only clear files if persistence is disabled
     if (!persistFiles) {
       setAttachedFiles([]) // Clear any attached files
@@ -1182,6 +1228,12 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
           // Update Agent Mode to reflect the saved session preference
           if (typeof session.agent_mode !== 'undefined') {
             setForceAgentMode(session.agent_mode)
+          }
+          // Restore selected agent if saved with session
+          if (session.agent_id) {
+            setSelectedAgentId(parseInt(session.agent_id))
+          } else {
+            setSelectedAgentId(null)
           }
           // Persist last opened session
           saveLastSession(session.id)
@@ -1434,7 +1486,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
           truncate_at_message: editingMessageIndex,
           page_url: pageContext.url,
           page_context: pageContext,
-          web_search_enabled: webSearchEnabled
+          web_search_enabled: webSearchEnabled,
+          agent_id: selectedAgentId
         })
       })
 
@@ -1929,6 +1982,44 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
   const saveFilePersistenceSetting = () => {
     localStorage.setItem('magicassistant_persist_files', persistFiles)
     showSuccess('File persistence setting saved!')
+  }
+
+  const saveAgentSelection = async () => {
+    if (!currentSessionId) {
+      showError('Please start a conversation before selecting an agent')
+      return
+    }
+    
+    try {
+      const response = await fetch(`${adminData.restUrl}chat-sessions/${currentSessionId}/agent`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-WP-Nonce': adminData.nonces.wp_rest,
+        },
+        body: JSON.stringify({
+          agent_id: selectedAgentId
+        })
+      })
+      
+      const data = await response.json()
+      if (data.success) {
+        showSuccess('AI Agent selection saved!')
+        // Update chat sessions to reflect agent selection
+        setChatSessions(prevSessions => 
+          prevSessions.map(session => 
+            session.id === currentSessionId 
+              ? { ...session, agent_id: selectedAgentId }
+              : session
+          )
+        )
+      } else {
+        showError(data.message || 'Failed to save agent selection')
+      }
+    } catch (error) {
+      console.error('Failed to save agent selection:', error)
+      showError('Failed to save agent selection')
+    }
   }
 
   // If in Content Mode, render that instead
@@ -2672,6 +2763,66 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                     Clear Current Files
                   </Button>
                 )}
+              </div>
+            </div>
+
+            {/* AI Agent Selection */}
+            <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border border-blue-200 dark:border-blue-800">
+              <div className="flex items-center mb-3">
+                <svg className="w-5 h-5 text-blue-600 dark:text-blue-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M9.243 3.03a1 1 0 01.727 1.213L9.53 6h2.94l.56-2.243a1 1 0 111.94.486L14.53 6H17a1 1 0 110 2h-2.97l-1 4H15a1 1 0 110 2h-2.47l-.56 2.242a1 1 0 11-1.94-.485L10.47 14H7.53l-.56 2.242a1 1 0 11-1.94-.485L5.47 14H3a1 1 0 110-2h2.97l1-4H5a1 1 0 110-2h2.47l.56-2.243a1 1 0 011.213-.727zM9.03 8l-1 4h2.94l1-4H9.03z" clipRule="evenodd" />
+                </svg>
+                <h3 className="text-sm font-medium text-blue-900 dark:text-blue-100">AI Agent Selection</h3>
+              </div>
+              
+              <p className="text-sm text-blue-800 dark:text-blue-200 mb-3">
+                Select which AI Agent to use for this chat session. The agent will provide specialized context and behavior for your conversations.
+              </p>
+              
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-blue-900 dark:text-blue-100 mb-2">
+                    Selected Agent
+                  </label>
+                  <select
+                    value={selectedAgentId || ''}
+                    onChange={(e) => setSelectedAgentId(e.target.value ? parseInt(e.target.value) : null)}
+                    className="w-full p-2 border border-blue-300 dark:border-blue-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">No Agent (Default)</option>
+                    {availableAgents.map(agent => (
+                      <option key={agent.id} value={agent.id}>
+                        {agent.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                
+                {selectedAgentId && (
+                  <div className="bg-blue-100 dark:bg-blue-800/30 rounded p-3">
+                    {(() => {
+                      const selectedAgent = availableAgents.find(agent => agent.id === selectedAgentId);
+                      return selectedAgent ? (
+                        <div>
+                          <p className="text-sm font-medium text-blue-900 dark:text-blue-100 mb-1">
+                            {selectedAgent.name}
+                          </p>
+                          <p className="text-xs text-blue-800 dark:text-blue-200">
+                            {selectedAgent.description}
+                          </p>
+                        </div>
+                      ) : null;
+                    })()}
+                  </div>
+                )}
+                
+                <Button
+                  onClick={saveAgentSelection}
+                  size="sm"
+                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  Save Agent Selection
+                </Button>
               </div>
             </div>
 

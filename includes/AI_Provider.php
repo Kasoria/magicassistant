@@ -85,6 +85,12 @@ class AI_Provider {
             'callback' => array($this, 'update_chat_title'),
             'permission_callback' => array($this, 'check_permissions'),
         ));
+
+        register_rest_route('magicassistant/v1', '/chat-sessions/(?P<session_id>[a-zA-Z0-9_]+)/agent', array(
+            'methods' => 'PUT',
+            'callback' => array($this, 'update_chat_agent'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
         
         // Settings endpoints
         register_rest_route('magicassistant/v1', '/settings', array(
@@ -396,6 +402,82 @@ class AI_Provider {
             'callback' => array($this, 'get_openrouter_models'),
             'permission_callback' => array($this, 'check_permissions'),
         ));
+
+        // AI AGENTS ENDPOINTS
+        register_rest_route('magicassistant/v1', '/ai-agents', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_ai_agents'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        register_rest_route('magicassistant/v1', '/ai-agents', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'create_ai_agent'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        register_rest_route('magicassistant/v1', '/ai-agents/(?P<agent_id>\d+)', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_ai_agent'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        register_rest_route('magicassistant/v1', '/ai-agents/(?P<agent_id>\d+)', array(
+            'methods' => 'PUT',
+            'callback' => array($this, 'update_ai_agent'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        register_rest_route('magicassistant/v1', '/ai-agents/(?P<agent_id>\d+)', array(
+            'methods' => 'DELETE',
+            'callback' => array($this, 'delete_ai_agent'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        // KNOWLEDGE BASE ENDPOINTS
+        register_rest_route('magicassistant/v1', '/knowledge-base', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_knowledge_base_entries'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        register_rest_route('magicassistant/v1', '/knowledge-base', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'create_knowledge_base_entry'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        register_rest_route('magicassistant/v1', '/knowledge-base/(?P<kb_id>\d+)', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_knowledge_base_entry'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        register_rest_route('magicassistant/v1', '/knowledge-base/(?P<kb_id>\d+)', array(
+            'methods' => 'PUT',
+            'callback' => array($this, 'update_knowledge_base_entry'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        register_rest_route('magicassistant/v1', '/knowledge-base/(?P<kb_id>\d+)', array(
+            'methods' => 'DELETE',
+            'callback' => array($this, 'delete_knowledge_base_entry'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        // File processing endpoint
+        register_rest_route('magicassistant/v1', '/knowledge-base/process-file', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'process_file_upload'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        // URL scraping endpoint
+        register_rest_route('magicassistant/v1', '/knowledge-base/scrape-url', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'scrape_url_content'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
     }
     
     public function handle_chat($request) {
@@ -416,6 +498,15 @@ class AI_Provider {
         $custom_system_message = $data['custom_system_message'] ?? null;
         $web_search_enabled = $data['web_search_enabled'] ?? false;
         $max_tokens = $data['max_tokens'] ?? null;
+        $agent_id = $data['agent_id'] ?? null;
+        
+        // DEBUG: Log incoming request details
+        error_log('🔍 AI_Provider DEBUG - Incoming chat request:');
+        error_log('   - message: ' . substr($message, 0, 100) . '...');
+        error_log('   - agent_mode: ' . ($agent_mode ? 'true' : 'false'));
+        error_log('   - session_id: ' . $session_id);
+        error_log('   - agent_id: ' . ($agent_id ? $agent_id : 'NULL'));
+        error_log('   - custom_system_message: ' . ($custom_system_message ? 'PROVIDED' : 'NULL'));
         
         // Reset tool discovery flag for new sessions
         if ($this->current_session_id !== $session_id) {
@@ -503,12 +594,13 @@ class AI_Provider {
                 throw new Exception('AI API key not configured for ' . $provider . '.');
             }
             
+            
             if ($agent_mode) {
                 // Use agent mode for complex multi-step tasks
-                $result = $this->handle_agent_mode($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens);
+                $result = $this->handle_agent_mode($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens, $session_id, $agent_id);
             } else {
                 // Use simple chat mode
-                $result = $this->handle_chat_mode($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens);
+                $result = $this->handle_chat_mode($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens, $session_id, $agent_id);
             }
             
             $response_time = microtime(true) - $start_time;
@@ -722,6 +814,15 @@ class AI_Provider {
         $page_url = $data['page_url'] ?? '';
         $page_context = $data['page_context'] ?? array();
         $session_id = $data['session_id'] ?? $this->generate_session_id();
+        $agent_id = $data['agent_id'] ?? null;
+        
+        // DEBUG: Log streaming chat request details
+        error_log('🔍 AI_Provider DEBUG - Streaming chat request:');
+        error_log('   - message: ' . substr($message, 0, 100) . '...');
+        error_log('   - agent_mode: ' . ($agent_mode ? 'true' : 'false'));
+        error_log('   - session_id: ' . $session_id);
+        error_log('   - agent_id: ' . ($agent_id ? $agent_id : 'NULL'));
+        error_log('   - custom_system_message: ' . ($custom_system_message ? 'PROVIDED' : 'NULL'));
         
         $user_id = get_current_user_id();
         $start_time = microtime(true);
@@ -783,10 +884,11 @@ class AI_Provider {
             flush();
             
             // Use the regular AI handlers but capture response in chunks
+            
             if ($agent_mode) {
-                $result = $this->handle_agent_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens);
+                $result = $this->handle_agent_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens, $session_id, $agent_id);
             } else {
-                $result = $this->handle_chat_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens);
+                $result = $this->handle_chat_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens, $session_id, $agent_id);
             }
             
             $response_time = microtime(true) - $start_time;
@@ -925,26 +1027,31 @@ class AI_Provider {
         return false; // Always return false since auto mode is removed
     }
     
-    private function handle_chat_mode($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null) {
+    private function handle_chat_mode($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null, $session_id = null, $agent_id = null) {
         // Limit the amount of history we send to the model to save tokens
         $history_limit = $this->settings['conversation_history_limit'] ?? 20;
         if ($history_limit > 0 && is_array($conversation_history) && count($conversation_history) > $history_limit) {
             $conversation_history = array_slice($conversation_history, -$history_limit);
         }
         
-        // Prepare system message with MCP tools information
-        $system_message = $this->build_system_message($custom_system_message);
+        // Use agent system message builder which handles both agent and regular cases
+        $system_message = $this->build_agent_system_message($custom_system_message, $session_id, $agent_id);
         
         // Append file attachments information if present
         if (!empty($attached_files)) {
+            error_log('🔍 AI_Provider DEBUG - Processing attached files:');
+            error_log('   - Number of files: ' . count($attached_files));
+            
             $files_info = "\n\nAttached Files:\n";
             foreach ($attached_files as $file) {
                 $files_info .= "- {$file['name']} ({$file['type']}, " . round($file['size'] / 1024, 1) . "KB)";
                 if (!empty($file['content'])) {
                     $files_info .= "\n";
+                    error_log('   - File with content: ' . $file['name'] . ' (content length: ' . strlen($file['content']) . ')');
                 }
             }
             $system_message .= $files_info;
+            error_log('🔍 AI_Provider DEBUG - System message after adding files (length: ' . strlen($system_message) . ')');
         }
         
         // Build conversation with system message
@@ -1105,7 +1212,7 @@ class AI_Provider {
         );
     }
     
-    private function handle_agent_mode($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null) {
+    private function handle_agent_mode($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null, $session_id = null, $agent_id = null) {
         // Limit history length to avoid oversized prompts while keeping recent context
         $history_limit = $this->settings['conversation_history_limit'] ?? 20;
         if ($history_limit > 0 && is_array($conversation_history) && count($conversation_history) > $history_limit) {
@@ -1118,18 +1225,23 @@ class AI_Provider {
         $all_tool_results = []; // Store all tool results for final display
         
         // Prepare enhanced system message for agent mode
-        $system_message = $this->build_agent_system_message($custom_system_message);
+        $system_message = $this->build_agent_system_message($custom_system_message, $session_id, $agent_id);
         
         // Append file attachments information if present
         if (!empty($attached_files)) {
+            error_log('🔍 AI_Provider DEBUG - Processing attached files:');
+            error_log('   - Number of files: ' . count($attached_files));
+            
             $files_info = "\n\nAttached Files:\n";
             foreach ($attached_files as $file) {
                 $files_info .= "- {$file['name']} ({$file['type']}, " . round($file['size'] / 1024, 1) . "KB)";
                 if (!empty($file['content'])) {
                     $files_info .= "\n";
+                    error_log('   - File with content: ' . $file['name'] . ' (content length: ' . strlen($file['content']) . ')');
                 }
             }
             $system_message .= $files_info;
+            error_log('🔍 AI_Provider DEBUG - System message after adding files (length: ' . strlen($system_message) . ')');
         }
         
         // Build initial conversation
@@ -1375,11 +1487,38 @@ class AI_Provider {
         return $formatted;
     }
     
-    private function build_agent_system_message($custom_system_message = null) {
+    private function build_agent_system_message($custom_system_message = null, $session_id = null, $agent_id = null) {
+        
+        error_log('🔍 AI_Provider DEBUG - build_agent_system_message called:');
+        error_log('   - custom_system_message: ' . ($custom_system_message ? 'PROVIDED (' . strlen($custom_system_message) . ' chars)' : 'NULL'));
+        error_log('   - session_id: ' . ($session_id ? $session_id : 'NULL'));
+        error_log('   - agent_id: ' . ($agent_id ? $agent_id : 'NULL'));
+        
         // If custom system message is provided, use it instead of the default
         if (!empty($custom_system_message)) {
+            error_log('🔍 AI_Provider DEBUG - Using custom system message, returning early');
             return $custom_system_message;
         }
+        
+        // Get agent context - prioritize direct agent_id over session lookup
+        if ($agent_id !== null) {
+            error_log('🔍 AI_Provider DEBUG - Getting agent context by ID: ' . $agent_id);
+            $agent_context = $this->get_agent_context_by_id($agent_id);
+        } else {
+            error_log('🔍 AI_Provider DEBUG - Getting agent context by session: ' . ($session_id ? $session_id : 'NULL'));
+            $agent_context = $this->get_agent_context_for_session($session_id);
+        }
+        $agent_info = $agent_context['agent'] ?? null;
+        $knowledge_base_entries = $agent_context['knowledge_base'] ?? [];
+        
+        error_log('🔍 AI_Provider DEBUG - Agent context results:');
+        error_log('   - agent_info: ' . ($agent_info ? 'FOUND (name: ' . ($agent_info['name'] ?? 'unknown') . ')' : 'NULL'));
+        error_log('   - knowledge_base_entries: ' . count($knowledge_base_entries) . ' entries');
+        if ($agent_info) {
+            error_log('   - agent system_message: ' . (empty($agent_info['system_message']) ? 'EMPTY' : 'PROVIDED (' . strlen($agent_info['system_message']) . ' chars)'));
+        }
+        
+        
         $tools_info = "\nYou have access to a comprehensive set of WordPress MCP tools including SEO analysis capabilities through DataForSEO. Use them thoughtfully when they can enhance your answer.\n";
         
         $content_mode_tools = "
@@ -1403,7 +1542,17 @@ CONTENT MODE BEST PRACTICES:
 
 For content optimization requests, use the content_optimize_seo tool to provide specific SEO recommendations.";
         
-        return "You are MagicAssistant, a helpful AI assistant for WordPress websites operating in AGENT MODE. You can help users manage their WordPress site, create content, perform SEO analysis, and execute complex multi-step operations.
+        
+        // Use agent's custom system message if available, otherwise use default
+        
+        if ($agent_info && !empty($agent_info['system_message'])) {
+            $base_message = $agent_info['system_message'];
+            
+            // Don't automatically append tools info - let the agent's system message have full control
+            // If the agent wants tools info, they can include it in their custom system message
+        } else {
+            // Build the default system message
+            $base_message = "You are MagicAssistant, a helpful AI assistant for WordPress websites operating in AGENT MODE. You can help users manage their WordPress site, create content, perform SEO analysis, and execute complex multi-step operations.
 
 {$tools_info}{$content_mode_tools}
 
@@ -1430,6 +1579,26 @@ In Agent Mode, you should:
 6. Provide insights and analysis, not just raw data
 
 Be proactive and thorough, but focus on creating natural, helpful responses rather than technical data dumps.";
+        }
+
+        // Add knowledge base context if available
+        if (!empty($knowledge_base_entries)) {
+            $base_message .= "\n\nKnowledge Base Context:\n";
+            foreach ($knowledge_base_entries as $entry) {
+                $base_message .= "--- {$entry['name']} ---\n";
+                $base_message .= $entry['content'] . "\n\n";
+            }
+        }
+        
+        error_log('🔍 AI_Provider DEBUG - Final system message built:');
+        error_log('   - Length: ' . strlen($base_message) . ' characters');
+        error_log('   - Preview: ' . substr($base_message, 0, 200) . '...');
+        if ($agent_info) {
+            error_log('   - Used agent: ' . ($agent_info['name'] ?? 'unknown'));
+        }
+        error_log('   - KB entries: ' . count($knowledge_base_entries));
+        
+        return $base_message;
     }
 
     private function build_system_message($custom_system_message = null) {
@@ -1467,6 +1636,160 @@ IMPORTANT: Respond naturally and conversationally. When you use tools to gather 
 
 Be conversational, helpful, and proactive in suggesting how you can help with WordPress and SEO tasks.";
     }
+
+    /**
+     * Get agent context for a chat session
+     */
+    private function get_agent_context_for_session($session_id) {
+        if (!$session_id || !$this->db) {
+            return [];
+        }
+        
+        try {
+            $user_id = get_current_user_id();
+            
+            // Get the chat session to find the agent_id
+            $session = $this->db->get_chat_session($user_id, $session_id);
+            if (!$session || empty($session['agent_id'])) {
+                return [];
+            }
+            
+            $agent_id = intval($session['agent_id']);
+            
+            // Get the agent information
+            $agent = $this->db->get_ai_agents($user_id, $agent_id);
+            if (!$agent) {
+                return [];
+            }
+            
+            // Get the knowledge base entries associated with this agent
+            $kb_ids_raw = $agent['knowledge_base_ids'];
+            
+            // Parse knowledge base IDs - could be JSON array, comma-separated string, or single ID
+            $kb_ids = [];
+            if (!empty($kb_ids_raw)) {
+                // Try JSON decode first
+                $json_decoded = json_decode($kb_ids_raw, true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($json_decoded)) {
+                    $kb_ids = $json_decoded;
+                } else {
+                    // Try comma-separated string
+                    $comma_separated = explode(',', $kb_ids_raw);
+                    if (count($comma_separated) > 1) {
+                        $kb_ids = array_map('intval', array_map('trim', $comma_separated));
+                    } else {
+                        // Single ID
+                        $kb_ids = [intval($kb_ids_raw)];
+                    }
+                }
+            }
+            
+            $knowledge_base_entries = [];
+            
+            if (!empty($kb_ids) && is_array($kb_ids)) {
+                $knowledge_base_entries = $this->db->get_knowledge_base_entries_by_ids($user_id, $kb_ids);
+            }
+            
+            return [
+                'agent' => $agent,
+                'knowledge_base' => $knowledge_base_entries
+            ];
+        } catch (Exception $e) {
+            // Log error but don't fail the request - just continue without agent context
+            error_log('Error getting agent context: ' . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * Get agent context by direct agent ID
+     */
+    private function get_agent_context_by_id($agent_id) {
+        error_log('🔍 AI_Provider DEBUG - get_agent_context_by_id called with ID: ' . $agent_id);
+        
+        if (!$agent_id || !$this->db) {
+            error_log('🔍 AI_Provider DEBUG - Early return: agent_id=' . ($agent_id ? $agent_id : 'NULL') . ', db=' . ($this->db ? 'OK' : 'NULL'));
+            return [];
+        }
+        
+        try {
+            $user_id = get_current_user_id();
+            $agent_id = intval($agent_id);
+            
+            error_log('🔍 AI_Provider DEBUG - Searching for agent: user_id=' . $user_id . ', agent_id=' . $agent_id);
+            
+            // Get the agent information directly
+            $agent = $this->db->get_ai_agents($user_id, $agent_id);
+            error_log('🔍 AI_Provider DEBUG - DB query result: ' . ($agent ? 'FOUND' : 'NOT FOUND'));
+            if (!$agent) {
+                return [];
+            }
+            
+            // Get the knowledge base entries associated with this agent
+            $kb_ids_raw = $agent['knowledge_base_ids'];
+            
+            // Parse knowledge base IDs - could be JSON array, comma-separated string, or single ID
+            $kb_ids = [];
+            if (!empty($kb_ids_raw)) {
+                // Try JSON decode first
+                $json_decoded = json_decode($kb_ids_raw, true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($json_decoded)) {
+                    $kb_ids = $json_decoded;
+                } else {
+                    // Try comma-separated string
+                    $comma_separated = explode(',', $kb_ids_raw);
+                    if (count($comma_separated) > 1) {
+                        $kb_ids = array_map('intval', array_map('trim', $comma_separated));
+                    } else {
+                        // Single ID
+                        $kb_ids = [intval($kb_ids_raw)];
+                    }
+                }
+            }
+            
+            $knowledge_base_entries = [];
+            
+            if (!empty($kb_ids) && is_array($kb_ids)) {
+                $knowledge_base_entries = $this->db->get_knowledge_base_entries_by_ids($user_id, $kb_ids);
+            }
+            
+            return [
+                'agent' => $agent,
+                'knowledge_base' => $knowledge_base_entries
+            ];
+        } catch (Exception $e) {
+            // Log error but don't fail the request - just continue without agent context
+            error_log('Error getting agent context by ID: ' . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * Build agent context section for system message
+     */
+    private function build_agent_context_section($agent, $knowledge_base_entries) {
+        
+        $context_section = "=== AI AGENT CONTEXT ===\n";
+        $context_section .= "You are currently operating as: {$agent['name']}\n";
+        
+        if (!empty($agent['description'])) {
+            $context_section .= "Agent Description: {$agent['description']}\n";
+        }
+        
+        if (!empty($knowledge_base_entries)) {
+            $context_section .= "\nKnowledge Base Context:\n";
+            foreach ($knowledge_base_entries as $entry) {
+                $context_section .= "--- {$entry['title']} ---\n";
+                $context_section .= $entry['content'] . "\n\n";
+            }
+        }
+        
+        $context_section .= "=== END AGENT CONTEXT ===\n";
+        $context_section .= "Use this agent context to inform your responses and behavior. Stay in character as the defined agent while still maintaining your core helpful assistant capabilities.";
+        
+        
+        return $context_section;
+    }
     
     /**
      * Convert chat messages format to Responses API input format
@@ -1476,9 +1799,24 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $system_message = '';
         $conversation_messages = [];
         
+        error_log('🔍 AI_Provider DEBUG - convert_messages_to_responses_input processing:');
+        error_log('   - Total messages: ' . count($messages));
+        $system_count = 0;
+        
         foreach ($messages as $message) {
             if ($message['role'] === 'system') {
-                $system_message = $message['content'];
+                $system_count++;
+                error_log('   - System message #' . $system_count . ' (length: ' . strlen($message['content']) . ')');
+                error_log('   - Content preview: ' . substr($message['content'], 0, 100) . '...');
+                
+                // Concatenate all system messages instead of overwriting
+                if (!empty($system_message)) {
+                    $system_message .= "\n\n" . $message['content'];
+                    error_log('   - Concatenating with existing system message');
+                } else {
+                    $system_message = $message['content'];
+                    error_log('   - Setting as first system message');
+                }
             } else {
                 // Filter out tool-related messages as Responses API doesn't support them in input
                 if ($message['role'] === 'tool' || 
@@ -1510,6 +1848,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 $conversation_messages[] = $clean_message;
             }
         }
+        
+        error_log('🔍 AI_Provider DEBUG - convert_messages_to_responses_input final result:');
+        error_log('   - Final system message length: ' . strlen($system_message));
+        error_log('   - Final system message preview: ' . substr($system_message, 0, 200) . '...');
+        error_log('   - System messages processed: ' . $system_count);
         
         // For Responses API, we can send the messages directly as input
         // The API will handle the conversation flow
@@ -1611,20 +1954,39 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     }
     
     private function call_openai_responses($messages, $api_key, $web_search_enabled = false, $is_streaming = false, $max_tokens = null) {
-        // Extract system message and conversation for proper Responses API formatting
+        // Convert chat messages format to Responses API input format
+        // This will properly handle concatenating all system messages
+        $input_content = $this->convert_messages_to_responses_input($messages);
+        
+        // Extract the system message that was properly concatenated in convert_messages_to_responses_input
         $system_message = '';
         $conversation_messages = [];
         
+        error_log('🔍 AI_Provider DEBUG - call_openai_responses system message extraction:');
+        $system_msg_count = 0;
+        
         foreach ($messages as $message) {
             if ($message['role'] === 'system') {
-                $system_message = $message['content'];
+                $system_msg_count++;
+                error_log('   - Processing system message #' . $system_msg_count . ' (length: ' . strlen($message['content']) . ')');
+                
+                // Concatenate all system messages instead of overwriting
+                if (!empty($system_message)) {
+                    $system_message .= "\n\n" . $message['content'];
+                    error_log('   - Concatenating with existing system message');
+                } else {
+                    $system_message = $message['content'];
+                    error_log('   - Setting as first system message');
+                }
             } else {
                 $conversation_messages[] = $message;
             }
         }
         
-        // Convert chat messages format to Responses API input format
-        $input_content = $this->convert_messages_to_responses_input($messages);
+        error_log('🔍 AI_Provider DEBUG - Final concatenated system message:');
+        error_log('   - Length: ' . strlen($system_message));
+        error_log('   - Preview: ' . substr($system_message, 0, 200) . '...');
+        error_log('   - Total system messages processed: ' . $system_msg_count);
         
         // Ensure input_content is an array for function call iterations
         if (!is_array($input_content)) {
@@ -1682,6 +2044,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             // Add system message as instructions if present
             if (!empty($system_message)) {
                 $request_data['data']['instructions'] = $system_message;
+                error_log('🔍 AI_Provider DEBUG - Setting instructions for OpenAI:');
+                error_log('   - Instructions length: ' . strlen($system_message));
+                error_log('   - Instructions preview: ' . substr($system_message, 0, 200) . '...');
+            } else {
+                error_log('🔍 AI_Provider DEBUG - No system message to set as instructions');
             }
             
             // Merge license headers so MagicProxy can track usage by site & license
@@ -1729,6 +2096,19 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             
             if ($is_streaming) {
                 $this->send_status_update("Sending request to OpenAI API...");
+            }
+            
+            // DEBUG: Log the complete request payload structure
+            error_log('🔍 AI_Provider DEBUG - Complete OpenAI request payload:');
+            error_log('   - Request data keys: ' . implode(', ', array_keys($request_data)));
+            if (isset($request_data['data'])) {
+                error_log('   - Request data.data keys: ' . implode(', ', array_keys($request_data['data'])));
+                if (isset($request_data['data']['instructions'])) {
+                    error_log('   - Instructions field present: YES');
+                    error_log('   - Instructions content: ' . $request_data['data']['instructions']);
+                } else {
+                    error_log('   - Instructions field present: NO');
+                }
             }
             
             $response = wp_remote_post( $proxy_url, array(
@@ -1977,13 +2357,32 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         // Separate system and user messages
         $system_message = '';
         $conversation   = [];
+        
+        error_log('🔍 AI_Provider DEBUG - call_anthropic system message extraction:');
+        $system_msg_count = 0;
+        
         foreach ($messages as $m) {
             if ($m['role'] === 'system') {
-                $system_message = $m['content'];
+                $system_msg_count++;
+                error_log('   - Processing system message #' . $system_msg_count . ' (length: ' . strlen($m['content']) . ')');
+                
+                // Concatenate all system messages instead of overwriting
+                if (!empty($system_message)) {
+                    $system_message .= "\n\n" . $m['content'];
+                    error_log('   - Concatenating with existing system message');
+                } else {
+                    $system_message = $m['content'];
+                    error_log('   - Setting as first system message');
+                }
             } else {
                 $conversation[] = $m;
             }
         }
+        
+        error_log('🔍 AI_Provider DEBUG - Final Anthropic system message:');
+        error_log('   - Length: ' . strlen($system_message));
+        error_log('   - Preview: ' . substr($system_message, 0, 200) . '...');
+        error_log('   - Total system messages processed: ' . $system_msg_count);
         $tools = $this->get_mcp_tools_for_anthropic();
         $request_data = array(
             'action'   => 'anthropic',
@@ -2114,13 +2513,32 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         // Separate system and user messages (similar to Anthropic format)
         $system_message = '';
         $conversation   = [];
+        
+        error_log('🔍 AI_Provider DEBUG - call_openrouter system message extraction:');
+        $system_msg_count = 0;
+        
         foreach ($messages as $m) {
             if ($m['role'] === 'system') {
-                $system_message = $m['content'];
+                $system_msg_count++;
+                error_log('   - Processing system message #' . $system_msg_count . ' (length: ' . strlen($m['content']) . ')');
+                
+                // Concatenate all system messages instead of overwriting
+                if (!empty($system_message)) {
+                    $system_message .= "\n\n" . $m['content'];
+                    error_log('   - Concatenating with existing system message');
+                } else {
+                    $system_message = $m['content'];
+                    error_log('   - Setting as first system message');
+                }
             } else {
                 $conversation[] = $m;
             }
         }
+        
+        error_log('🔍 AI_Provider DEBUG - Final OpenRouter system message:');
+        error_log('   - Length: ' . strlen($system_message));
+        error_log('   - Preview: ' . substr($system_message, 0, 200) . '...');
+        error_log('   - Total system messages processed: ' . $system_msg_count);
         
         $model = $this->settings['openrouter_model'] ?? 'anthropic/claude-3.5-sonnet';
         
@@ -2981,6 +3399,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 'providers_used' => $session['providers_used'],
                 'models_used' => $session['models_used'],
                 'agent_mode' => isset($session['agent_mode']) ? (bool)$session['agent_mode'] : false,
+                'agent_id' => isset($session['agent_id']) ? intval($session['agent_id']) : null,
                 'first_message_time' => $session['created_at'],
                 'last_message_time' => $session['updated_at']
             );
@@ -3092,9 +3511,43 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     }
 
     /**
+     * Update chat session agent
+     */
+    public function update_chat_agent($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+        
+        $session_id = $request->get_param('session_id');
+        $data = $request->get_json_params();
+        $agent_id = $data['agent_id'] ?? null;
+        $user_id = get_current_user_id();
+        
+        if (empty($session_id)) {
+            return new WP_Error('missing_session', 'Session ID is required', array('status' => 400));
+        }
+        
+        // Sanitize agent_id - null is allowed for "no agent"
+        $agent_id = is_numeric($agent_id) ? intval($agent_id) : null;
+        
+        // Use the database method to update agent
+        $updated = $this->db->set_chat_session_agent($user_id, $session_id, $agent_id);
+        
+        if ($updated === false) {
+            return new WP_Error('update_failed', 'Failed to update chat agent', array('status' => 500));
+        }
+        
+        return array(
+            'success' => true,
+            'agent_id' => $agent_id,
+            'message' => 'Chat agent updated successfully'
+        );
+    }
+
+    /**
      * Handle chat mode with streaming responses
      */
-    private function handle_chat_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null) {
+    private function handle_chat_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null, $session_id = null) {
         // Reset processing steps for new conversation
         $this->processing_steps = [];
         // Enable streaming mode for tool execution status updates
@@ -3111,8 +3564,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         $this->send_status_update("Building system message...");
         
-        // Prepare system message with MCP tools information
-        $system_message = $this->build_system_message($custom_system_message);
+        // Use agent system message builder which handles both agent and regular cases
+        $system_message = $this->build_agent_system_message($custom_system_message, $session_id);
         
         // Append file attachments information if present
         if (!empty($attached_files)) {
@@ -3327,7 +3780,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     /**
      * Handle agent mode with streaming responses
      */
-    private function handle_agent_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null) {
+    private function handle_agent_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null, $session_id = null) {
         // Reset processing steps for new conversation
         $this->processing_steps = [];
         // Enable streaming mode for tool execution status updates
@@ -3351,7 +3804,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $this->send_status_update("Building enhanced agent system message...");
         
         // Prepare enhanced system message for agent mode
-        $system_message = $this->build_agent_system_message($custom_system_message);
+        $system_message = $this->build_agent_system_message($custom_system_message, $session_id);
         
         // Append file attachments information if present
         if (!empty($attached_files)) {
@@ -6828,18 +7281,115 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
      * Extract readable text content from HTML
      */
     private function extract_text_from_html($html) {
-        // Remove script and style elements
+        // Remove script, style, and noscript elements
         $html = preg_replace('/<script[^>]*>.*?<\/script>/is', '', $html);
         $html = preg_replace('/<style[^>]*>.*?<\/style>/is', '', $html);
+        $html = preg_replace('/<noscript[^>]*>.*?<\/noscript>/is', '', $html);
+        
+        // Remove HTML comments
+        $html = preg_replace('/<!--.*?-->/s', '', $html);
+        
+        // Remove common non-content structural elements
+        $html = preg_replace('/<nav\b[^>]*>.*?<\/nav>/si', '', $html);
+        $html = preg_replace('/<header\b[^>]*>.*?<\/header>/si', '', $html);
+        $html = preg_replace('/<footer\b[^>]*>.*?<\/footer>/si', '', $html);
+        $html = preg_replace('/<aside\b[^>]*>.*?<\/aside>/si', '', $html);
+        
+        // Remove elements with specific non-content classes/IDs (more targeted)
+        $non_content_patterns = [
+            // Navigation menus (specific patterns)
+            '/<[^>]+(?:class|id)=["\'][^"\']*\b(?:main-nav|navigation|nav-menu|nav-bar|breadcrumb|menu-toggle)\b[^"\']*["\'][^>]*>.*?<\/[^>]+>/si',
+            // Cookie notices and consent (specific patterns)
+            '/<[^>]+(?:class|id)=["\'][^"\']*\b(?:cookie-notice|cookie-consent|gdpr-banner|privacy-notice|consent-banner)\b[^"\']*["\'][^>]*>.*?<\/[^>]+>/si',
+            // Social media widgets (specific patterns)
+            '/<[^>]+(?:class|id)=["\'][^"\']*\b(?:social-share|share-buttons|social-icons|follow-buttons)\b[^"\']*["\'][^>]*>.*?<\/[^>]+>/si',
+            // Advertisements (specific patterns)
+            '/<[^>]+(?:class|id)=["\'][^"\']*\b(?:advertisement|ad-banner|sponsored|ads)\b[^"\']*["\'][^>]*>.*?<\/[^>]+>/si',
+            // Sidebars and widgets (specific patterns)
+            '/<[^>]+(?:class|id)=["\'][^"\']*\b(?:sidebar|widget-area|secondary-content|complementary)\b[^"\']*["\'][^>]*>.*?<\/[^>]+>/si',
+            // Comments sections (specific patterns)
+            '/<[^>]+(?:class|id)=["\'][^"\']*\b(?:comments|comment-section|reply-section)\b[^"\']*["\'][^>]*>.*?<\/[^>]+>/si'
+        ];
+        
+        foreach ($non_content_patterns as $pattern) {
+            $html = preg_replace($pattern, '', $html);
+        }
+        
+        // Try to extract main content area if identifiable (preserve more content)
+        if (preg_match('/<main\b[^>]*>(.*?)<\/main>/si', $html, $matches)) {
+            $html = $matches[1];
+        } elseif (preg_match('/<article\b[^>]*>(.*?)<\/article>/si', $html, $matches)) {
+            $html = $matches[1];
+        } elseif (preg_match('/<div[^>]+(?:class|id)=["\'][^"\']*\b(?:post-content|entry-content|article-content|main-content|content-area)\b[^"\']*["\'][^>]*>(.*?)<\/div>/si', $html, $matches)) {
+            $html = $matches[1];
+        } elseif (preg_match('/<div[^>]+(?:class|id)=["\'][^"\']*\bcontent\b[^"\']*["\'][^>]*>(.*?)<\/div>/si', $html, $matches)) {
+            // Only use generic "content" if it's not too broad
+            $content_area = $matches[1];
+            if (strlen($content_area) < strlen($html) * 0.8) { // Less than 80% of total HTML
+                $html = $content_area;
+            }
+        }
         
         // Convert HTML entities
         $html = html_entity_decode($html, ENT_QUOTES, 'UTF-8');
         
-        // Strip HTML tags but keep content
+        // Preserve some structure during conversion
+        $html = preg_replace('/<\/p>/i', "\n\n", $html);
+        $html = preg_replace('/<br\s*\/?>/i', "\n", $html);
+        $html = preg_replace('/<\/h[1-6]>/i', "\n\n", $html);
+        $html = preg_replace('/<li\b[^>]*>/i', "\n• ", $html);
+        
+        // Strip remaining HTML tags
         $text = strip_tags($html);
         
-        // Clean up whitespace
-        $text = preg_replace('/\s+/', ' ', $text);
+        // Remove common footer/navigation text patterns (at end of content only)
+        $footer_patterns = [
+            '/Copyright\s*©[^\n]*(?:\n|$)/mi',
+            '/Alle?\s+(?:Rechte?\s+vorbehalten|rights?\s+reserved)[^\n]*(?:\n|$)/mi',
+            '/Zum\s+(?:Hauptinhalt|Footer)\s+springen[^\n]*(?:\n|$)/mi',
+            '/Diese\s+Website\s+verwendet\s+Cookies[^\n]*(?:\n|$)/mi',
+            '/Datenschutzeinstellungen[^\n]*(?:\n|$)/mi',
+            '/Cookie\s+Einstellungen[^\n]*(?:\n|$)/mi'
+        ];
+        
+        // Remove trailing footer-like content (last few lines if they match patterns)
+        $lines = explode("\n", $text);
+        $cleaned_lines = [];
+        $footer_found = false;
+        
+        for ($i = count($lines) - 1; $i >= 0; $i--) {
+            $line = trim($lines[$i]);
+            if (empty($line)) continue;
+            
+            $is_footer_line = false;
+            foreach ($footer_patterns as $pattern) {
+                if (preg_match($pattern, $line)) {
+                    $is_footer_line = true;
+                    $footer_found = true;
+                    break;
+                }
+            }
+            
+            // Also check for common footer indicators
+            if (!$is_footer_line && ($footer_found || $i > count($lines) - 10)) {
+                if (preg_match('/^(Impressum|Datenschutz|Navigation|Copyright|Kontakt|Über\s+mich)$/i', $line)) {
+                    $is_footer_line = true;
+                    $footer_found = true;
+                }
+            }
+            
+            if (!$is_footer_line) {
+                array_unshift($cleaned_lines, $lines[$i]);
+                if ($footer_found) break; // Stop once we find actual content after footer
+            }
+        }
+        
+        $text = implode("\n", $cleaned_lines);
+        
+        // Clean up excessive whitespace
+        $text = preg_replace('/\n{3,}/', "\n\n", $text); // Max 2 consecutive newlines
+        $text = preg_replace('/[ \t]+/', ' ', $text); // Multiple spaces to single space
+        $text = preg_replace('/^\s+/m', '', $text); // Remove leading spaces from lines
         $text = trim($text);
         
         return $text;
@@ -8232,6 +8782,19 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     private function handle_streaming_response($proxy_url, $headers, $request_data, $timeout) {
         error_log('🔄 AI_Provider - Starting streaming request to: ' . $proxy_url);
         
+        // DEBUG: Log the streaming request payload structure
+        error_log('🔍 AI_Provider DEBUG - Streaming OpenAI request payload:');
+        error_log('   - Request data keys: ' . implode(', ', array_keys($request_data)));
+        if (isset($request_data['data'])) {
+            error_log('   - Request data.data keys: ' . implode(', ', array_keys($request_data['data'])));
+            if (isset($request_data['data']['instructions'])) {
+                error_log('   - Instructions field present: YES');
+                error_log('   - Instructions content: ' . $request_data['data']['instructions']);
+            } else {
+                error_log('   - Instructions field present: NO');
+            }
+        }
+        
         // Use WordPress HTTP API with streaming
         $args = array(
             'headers' => $headers,
@@ -8282,5 +8845,699 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'streaming' => true
         );
     }
+
+    /**
+     * AI AGENTS ENDPOINT HANDLERS
+     */
+
+    /**
+     * Get all AI agents for the current user
+     */
+    public function get_ai_agents($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not initialized', array('status' => 500));
+        }
+
+        $user_id = get_current_user_id();
+        $agents = $this->db->get_ai_agents($user_id);
+
+        return rest_ensure_response(array(
+            'success' => true,
+            'data' => $agents ?: array()
+        ));
+    }
+
+    /**
+     * Get a specific AI agent
+     */
+    public function get_ai_agent($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not initialized', array('status' => 500));
+        }
+
+        $user_id = get_current_user_id();
+        $agent_id = intval($request->get_param('agent_id'));
+
+        $agent = $this->db->get_ai_agents($user_id, $agent_id);
+        
+        if (!$agent) {
+            return new WP_Error('not_found', 'AI agent not found', array('status' => 404));
+        }
+
+        return rest_ensure_response(array(
+            'success' => true,
+            'data' => $agent
+        ));
+    }
+
+    /**
+     * Create a new AI agent
+     */
+    public function create_ai_agent($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not initialized', array('status' => 500));
+        }
+
+        $user_id = get_current_user_id();
+        $data = $request->get_json_params();
+
+        // Validate required fields
+        if (empty($data['name'])) {
+            return new WP_Error('missing_name', 'Agent name is required', array('status' => 400));
+        }
+
+        // Sanitize and validate data
+        $agent_data = array(
+            'name' => sanitize_text_field($data['name']),
+            'description' => sanitize_textarea_field($data['description'] ?? ''),
+            'system_message' => wp_kses_post($data['system_message'] ?? ''),
+            'tonality' => sanitize_text_field($data['tonality'] ?? 'professional'),
+            'response_length' => sanitize_text_field($data['response_length'] ?? 'medium'),
+            'temperature' => floatval($data['temperature'] ?? 0.7),
+            'max_tokens' => intval($data['max_tokens'] ?? 2000),
+            'knowledge_base_ids' => $data['knowledge_base_ids'] ?? array(),
+            'is_active' => isset($data['is_active']) ? (bool)$data['is_active'] : true
+        );
+
+        $result = $this->db->save_ai_agent($user_id, $agent_data);
+
+        if ($result === false) {
+            return new WP_Error('save_failed', 'Failed to create AI agent', array('status' => 500));
+        }
+
+        return rest_ensure_response(array(
+            'success' => true,
+            'message' => 'AI agent created successfully',
+            'data' => array('id' => $result)
+        ));
+    }
+
+    /**
+     * Update an existing AI agent
+     */
+    public function update_ai_agent($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not initialized', array('status' => 500));
+        }
+
+        $user_id = get_current_user_id();
+        $agent_id = intval($request->get_param('agent_id'));
+        $data = $request->get_json_params();
+
+        // Validate agent exists
+        $existing_agent = $this->db->get_ai_agents($user_id, $agent_id);
+        if (!$existing_agent) {
+            return new WP_Error('not_found', 'AI agent not found', array('status' => 404));
+        }
+
+        // Validate required fields
+        if (empty($data['name'])) {
+            return new WP_Error('missing_name', 'Agent name is required', array('status' => 400));
+        }
+
+        // Sanitize and validate data
+        $agent_data = array(
+            'name' => sanitize_text_field($data['name']),
+            'description' => sanitize_textarea_field($data['description'] ?? ''),
+            'system_message' => wp_kses_post($data['system_message'] ?? ''),
+            'tonality' => sanitize_text_field($data['tonality'] ?? 'professional'),
+            'response_length' => sanitize_text_field($data['response_length'] ?? 'medium'),
+            'temperature' => floatval($data['temperature'] ?? 0.7),
+            'max_tokens' => intval($data['max_tokens'] ?? 2000),
+            'knowledge_base_ids' => $data['knowledge_base_ids'] ?? array(),
+            'is_active' => isset($data['is_active']) ? (bool)$data['is_active'] : true
+        );
+
+        $result = $this->db->save_ai_agent($user_id, $agent_data, $agent_id);
+
+        if ($result === false) {
+            return new WP_Error('save_failed', 'Failed to update AI agent', array('status' => 500));
+        }
+
+        return rest_ensure_response(array(
+            'success' => true,
+            'message' => 'AI agent updated successfully'
+        ));
+    }
+
+    /**
+     * Delete an AI agent
+     */
+    public function delete_ai_agent($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not initialized', array('status' => 500));
+        }
+
+        $user_id = get_current_user_id();
+        $agent_id = intval($request->get_param('agent_id'));
+
+        // Validate agent exists
+        $existing_agent = $this->db->get_ai_agents($user_id, $agent_id);
+        if (!$existing_agent) {
+            return new WP_Error('not_found', 'AI agent not found', array('status' => 404));
+        }
+
+        $result = $this->db->delete_ai_agent($user_id, $agent_id);
+
+        if ($result === false) {
+            return new WP_Error('delete_failed', 'Failed to delete AI agent', array('status' => 500));
+        }
+
+        return rest_ensure_response(array(
+            'success' => true,
+            'message' => 'AI agent deleted successfully'
+        ));
+    }
+
+    /**
+     * KNOWLEDGE BASE ENDPOINT HANDLERS
+     */
+
+    /**
+     * Get all knowledge base entries for the current user
+     */
+    public function get_knowledge_base_entries($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not initialized', array('status' => 500));
+        }
+
+        $user_id = get_current_user_id();
+        $entries = $this->db->get_knowledge_base_entries($user_id);
+
+        return rest_ensure_response(array(
+            'success' => true,
+            'data' => $entries ?: array()
+        ));
+    }
+
+    /**
+     * Get a specific knowledge base entry
+     */
+    public function get_knowledge_base_entry($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not initialized', array('status' => 500));
+        }
+
+        $user_id = get_current_user_id();
+        $kb_id = intval($request->get_param('kb_id'));
+
+        $entry = $this->db->get_knowledge_base_entries($user_id, $kb_id);
+        
+        if (!$entry) {
+            return new WP_Error('not_found', 'Knowledge base entry not found', array('status' => 404));
+        }
+
+        return rest_ensure_response(array(
+            'success' => true,
+            'data' => $entry
+        ));
+    }
+
+    /**
+     * Create a new knowledge base entry
+     */
+    public function create_knowledge_base_entry($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not initialized', array('status' => 500));
+        }
+
+        $user_id = get_current_user_id();
+        $data = $request->get_json_params();
+
+        // Validate required fields
+        if (empty($data['name']) || empty($data['content'])) {
+            return new WP_Error('missing_fields', 'Name and content are required', array('status' => 400));
+        }
+
+        // Sanitize and validate data
+        $kb_data = array(
+            'name' => sanitize_text_field($data['name']),
+            'description' => sanitize_textarea_field($data['description'] ?? ''),
+            'content' => wp_kses_post($data['content']),
+            'tags' => sanitize_text_field($data['tags'] ?? ''),
+            'category' => sanitize_text_field($data['category'] ?? ''),
+            'is_active' => isset($data['is_active']) ? (bool)$data['is_active'] : true
+        );
+
+        $result = $this->db->save_knowledge_base_entry($user_id, $kb_data);
+
+        if ($result === false) {
+            return new WP_Error('save_failed', 'Failed to create knowledge base entry', array('status' => 500));
+        }
+
+        return rest_ensure_response(array(
+            'success' => true,
+            'message' => 'Knowledge base entry created successfully',
+            'data' => array('id' => $result)
+        ));
+    }
+
+    /**
+     * Update an existing knowledge base entry
+     */
+    public function update_knowledge_base_entry($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not initialized', array('status' => 500));
+        }
+
+        $user_id = get_current_user_id();
+        $kb_id = intval($request->get_param('kb_id'));
+        $data = $request->get_json_params();
+
+        // Validate entry exists
+        $existing_entry = $this->db->get_knowledge_base_entries($user_id, $kb_id);
+        if (!$existing_entry) {
+            return new WP_Error('not_found', 'Knowledge base entry not found', array('status' => 404));
+        }
+
+        // Validate required fields
+        if (empty($data['name']) || empty($data['content'])) {
+            return new WP_Error('missing_fields', 'Name and content are required', array('status' => 400));
+        }
+
+        // Sanitize and validate data
+        $kb_data = array(
+            'name' => sanitize_text_field($data['name']),
+            'description' => sanitize_textarea_field($data['description'] ?? ''),
+            'content' => wp_kses_post($data['content']),
+            'tags' => sanitize_text_field($data['tags'] ?? ''),
+            'category' => sanitize_text_field($data['category'] ?? ''),
+            'is_active' => isset($data['is_active']) ? (bool)$data['is_active'] : true
+        );
+
+        $result = $this->db->save_knowledge_base_entry($user_id, $kb_data, $kb_id);
+
+        if ($result === false) {
+            return new WP_Error('save_failed', 'Failed to update knowledge base entry', array('status' => 500));
+        }
+
+        return rest_ensure_response(array(
+            'success' => true,
+            'message' => 'Knowledge base entry updated successfully'
+        ));
+    }
+
+    /**
+     * Delete a knowledge base entry
+     */
+    public function delete_knowledge_base_entry($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not initialized', array('status' => 500));
+        }
+
+        $user_id = get_current_user_id();
+        $kb_id = intval($request->get_param('kb_id'));
+
+        // Validate entry exists
+        $existing_entry = $this->db->get_knowledge_base_entries($user_id, $kb_id);
+        if (!$existing_entry) {
+            return new WP_Error('not_found', 'Knowledge base entry not found', array('status' => 404));
+        }
+
+        $result = $this->db->delete_knowledge_base_entry($user_id, $kb_id);
+
+        if ($result === false) {
+            return new WP_Error('delete_failed', 'Failed to delete knowledge base entry', array('status' => 500));
+        }
+
+        return rest_ensure_response(array(
+            'success' => true,
+            'message' => 'Knowledge base entry deleted successfully'
+        ));
+    }
+
+    /**
+     * Process uploaded file and extract text content
+     */
+    public function process_file_upload($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not initialized', array('status' => 500));
+        }
+
+        $user_id = get_current_user_id();
+        
+        // Check if file was uploaded
+        if (!isset($_FILES['file']) || $_FILES['file']['error'] !== UPLOAD_ERR_OK) {
+            return new WP_Error('upload_error', 'File upload failed', array('status' => 400));
+        }
+
+        $file = $_FILES['file'];
+        $file_extension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+        
+        // Validate file type - now includes images
+        $text_types = array('pdf', 'docx', 'doc', 'txt', 'md');
+        $image_types = array('jpg', 'jpeg', 'png', 'gif', 'webp');
+        $allowed_types = array_merge($text_types, $image_types);
+        
+        if (!in_array($file_extension, $allowed_types)) {
+            return new WP_Error('invalid_file', 'Unsupported file type. Allowed: PDF, DOCX, DOC, TXT, MD, JPG, PNG, GIF, WEBP', array('status' => 400));
+        }
+
+        // Validate file size (10MB limit)
+        if ($file['size'] > 10 * 1024 * 1024) {
+            return new WP_Error('file_too_large', 'File size must be less than 10MB', array('status' => 400));
+        }
+
+        try {
+            $text_types = array('pdf', 'docx', 'doc', 'txt', 'md');
+            $image_types = array('jpg', 'jpeg', 'png', 'gif', 'webp');
+            
+            if (in_array($file_extension, $text_types)) {
+                // Handle text files - extract content to plain text
+                $content = $this->extract_file_content($file['tmp_name'], $file_extension);
+                
+                if (empty($content)) {
+                    return new WP_Error('extraction_failed', 'Could not extract content from file', array('status' => 400));
+                }
+
+                return rest_ensure_response(array(
+                    'success' => true,
+                    'data' => array(
+                        'content' => $content,
+                        'filename' => sanitize_text_field($file['name']),
+                        'file_type' => 'text'
+                    ),
+                    'message' => 'Text file processed successfully'
+                ));
+            } elseif (in_array($file_extension, $image_types)) {
+                // Handle image files - save and return file path
+                $saved_file = $this->save_uploaded_image($file);
+                
+                if (!$saved_file) {
+                    return new WP_Error('save_failed', 'Could not save image file', array('status' => 400));
+                }
+
+                return rest_ensure_response(array(
+                    'success' => true,
+                    'data' => array(
+                        'content' => '[Image file: ' . $saved_file['filename'] . ']',
+                        'filename' => $saved_file['filename'],
+                        'file_path' => $saved_file['file_path'],
+                        'file_url' => $saved_file['file_url'],
+                        'file_type' => 'image',
+                        'mime_type' => $saved_file['mime_type']
+                    ),
+                    'message' => 'Image file saved successfully'
+                ));
+            }
+
+        } catch (Exception $e) {
+            return new WP_Error('processing_error', 'Error processing file: ' . $e->getMessage(), array('status' => 500));
+        }
+    }
+
+    /**
+     * Scrape content from URL using AI provider
+     */
+    public function scrape_url_content($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not initialized', array('status' => 500));
+        }
+
+        $data = $request->get_json_params();
+        $url = sanitize_url($data['url'] ?? '');
+        
+        if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
+            return new WP_Error('invalid_url', 'Please provide a valid URL', array('status' => 400));
+        }
+
+        $user_id = get_current_user_id();
+        
+        // Get AI provider settings (same logic as regular chat requests)
+        $this->settings = $this->db->get_all_settings($user_id);
+        $provider = $this->settings['ai_provider'] ?? 'openai';
+        $api_key = $this->get_api_key($provider);
+
+        try {
+            // Use the AI provider with web search capability to scrape the URL
+            $scraped_content = $this->scrape_with_ai($url, $provider, $api_key);
+            
+            if (empty($scraped_content)) {
+                return new WP_Error('scraping_failed', 'Could not extract content from URL', array('status' => 400));
+            }
+
+            return rest_ensure_response(array(
+                'success' => true,
+                'data' => array(
+                    'content' => $scraped_content,
+                    'source_url' => $url
+                ),
+                'message' => 'URL content scraped successfully'
+            ));
+
+        } catch (Exception $e) {
+            return new WP_Error('scraping_error', 'Error scraping URL: ' . $e->getMessage(), array('status' => 500));
+        }
+    }
+
+    /**
+     * Extract text content from uploaded file
+     */
+    private function extract_file_content($file_path, $file_extension) {
+        switch ($file_extension) {
+            case 'txt':
+            case 'md':
+                return file_get_contents($file_path);
+                
+            case 'pdf':
+                return $this->extract_pdf_content($file_path);
+                
+            case 'docx':
+                return $this->extract_docx_content($file_path);
+                
+            case 'doc':
+                return $this->extract_doc_content($file_path);
+                
+            default:
+                throw new Exception('Unsupported file type');
+        }
+    }
+
+    /**
+     * Extract text from PDF file
+     */
+    private function extract_pdf_content($file_path) {
+        // For now, we'll use a simple approach with pdftotext if available
+        // In production, you might want to use a proper PDF parsing library
+        
+        $output = '';
+        $return_var = 0;
+        
+        // Try using pdftotext command line tool
+        if (shell_exec('which pdftotext') !== null) {
+            $command = 'pdftotext ' . escapeshellarg($file_path) . ' -';
+            $output = shell_exec($command);
+        }
+        
+        if (empty($output)) {
+            // Fallback: Use AI to extract content
+            return $this->extract_with_ai($file_path, 'pdf');
+        }
+        
+        return $output;
+    }
+
+    /**
+     * Extract text from DOCX file
+     */
+    private function extract_docx_content($file_path) {
+        // Simple DOCX text extraction by reading the XML content
+        $zip = new ZipArchive();
+        if ($zip->open($file_path) === TRUE) {
+            $content = $zip->getFromName('word/document.xml');
+            $zip->close();
+            
+            if ($content) {
+                // Strip XML tags and decode entities
+                $content = strip_tags($content);
+                $content = html_entity_decode($content, ENT_QUOTES, 'UTF-8');
+                return $content;
+            }
+        }
+        
+        // Fallback: Use AI to extract content
+        return $this->extract_with_ai($file_path, 'docx');
+    }
+
+    /**
+     * Extract text from DOC file
+     */
+    private function extract_doc_content($file_path) {
+        // DOC files are more complex, let's use AI extraction
+        return $this->extract_with_ai($file_path, 'doc');
+    }
+
+    /**
+     * Save uploaded image file to WordPress media library
+     */
+    private function save_uploaded_image($file) {
+        if (!function_exists('wp_handle_upload')) {
+            require_once(ABSPATH . 'wp-admin/includes/file.php');
+        }
+        
+        // Set up the upload overrides
+        $upload_overrides = array('test_form' => false);
+        
+        // Handle the upload
+        $movefile = wp_handle_upload($file, $upload_overrides);
+        
+        if ($movefile && !isset($movefile['error'])) {
+            // File uploaded successfully
+            $filename = basename($movefile['file']);
+            $upload_dir = wp_upload_dir();
+            
+            // Create attachment
+            $attachment = array(
+                'post_mime_type' => $movefile['type'],
+                'post_title' => sanitize_file_name($filename),
+                'post_content' => '',
+                'post_status' => 'inherit'
+            );
+            
+            // Insert the attachment
+            $attach_id = wp_insert_attachment($attachment, $movefile['file']);
+            
+            if (!is_wp_error($attach_id)) {
+                // Generate attachment metadata
+                if (!function_exists('wp_generate_attachment_metadata')) {
+                    require_once(ABSPATH . 'wp-admin/includes/image.php');
+                }
+                $attach_data = wp_generate_attachment_metadata($attach_id, $movefile['file']);
+                wp_update_attachment_metadata($attach_id, $attach_data);
+                
+                return array(
+                    'filename' => $filename,
+                    'file_path' => $movefile['file'],
+                    'file_url' => $movefile['url'],
+                    'attachment_id' => $attach_id,
+                    'mime_type' => $movefile['type']
+                );
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * Use AI to extract content from files
+     */
+    private function extract_with_ai($file_path, $file_type) {
+        // For now, return a placeholder message
+        // In a full implementation, you would:
+        // 1. Convert file to base64
+        // 2. Send to AI provider with vision capabilities
+        // 3. Ask AI to extract and format the text content
+        
+        return "Content extraction using AI is not yet implemented for {$file_type} files. Please convert to TXT or use direct text input.";
+    }
+
+    /**
+     * Scrape URL content using AI provider
+     */
+    private function scrape_with_ai($url, $provider, $api_key) {
+        // Create a system message for web scraping - emphasizing COMPLETE extraction
+        $system_message = "You are a web content extractor. Your ONLY job is to extract 100% of the meaningful text content from the webpage in its COMPLETE, UNMODIFIED ENTIRETY.
+
+MANDATORY REQUIREMENTS - NO EXCEPTIONS:
+- Extract EVERY SINGLE word, sentence, paragraph, and section from the main content
+- Do NOT summarize, condense, paraphrase, or create overviews
+- Do NOT omit any sections, details, examples, or explanations  
+- Do NOT create bullet point summaries or shortened versions
+- Copy the EXACT, VERBATIM text from each section of the article
+- If there are 12 sections mentioned, extract ALL 12 sections completely
+- Include ALL subsections, details, examples, and explanatory text
+- Length limits do not apply - extract everything regardless of length
+- Your response must contain the FULL article text as if copy-pasted from the webpage
+
+CRITICAL: Act as a copy machine, not a summarizer. Extract everything word-for-word.";
+        
+        // Prepare the message - emphasizing complete extraction
+        $message = "Visit this URL and extract EVERY SINGLE WORD of the main article/content. Do not summarize anything. Extract all sections, all paragraphs, all details. Copy the complete text word-for-word: " . $url . "\n\nRemember: I need the FULL article text, not a summary. If the article has multiple sections or points, include ALL of them completely.";
+        
+        // Build messages array for AI providers
+        $messages = array(
+            array('role' => 'system', 'content' => $system_message),
+            array('role' => 'user', 'content' => $message)
+        );
+        
+        try {
+            // Log the scraping attempt
+            error_log('🌐 URL Scraping - Starting scrape for: ' . $url . ' using provider: ' . $provider);
+            
+            // Use AllOrigins API to get raw HTML content, then extract text
+            $scraped_content = $this->scrape_url_direct($url);
+            
+            if (empty($scraped_content)) {
+                throw new Exception('Failed to retrieve content from URL');
+            }
+            
+            return $scraped_content;
+        } catch (Exception $e) {
+            error_log('💥 URL Scraping - Exception: ' . $e->getMessage());
+            throw new Exception('AI scraping failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get default model for provider
+     */
+    private function get_default_model($provider) {
+        $defaults = array(
+            'openai' => 'gpt-3.5-turbo',
+            'anthropic' => 'claude-3-haiku-20240307',
+            'openrouter' => 'openai/gpt-3.5-turbo'
+        );
+        
+        return $defaults[$provider] ?? 'gpt-3.5-turbo';
+    }
+
+    /**
+     * Scrape URL content directly using AllOrigins API
+     */
+    private function scrape_url_direct($url) {
+        // Use AllOrigins to bypass CORS and get raw HTML
+        $allorigins_url = 'https://api.allorigins.win/get?url=' . urlencode($url);
+        
+        error_log('🌐 Direct Scraping - Using AllOrigins: ' . $allorigins_url);
+        
+        $response = wp_remote_get($allorigins_url, array(
+            'timeout' => 30,
+            'headers' => array(
+                'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            )
+        ));
+        
+        if (is_wp_error($response)) {
+            error_log('❌ AllOrigins request failed: ' . $response->get_error_message());
+            throw new Exception('Failed to fetch content via AllOrigins: ' . $response->get_error_message());
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            error_log('❌ Invalid JSON response from AllOrigins');
+            throw new Exception('Invalid JSON response from AllOrigins');
+        }
+        
+        if (!isset($data['contents'])) {
+            error_log('❌ No contents field in AllOrigins response');
+            throw new Exception('No contents field in AllOrigins response');
+        }
+        
+        $html = $data['contents'];
+        error_log('✅ HTML fetched successfully, length: ' . strlen($html) . ' chars');
+        
+        // Extract text content from HTML
+        $text_content = $this->extract_text_from_html($html);
+        
+        $content_length = strlen($text_content);
+        $word_count = str_word_count($text_content);
+        error_log('✅ Text extracted from HTML, length: ' . $content_length . ' chars, ~' . $word_count . ' words');
+        error_log('📄 Content preview: ' . substr($text_content, 0, 300) . '...');
+        
+        return $text_content;
+    }
+
 
 }

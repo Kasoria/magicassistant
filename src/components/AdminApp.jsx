@@ -4,6 +4,7 @@ import ChatInterface from './ChatInterface'
 import Settings from './Settings'
 import Analytics from './Analytics'
 import SEO from './SEO'
+import AIAgents from './AIAgents'
 import Security from './Security'
 import License from './License'
 import { ToastProvider } from './Toast'
@@ -26,6 +27,11 @@ const navigationItems = [
     icon: "M12 21.25a9.25 9.25 0 1 0-8.307-5.177c.108.22.144.468.089.706l-.816 3.536a.6.6 0 0 0 .72.72l3.535-.817a1.06 1.06 0 0 1 .706.09A9.2 9.2 0 0 0 12 21.25M7.97 9.886h8.06m-8.06 4.228h5.748"
   },
   { id: 'divider-1', divider: true },
+  {
+    id: 'agents',
+    label: 'AI Agents',
+    icon: "M9.663 17h4.673M12 3v1m6.364-.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+  },
   {
     id: 'seo',
     label: 'SEO',
@@ -489,6 +495,8 @@ Please start by asking me about the product details so you can create descriptio
         return (
           <ChatInterface adminData={adminData} />
         )
+      case 'agents':
+        return <AIAgents adminData={adminData} settings={settings} />
       case 'seo':
         return <SEO adminData={adminData} settings={settings} />
       case 'security':
@@ -1009,6 +1017,7 @@ Please start by asking me about the product details so you can create descriptio
                 <p className="text-sm font-normal text-gray-600 dark:text-gray-300">
                   {activeTab === 'dashboard' && 'Your AI-powered WordPress assistant overview.'}
                   {activeTab === 'chat' && 'Interact with your AI assistant for content creation and optimization.'}
+                  {activeTab === 'agents' && 'Create and manage AI agents with custom personalities and knowledge.'}
                   {activeTab === 'seo' && 'Monitor your website\'s SEO performance and keyword rankings.'}
                   {activeTab === 'analytics' && 'View insights about your AI assistant usage and performance.'}
                   {activeTab === 'license' && 'Manage your MagicAssistant license activation and status.'}

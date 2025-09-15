@@ -16,6 +16,8 @@ class DB {
     private $chat_history_table;
     private $api_logs_table;
     private $shared_conversations_table;
+    private $ai_agents_table;
+    private $knowledge_base_table;
     
     public function __construct() {
         global $wpdb;
@@ -24,6 +26,8 @@ class DB {
         $this->chat_history_table = $this->table_prefix . 'chat_history';
         $this->api_logs_table = $this->table_prefix . 'api_logs';
         $this->shared_conversations_table = $this->table_prefix . 'shared_conversations';
+        $this->ai_agents_table = $this->table_prefix . 'ai_agents';
+        $this->knowledge_base_table = $this->table_prefix . 'knowledge_base';
         
         // Hook into WordPress activation/deactivation
         register_activation_hook(MAGIC_ASSISTANT_PLUGIN_FILE, array($this, 'create_tables'));
@@ -68,6 +72,7 @@ class DB {
             providers_used text DEFAULT NULL,
             models_used text DEFAULT NULL,
             agent_mode tinyint(1) DEFAULT 0,
+            agent_id bigint(20) unsigned DEFAULT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
@@ -122,12 +127,54 @@ class DB {
             KEY idx_created_at (created_at)
         ) $charset_collate;";
         
+        // AI Agents table
+        $ai_agents_sql = "CREATE TABLE {$this->ai_agents_table} (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            user_id bigint(20) unsigned NOT NULL,
+            name varchar(255) NOT NULL,
+            description text DEFAULT NULL,
+            system_message longtext DEFAULT NULL,
+            tonality varchar(100) DEFAULT 'professional',
+            response_length varchar(50) DEFAULT 'medium',
+            temperature decimal(3,2) DEFAULT 0.70,
+            max_tokens int(11) DEFAULT 2000,
+            knowledge_base_ids text DEFAULT NULL,
+            is_active tinyint(1) DEFAULT 1,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_user_id (user_id),
+            KEY idx_is_active (is_active),
+            KEY idx_created_at (created_at)
+        ) $charset_collate;";
+        
+        // Knowledge Base table
+        $knowledge_base_sql = "CREATE TABLE {$this->knowledge_base_table} (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            user_id bigint(20) unsigned NOT NULL,
+            name varchar(255) NOT NULL,
+            description text DEFAULT NULL,
+            content longtext NOT NULL,
+            tags text DEFAULT NULL,
+            category varchar(100) DEFAULT NULL,\n            attached_files text DEFAULT NULL,
+            is_active tinyint(1) DEFAULT 1,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_user_id (user_id),
+            KEY idx_category (category),
+            KEY idx_is_active (is_active),
+            KEY idx_created_at (created_at)
+        ) $charset_collate;";
+        
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         
         dbDelta($settings_sql);
         dbDelta($chat_sessions_sql);
         dbDelta($api_logs_sql);
         dbDelta($shared_conversations_sql);
+        dbDelta($ai_agents_sql);
+        dbDelta($knowledge_base_sql);
         
         // Set database version
         update_option('mat_db_version', '1.0.0');
@@ -691,7 +738,7 @@ class DB {
             // Get all sessions for user (for session list)
             $sessions = $wpdb->get_results($wpdb->prepare(
                 "SELECT session_id, title, message_count, total_tokens, 
-                        providers_used, models_used, agent_mode, created_at, updated_at
+                        providers_used, models_used, agent_mode, agent_id, created_at, updated_at
                 FROM {$this->chat_history_table} 
                 WHERE user_id = %d 
                 ORDER BY updated_at DESC LIMIT %d",
@@ -819,7 +866,7 @@ class DB {
     public function tables_exist() {
         global $wpdb;
         
-        $tables = array($this->settings_table, $this->chat_history_table, $this->api_logs_table, $this->shared_conversations_table);
+        $tables = array($this->settings_table, $this->chat_history_table, $this->api_logs_table, $this->shared_conversations_table, $this->ai_agents_table, $this->knowledge_base_table);
         
         foreach ($tables as $table) {
             $result = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table));
@@ -1006,7 +1053,7 @@ class DB {
         
         return $wpdb->get_row($wpdb->prepare(
             "SELECT session_id, title, message_count, total_tokens, 
-                    providers_used, models_used, created_at, updated_at
+                    providers_used, models_used, agent_id, created_at, updated_at
             FROM {$this->chat_history_table} 
             WHERE user_id = %d AND session_id = %s",
             $user_id,
@@ -1189,6 +1236,21 @@ class DB {
             array('%d', '%s')
         );
     }
+
+    /**
+     * Set agent ID for a chat session
+     */
+    public function set_chat_session_agent($user_id, $session_id, $agent_id) {
+        global $wpdb;
+
+        return $wpdb->update(
+            $this->chat_history_table,
+            array('agent_id' => $agent_id),
+            array('user_id' => $user_id, 'session_id' => $session_id),
+            array('%d'),
+            array('%d', '%s')
+        );
+    }
     
     /**
      * Fix double-encrypted API keys
@@ -1240,5 +1302,186 @@ class DB {
                 }
             }
         }
+    }
+    
+    /**
+     * AI Agents Methods
+     */
+    
+    /**
+     * Create or update an AI agent
+     */
+    public function save_ai_agent($user_id, $agent_data, $agent_id = null) {
+        global $wpdb;
+        
+        $data = array(
+            'user_id' => $user_id,
+            'name' => sanitize_text_field($agent_data['name']),
+            'description' => sanitize_textarea_field($agent_data['description']),
+            'system_message' => wp_kses_post($agent_data['system_message']),
+            'tonality' => sanitize_text_field($agent_data['tonality']),
+            'response_length' => sanitize_text_field($agent_data['response_length']),
+            'temperature' => floatval($agent_data['temperature']),
+            'max_tokens' => intval($agent_data['max_tokens']),
+            'knowledge_base_ids' => is_array($agent_data['knowledge_base_ids']) ? implode(',', array_map('intval', $agent_data['knowledge_base_ids'])) : '',
+            'is_active' => isset($agent_data['is_active']) ? intval($agent_data['is_active']) : 1
+        );
+        
+        if ($agent_id) {
+            // Update existing agent
+            return $wpdb->update(
+                $this->ai_agents_table,
+                $data,
+                array('id' => $agent_id, 'user_id' => $user_id),
+                array('%d', '%s', '%s', '%s', '%s', '%s', '%f', '%d', '%s', '%d'),
+                array('%d', '%d')
+            );
+        } else {
+            // Create new agent
+            return $wpdb->insert($this->ai_agents_table, $data, array('%d', '%s', '%s', '%s', '%s', '%s', '%f', '%d', '%s', '%d'));
+        }
+    }
+    
+    /**
+     * Get AI agents for a user
+     */
+    public function get_ai_agents($user_id, $agent_id = null, $active_only = false) {
+        global $wpdb;
+        
+        if ($agent_id) {
+            // Get specific agent
+            return $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM {$this->ai_agents_table} WHERE id = %d AND user_id = %d",
+                $agent_id,
+                $user_id
+            ), ARRAY_A);
+        } else {
+            // Get all agents for user
+            $where_clause = "WHERE user_id = %d";
+            $params = array($user_id);
+            
+            if ($active_only) {
+                $where_clause .= " AND is_active = 1";
+            }
+            
+            return $wpdb->get_results($wpdb->prepare(
+                "SELECT * FROM {$this->ai_agents_table} {$where_clause} ORDER BY created_at DESC",
+                ...$params
+            ), ARRAY_A);
+        }
+    }
+    
+    /**
+     * Delete an AI agent
+     */
+    public function delete_ai_agent($user_id, $agent_id) {
+        global $wpdb;
+        
+        return $wpdb->delete(
+            $this->ai_agents_table,
+            array('id' => $agent_id, 'user_id' => $user_id),
+            array('%d', '%d')
+        );
+    }
+    
+    /**
+     * Knowledge Base Methods
+     */
+    
+    /**
+     * Create or update a knowledge base entry
+     */
+    public function save_knowledge_base_entry($user_id, $kb_data, $kb_id = null) {
+        global $wpdb;
+        
+        $data = array(
+            'user_id' => $user_id,
+            'name' => sanitize_text_field($kb_data['name']),
+            'description' => sanitize_textarea_field($kb_data['description']),
+            'content' => wp_kses_post($kb_data['content']),
+            'tags' => sanitize_text_field($kb_data['tags']),
+            'category' => sanitize_text_field($kb_data['category']),
+            'is_active' => isset($kb_data['is_active']) ? intval($kb_data['is_active']) : 1
+        );
+        
+        // Add attached files if present
+        if (isset($kb_data['attached_files'])) {
+            $data['attached_files'] = sanitize_text_field($kb_data['attached_files']);
+        }
+        
+        if ($kb_id) {
+            // Update existing entry
+            return $wpdb->update(
+                $this->knowledge_base_table,
+                $data,
+                array('id' => $kb_id, 'user_id' => $user_id),
+                array('%d', '%s', '%s', '%s', '%s', '%s', '%s', '%d'),
+                array('%d', '%d')
+            );
+        } else {
+            // Create new entry
+            return $wpdb->insert($this->knowledge_base_table, $data, array('%d', '%s', '%s', '%s', '%s', '%s', '%s', '%d'));
+        }
+    }
+    
+    /**
+     * Get knowledge base entries for a user
+     */
+    public function get_knowledge_base_entries($user_id, $kb_id = null, $active_only = false) {
+        global $wpdb;
+        
+        if ($kb_id) {
+            // Get specific entry
+            return $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM {$this->knowledge_base_table} WHERE id = %d AND user_id = %d",
+                $kb_id,
+                $user_id
+            ), ARRAY_A);
+        } else {
+            // Get all entries for user
+            $where_clause = "WHERE user_id = %d";
+            $params = array($user_id);
+            
+            if ($active_only) {
+                $where_clause .= " AND is_active = 1";
+            }
+            
+            return $wpdb->get_results($wpdb->prepare(
+                "SELECT * FROM {$this->knowledge_base_table} {$where_clause} ORDER BY created_at DESC",
+                ...$params
+            ), ARRAY_A);
+        }
+    }
+    
+    /**
+     * Delete a knowledge base entry
+     */
+    public function delete_knowledge_base_entry($user_id, $kb_id) {
+        global $wpdb;
+        
+        return $wpdb->delete(
+            $this->knowledge_base_table,
+            array('id' => $kb_id, 'user_id' => $user_id),
+            array('%d', '%d')
+        );
+    }
+    
+    /**
+     * Get knowledge base entries by IDs (for agent context)
+     */
+    public function get_knowledge_base_entries_by_ids($user_id, $kb_ids) {
+        global $wpdb;
+        
+        if (empty($kb_ids) || !is_array($kb_ids)) {
+            return array();
+        }
+        
+        $placeholders = implode(',', array_fill(0, count($kb_ids), '%d'));
+        $params = array_merge(array($user_id), $kb_ids);
+        
+        return $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM {$this->knowledge_base_table} WHERE user_id = %d AND id IN ({$placeholders}) AND is_active = 1",
+            ...$params
+        ), ARRAY_A);
     }
 }
