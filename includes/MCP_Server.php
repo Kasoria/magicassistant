@@ -9447,7 +9447,7 @@ class MCP_Server {
                         ),
                         'model_name' => array(
                             'type' => 'string',
-                            'description' => 'AI model name (default: claude-3-5-sonnet-20241022). Use dataforseo_claude_models to get available models.'
+                            'description' => 'AI model name (default: claude-sonnet-4-5-20250929). Use dataforseo_claude_models to get available models.'
                         ),
                         'max_output_tokens' => array(
                             'type' => 'integer',

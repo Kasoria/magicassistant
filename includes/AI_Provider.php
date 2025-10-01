@@ -2389,7 +2389,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $request_data = array(
             'action'   => 'anthropic',
             'data'     => array(
-                'model'      => $this->settings['anthropic_model'] ?? 'claude-3-5-sonnet-20241022',
+                'model'      => $this->settings['anthropic_model'] ?? 'claude-sonnet-4-5-20250929',
                 'messages'   => $conversation,
                 'web_search_enabled' => $web_search_enabled,
             ),
@@ -2535,7 +2535,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $is_using_agent_context = strpos($system_message, 'AI AGENT CONTEXT') !== false;
         $is_using_default_message = strpos($system_message, 'You are MagicAssistant') !== false;
 
-        $model = $this->settings['openrouter_model'] ?? 'anthropic/claude-sonnet-4';
+        $model = $this->settings['openrouter_model'] ?? 'openai/gpt-4.1-mini';
 
         $request_data = array(
             'action'   => 'openrouter',
@@ -2960,8 +2960,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'ai_provider' => $this->settings['ai_provider'] ?? 'openai',
             'mcp_enabled' => isset($this->settings['mcp_enabled']) ? (bool) $this->settings['mcp_enabled'] : true,
             'openai_model' => $this->settings['openai_model'] ?? 'gpt-4.1-mini',
-            'anthropic_model' => $this->settings['anthropic_model'] ?? 'claude-3-5-sonnet-20241022',
-            'openrouter_model' => $this->settings['openrouter_model'] ?? 'anthropic/claude-3.5-sonnet',
+            'anthropic_model' => $this->settings['anthropic_model'] ?? 'claude-sonnet-4-5-20250929',
+            'openrouter_model' => $this->settings['openrouter_model'] ?? 'anthropic/claude-sonnet-4-5-20250929',
             'has_api_key' => $this->db ? ($this->db->has_api_key('openai_api_key') || $this->db->has_api_key('anthropic_api_key') || $this->db->has_api_key('openrouter_api_key')) : false,
             'openai_api_key' => $this->db ? $this->db->has_api_key('openai_api_key') : false,
             'anthropic_api_key' => $this->db ? $this->db->has_api_key('anthropic_api_key') : false,
@@ -4172,9 +4172,9 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             case 'openai':
                 return $this->settings['openai_model'] ?? 'gpt-4.1-mini';
             case 'anthropic':
-                return $this->settings['anthropic_model'] ?? 'claude-sonnet-4-20250514';
+                return $this->settings['anthropic_model'] ?? 'claude-sonnet-4-5-20250929';
             case 'openrouter':
-                return $this->settings['openrouter_model'] ?? 'anthropic/claude-3.5-sonnet';
+                return $this->settings['openrouter_model'] ?? 'openai/gpt-4.1-mini';
             default:
                 return 'unknown';
         }
@@ -4282,6 +4282,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         // Anthropic pricing (as of 2024 - prices per 1M tokens)
         $pricing = array(
+            'claude-sonnet-4-5-20250929' => array('input' => 3.00, 'output' => 15.00),
             'claude-sonnet-4-20250514' => array('input' => 3.00, 'output' => 15.00),
             'claude-opus-4-20250514' => array('input' => 15.00, 'output' => 75.00),
             'claude-3-7-sonnet-20250219' => array('input' => 3.00, 'output' => 15.00),
@@ -9435,12 +9436,12 @@ CRITICAL: Act as a copy machine, not a summarizer. Extract everything word-for-w
      */
     private function get_default_model($provider) {
         $defaults = array(
-            'openai' => 'gpt-3.5-turbo',
-            'anthropic' => 'claude-3-haiku-20240307',
-            'openrouter' => 'openai/gpt-3.5-turbo'
+            'openai' => 'gpt-4.1-mini',
+            'anthropic' => 'claude-sonnet-4-5-20250929',
+            'openrouter' => 'openai/gpt-4.1-mini'
         );
         
-        return $defaults[$provider] ?? 'gpt-3.5-turbo';
+        return $defaults[$provider] ?? 'gpt-4.1-mini';
     }
 
     /**

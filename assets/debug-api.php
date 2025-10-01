@@ -182,7 +182,7 @@ function handle_ai_chat() {
         $request_data = array(
             'action' => 'anthropic',
             'data' => array(
-                'model' => 'claude-sonnet-4-0',
+                'model' => 'claude-sonnet-4-5-20250929',
                 'messages' => array(
                     array('role' => 'user', 'content' => $message)
                 ),

@@ -65,7 +65,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         complete_data_removal: settings.complete_data_removal === true,
         ai_provider: settings.ai_provider || 'openai',
         openai_model: settings.openai_model || 'gpt-4.1-mini',
-        anthropic_model: settings.anthropic_model || 'claude-sonnet-4-20250514',
+        anthropic_model: settings.anthropic_model || 'claude-sonnet-4-5-20250929',
         openrouter_model: settings.openrouter_model || 'anthropic/claude-3.5-sonnet',
         agent_mode: settings.agent_mode || 'never',
         max_agent_iterations: parseInt(settings.max_agent_iterations) || 10,
@@ -570,8 +570,9 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
   ]
 
   const anthropicModels = [
-    { value: 'claude-sonnet-4-20250514', label: 'Claude 4 Sonnet' },
-    { value: 'claude-opus-4-20250514', label: 'Claude 4 Opus' },
+    { value: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
+    { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
+    { value: 'claude-opus-4-20250514', label: 'Claude Opus 4' },
     { value: 'claude-3-7-sonnet-20250219', label: 'Claude 3.7 Sonnet' },
     { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
     { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku' }
@@ -1030,7 +1031,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                       <Label htmlFor="anthropic-model" value="Model" className="mb-2" />
                       <CustomSelect
                         id="anthropic-model"
-                        value={anthropicModels.find(option => option.value === (localSettings.anthropic_model || 'claude-sonnet-4-20250514'))}
+                        value={anthropicModels.find(option => option.value === (localSettings.anthropic_model || 'claude-sonnet-4-5-20250929'))}
                         onChange={(selectedOption) => handleLocalChange('anthropic_model', selectedOption.value)}
                         isDisabled={isSavingSettings}
                         options={anthropicModels}

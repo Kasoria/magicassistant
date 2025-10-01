@@ -604,7 +604,7 @@ class DataForSEO {
             
             // Set default model if not provided
             if (empty($args['model_name'])) {
-                $args['model_name'] = 'claude-3-5-sonnet-20241022';
+                $args['model_name'] = 'claude-sonnet-4-5-20250929';
             }
             
             $result = $this->make_proxy_request_with_retry('claude_llm_responses', $args);
