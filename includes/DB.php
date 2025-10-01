@@ -18,6 +18,7 @@ class DB {
     private $shared_conversations_table;
     private $ai_agents_table;
     private $knowledge_base_table;
+    private $chatbots_table;
     
     public function __construct() {
         global $wpdb;
@@ -28,6 +29,7 @@ class DB {
         $this->shared_conversations_table = $this->table_prefix . 'shared_conversations';
         $this->ai_agents_table = $this->table_prefix . 'ai_agents';
         $this->knowledge_base_table = $this->table_prefix . 'knowledge_base';
+        $this->chatbots_table = $this->table_prefix . 'chatbots';
         
         // Hook into WordPress activation/deactivation
         register_activation_hook(MAGIC_ASSISTANT_PLUGIN_FILE, array($this, 'create_tables'));
@@ -156,13 +158,39 @@ class DB {
             description text DEFAULT NULL,
             content longtext NOT NULL,
             tags text DEFAULT NULL,
-            category varchar(100) DEFAULT NULL,\n            attached_files text DEFAULT NULL,
+            category varchar(100) DEFAULT NULL,
+            attached_files text DEFAULT NULL,
             is_active tinyint(1) DEFAULT 1,
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             KEY idx_user_id (user_id),
             KEY idx_category (category),
+            KEY idx_is_active (is_active),
+            KEY idx_created_at (created_at)
+        ) $charset_collate;";
+        
+        // Chatbots table
+        $chatbots_sql = "CREATE TABLE {$this->chatbots_table} (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            user_id bigint(20) unsigned NOT NULL,
+            name varchar(255) NOT NULL,
+            description text DEFAULT NULL,
+            agent_id bigint(20) unsigned NOT NULL,
+            custom_header_name varchar(255) DEFAULT NULL,
+            custom_header_logo text DEFAULT NULL,
+            trigger_button_settings longtext DEFAULT NULL,
+            chatbot_styling longtext DEFAULT NULL,
+            behavior_settings longtext DEFAULT NULL,
+            quick_messages longtext DEFAULT NULL,
+            display_conditions longtext DEFAULT NULL,
+            rate_limit_settings longtext DEFAULT NULL,
+            is_active tinyint(1) DEFAULT 1,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_user_id (user_id),
+            KEY idx_agent_id (agent_id),
             KEY idx_is_active (is_active),
             KEY idx_created_at (created_at)
         ) $charset_collate;";
@@ -175,6 +203,7 @@ class DB {
         dbDelta($shared_conversations_sql);
         dbDelta($ai_agents_sql);
         dbDelta($knowledge_base_sql);
+        dbDelta($chatbots_sql);
         
         // Set database version
         update_option('mat_db_version', '1.0.0');
@@ -196,6 +225,9 @@ class DB {
         
         // Run content mode migration if needed
         $this->run_content_mode_migration();
+
+        // Run chatbot header customization migration if needed
+        $this->run_chatbot_header_migration();
     }
     
     private function run_content_mode_migration() {
@@ -211,7 +243,40 @@ class DB {
             }
         }
     }
-    
+
+    private function run_chatbot_header_migration() {
+        // Check if migration has already been run
+        $migration_version = $this->get_setting('chatbot_header_migration_version', 0);
+
+        if ($migration_version < 1) {
+            global $wpdb;
+
+            // Check if columns already exist
+            $columns = $wpdb->get_results("SHOW COLUMNS FROM {$this->chatbots_table}");
+            $column_names = array_column($columns, 'Field');
+
+            $columns_to_add = [];
+            if (!in_array('custom_header_name', $column_names)) {
+                $columns_to_add[] = "ADD COLUMN custom_header_name varchar(255) DEFAULT NULL";
+            }
+            if (!in_array('custom_header_logo', $column_names)) {
+                $columns_to_add[] = "ADD COLUMN custom_header_logo text DEFAULT NULL";
+            }
+
+            if (!empty($columns_to_add)) {
+                $sql = "ALTER TABLE {$this->chatbots_table} " . implode(', ', $columns_to_add);
+                $result = $wpdb->query($sql);
+
+                if ($result !== false) {
+                    $this->save_setting('chatbot_header_migration_version', 1);
+                }
+            } else {
+                // Columns already exist, mark migration as complete
+                $this->save_setting('chatbot_header_migration_version', 1);
+            }
+        }
+    }
+
     /**
      * Check if database needs to be updated
      */
@@ -866,7 +931,7 @@ class DB {
     public function tables_exist() {
         global $wpdb;
         
-        $tables = array($this->settings_table, $this->chat_history_table, $this->api_logs_table, $this->shared_conversations_table, $this->ai_agents_table, $this->knowledge_base_table);
+        $tables = array($this->settings_table, $this->chat_history_table, $this->api_logs_table, $this->shared_conversations_table, $this->ai_agents_table, $this->knowledge_base_table, $this->chatbots_table);
         
         foreach ($tables as $table) {
             $result = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table));
@@ -1483,5 +1548,139 @@ class DB {
             "SELECT * FROM {$this->knowledge_base_table} WHERE user_id = %d AND id IN ({$placeholders}) AND is_active = 1",
             ...$params
         ), ARRAY_A);
+    }
+    
+    /**
+     * Chatbots Methods
+     */
+    
+    /**
+     * Create or update a chatbot
+     */
+    public function save_chatbot($user_id, $chatbot_data, $chatbot_id = null) {
+        global $wpdb;
+        
+        $data = array(
+            'user_id' => $user_id,
+            'name' => sanitize_text_field($chatbot_data['name']),
+            'description' => sanitize_textarea_field($chatbot_data['description']),
+            'agent_id' => intval($chatbot_data['agent_id']),
+            'custom_header_name' => isset($chatbot_data['custom_header_name']) ? sanitize_text_field($chatbot_data['custom_header_name']) : null,
+            'custom_header_logo' => isset($chatbot_data['custom_header_logo']) ? esc_url_raw($chatbot_data['custom_header_logo']) : null,
+            'trigger_button_settings' => maybe_serialize($chatbot_data['trigger_button_settings']),
+            'chatbot_styling' => maybe_serialize($chatbot_data['chatbot_styling']),
+            'behavior_settings' => maybe_serialize($chatbot_data['behavior_settings']),
+            'quick_messages' => maybe_serialize($chatbot_data['quick_messages']),
+            'display_conditions' => maybe_serialize($chatbot_data['display_conditions']),
+            'rate_limit_settings' => maybe_serialize($chatbot_data['rate_limit_settings']),
+            'is_active' => isset($chatbot_data['is_active']) ? intval($chatbot_data['is_active']) : 1
+        );
+        
+        if ($chatbot_id) {
+            // Update existing chatbot
+            return $wpdb->update(
+                $this->chatbots_table,
+                $data,
+                array('id' => $chatbot_id, 'user_id' => $user_id),
+                array('%d', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d'),
+                array('%d', '%d')
+            );
+        } else {
+            // Create new chatbot
+            return $wpdb->insert($this->chatbots_table, $data, array('%d', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d'));
+        }
+    }
+    
+    /**
+     * Get chatbots for a user
+     */
+    public function get_chatbots($user_id, $chatbot_id = null, $active_only = false) {
+        global $wpdb;
+        
+        if ($chatbot_id) {
+            // Get specific chatbot
+            $result = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM {$this->chatbots_table} WHERE id = %d AND user_id = %d",
+                $chatbot_id,
+                $user_id
+            ), ARRAY_A);
+            
+            if ($result) {
+                // Unserialize JSON fields
+                $result['trigger_button_settings'] = maybe_unserialize($result['trigger_button_settings']);
+                $result['chatbot_styling'] = maybe_unserialize($result['chatbot_styling']);
+                $result['behavior_settings'] = maybe_unserialize($result['behavior_settings']);
+                $result['quick_messages'] = maybe_unserialize($result['quick_messages']);
+                $result['display_conditions'] = maybe_unserialize($result['display_conditions']);
+                $result['rate_limit_settings'] = maybe_unserialize($result['rate_limit_settings']);
+            }
+            
+            return $result;
+        } else {
+            // Get all chatbots for user
+            $where_clause = "WHERE user_id = %d";
+            $params = array($user_id);
+            
+            if ($active_only) {
+                $where_clause .= " AND is_active = 1";
+            }
+            
+            $results = $wpdb->get_results($wpdb->prepare(
+                "SELECT * FROM {$this->chatbots_table} {$where_clause} ORDER BY created_at DESC",
+                ...$params
+            ), ARRAY_A);
+            
+            // Unserialize JSON fields for all results
+            foreach ($results as &$result) {
+                $result['trigger_button_settings'] = maybe_unserialize($result['trigger_button_settings']);
+                $result['chatbot_styling'] = maybe_unserialize($result['chatbot_styling']);
+                $result['behavior_settings'] = maybe_unserialize($result['behavior_settings']);
+                $result['quick_messages'] = maybe_unserialize($result['quick_messages']);
+                $result['display_conditions'] = maybe_unserialize($result['display_conditions']);
+                $result['rate_limit_settings'] = maybe_unserialize($result['rate_limit_settings']);
+            }
+            
+            return $results;
+        }
+    }
+    
+    /**
+     * Delete a chatbot
+     */
+    public function delete_chatbot($user_id, $chatbot_id) {
+        global $wpdb;
+        
+        return $wpdb->delete(
+            $this->chatbots_table,
+            array('id' => $chatbot_id, 'user_id' => $user_id),
+            array('%d', '%d')
+        );
+    }
+    
+    /**
+     * Get active chatbots for public display (no user_id filter)
+     */
+    public function get_active_chatbots_for_display() {
+        global $wpdb;
+        
+        $results = $wpdb->get_results(
+            "SELECT c.*, a.name as agent_name, a.system_message as agent_system_message 
+            FROM {$this->chatbots_table} c 
+            LEFT JOIN {$this->ai_agents_table} a ON c.agent_id = a.id 
+            WHERE c.is_active = 1 AND a.is_active = 1",
+            ARRAY_A
+        );
+        
+        // Unserialize JSON fields for all results
+        foreach ($results as &$result) {
+            $result['trigger_button_settings'] = maybe_unserialize($result['trigger_button_settings']);
+            $result['chatbot_styling'] = maybe_unserialize($result['chatbot_styling']);
+            $result['behavior_settings'] = maybe_unserialize($result['behavior_settings']);
+            $result['quick_messages'] = maybe_unserialize($result['quick_messages']);
+            $result['display_conditions'] = maybe_unserialize($result['display_conditions']);
+            $result['rate_limit_settings'] = maybe_unserialize($result['rate_limit_settings']);
+        }
+        
+        return $results;
     }
 }

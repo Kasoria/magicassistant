@@ -2,6 +2,75 @@ import { useState, useEffect, useRef } from 'react'
 import { Button, Card, Badge, Spinner, TextInput, Label, Select, Textarea } from 'flowbite-react'
 import FormModal from './FormModal'
 import { useToast } from './Toast'
+import ChatbotInterface from './ChatbotInterface'
+
+// Color Input Component
+const ColorInput = ({ id, label, value, onChange, className = "" }) => (
+  <div className={className}>
+    <Label htmlFor={id}>{label}</Label>
+    <div className="mt-1">
+      <input
+        id={id}
+        type="color"
+        value={value}
+        onChange={onChange}
+        className="h-10 w-full rounded-md border border-gray-300 dark:border-gray-600 cursor-pointer"
+      />
+    </div>
+  </div>
+)
+
+// Accordion Section Component
+const AccordionSection = ({ title, description, isOpen, onToggle, children }) => (
+  <div className={`border-2 rounded-lg mb-3 transition-all ${
+    isOpen
+      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 shadow-sm'
+      : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 hover:border-blue-400 dark:hover:border-blue-500'
+  }`}>
+    <button
+      type="button"
+      onClick={onToggle}
+      className={`w-full px-5 py-4 text-left flex justify-between items-center focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-lg transition-colors ${
+        isOpen
+          ? 'bg-gradient-to-r from-blue-50 to-blue-100 dark:from-blue-900/30 dark:to-blue-800/30'
+          : 'hover:bg-gray-50 dark:hover:bg-gray-700'
+      }`}
+    >
+      <div>
+        <h3 className={`text-base font-semibold ${
+          isOpen
+            ? 'text-blue-900 dark:text-blue-100'
+            : 'text-gray-900 dark:text-white'
+        }`}>{title}</h3>
+        {description && (
+          <p className={`text-xs mt-1 ${
+            isOpen
+              ? 'text-blue-700 dark:text-blue-300'
+              : 'text-gray-500 dark:text-gray-400'
+          }`}>{description}</p>
+        )}
+      </div>
+      <svg
+        className={`w-5 h-5 transition-all ${
+          isOpen
+            ? 'rotate-180 text-blue-600 dark:text-blue-400'
+            : 'text-gray-400 dark:text-gray-500'
+        }`}
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+        strokeWidth={2.5}
+      >
+        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+      </svg>
+    </button>
+    {isOpen && (
+      <div className="px-5 py-4 border-t-2 border-blue-200 dark:border-blue-700 bg-white dark:bg-gray-800 rounded-b-lg">
+        {children}
+      </div>
+    )}
+  </div>
+)
 
 // Searchable Knowledge Base Dropdown Component
 const SearchableKBDropdown = ({ knowledgeBaseEntries, selectedIds, onChange }) => {
@@ -148,12 +217,196 @@ const AIAgents = ({ adminData, settings }) => {
   const [activeTab, setActiveTab] = useState('agents')
   const [agents, setAgents] = useState([])
   const [knowledgeBaseEntries, setKnowledgeBaseEntries] = useState([])
+  const [chatbots, setChatbots] = useState([])
   const [loading, setLoading] = useState(true)
   const [showAgentModal, setShowAgentModal] = useState(false)
   const [showKBModal, setShowKBModal] = useState(false)
   const [editingAgent, setEditingAgent] = useState(null)
   const [editingKB, setEditingKB] = useState(null)
+  const [editingChatbot, setEditingChatbot] = useState(null)
   const { showSuccess, showError } = useToast()
+
+  // Accordion state for chatbot form
+  const [accordionState, setAccordionState] = useState({
+    general: true,
+    trigger: false,
+    appearance: false,
+    behavior: false,
+    visibility: false,
+    advanced: false
+  })
+
+  const toggleAccordion = (section) => {
+    setAccordionState(prev => ({
+      ...prev,
+      [section]: !prev[section]
+    }))
+  }
+
+  // Design preset functions
+  const applyDesignPreset = (presetName) => {
+    const presets = {
+      modern: {
+        // Colors & Theme
+        primary_color: '#3B82F6',
+        secondary_color: '#F8FAFC',
+        background_color: '#FFFFFF',
+
+        // Header
+        header_background: '#3B82F6',
+        header_text_color: '#FFFFFF',
+        header_font_size: 16,
+        header_font_weight: 600,
+
+        // Messages
+        message_background_user: '#3B82F6',
+        message_background_bot: '#F1F5F9',
+        message_text_color_user: '#FFFFFF',
+        message_text_color_bot: '#1E293B',
+        message_font_size: 14,
+        message_font_weight: 400,
+
+        // Input & Button
+        input_background: '#FFFFFF',
+        input_text_color: '#1F2937',
+        input_border_color: '#D1D5DB',
+        input_font_size: 14,
+        send_button_background: '#3B82F6',
+        send_button_text_color: '#FFFFFF',
+        send_button_hover_background: '#2563EB',
+
+        // Layout
+        width: 380,
+        height: 500,
+        border_radius: 16,
+
+        // Typography
+        font_family: 'Inter, system-ui, sans-serif'
+      },
+      dark: {
+        // Colors & Theme
+        primary_color: '#10B981',
+        secondary_color: '#1F2937',
+        background_color: '#111827',
+
+        // Header
+        header_background: '#10B981',
+        header_text_color: '#FFFFFF',
+        header_font_size: 16,
+        header_font_weight: 600,
+
+        // Messages
+        message_background_user: '#10B981',
+        message_background_bot: '#374151',
+        message_text_color_user: '#FFFFFF',
+        message_text_color_bot: '#F9FAFB',
+        message_font_size: 14,
+        message_font_weight: 400,
+
+        // Input & Button
+        input_background: '#374151',
+        input_text_color: '#F9FAFB',
+        input_border_color: '#4B5563',
+        input_font_size: 14,
+        send_button_background: '#10B981',
+        send_button_text_color: '#FFFFFF',
+        send_button_hover_background: '#059669',
+
+        // Layout
+        width: 380,
+        height: 500,
+        border_radius: 12,
+
+        // Typography
+        font_family: 'Inter, system-ui, sans-serif'
+      },
+      minimal: {
+        // Colors & Theme
+        primary_color: '#6B7280',
+        secondary_color: '#FFFFFF',
+        background_color: '#FFFFFF',
+
+        // Header
+        header_background: '#FFFFFF',
+        header_text_color: '#374151',
+        header_font_size: 15,
+        header_font_weight: 500,
+
+        // Messages
+        message_background_user: '#374151',
+        message_background_bot: '#F9FAFB',
+        message_text_color_user: '#FFFFFF',
+        message_text_color_bot: '#374151',
+        message_font_size: 13,
+        message_font_weight: 400,
+
+        // Input & Button
+        input_background: '#FFFFFF',
+        input_text_color: '#374151',
+        input_border_color: '#E5E7EB',
+        input_font_size: 13,
+        send_button_background: '#374151',
+        send_button_text_color: '#FFFFFF',
+        send_button_hover_background: '#1F2937',
+
+        // Layout
+        width: 360,
+        height: 480,
+        border_radius: 8,
+
+        // Typography
+        font_family: 'system-ui, -apple-system, sans-serif'
+      },
+      vibrant: {
+        // Colors & Theme
+        primary_color: '#EC4899',
+        secondary_color: '#FDF2F8',
+        background_color: '#FFFFFF',
+
+        // Header
+        header_background: '#EC4899',
+        header_text_color: '#FFFFFF',
+        header_font_size: 17,
+        header_font_weight: 700,
+
+        // Messages
+        message_background_user: '#EC4899',
+        message_background_bot: '#F3E8FF',
+        message_text_color_user: '#FFFFFF',
+        message_text_color_bot: '#581C87',
+        message_font_size: 14,
+        message_font_weight: 500,
+
+        // Input & Button
+        input_background: '#FFFFFF',
+        input_text_color: '#581C87',
+        input_border_color: '#EC4899',
+        input_font_size: 14,
+        send_button_background: '#EC4899',
+        send_button_text_color: '#FFFFFF',
+        send_button_hover_background: '#BE185D',
+
+        // Layout
+        width: 400,
+        height: 520,
+        border_radius: 20,
+
+        // Typography
+        font_family: 'Inter, system-ui, sans-serif'
+      }
+    }
+
+    const preset = presets[presetName]
+    if (preset) {
+      setChatbotForm({
+        ...chatbotForm,
+        chatbot_styling: {
+          ...chatbotForm.chatbot_styling,
+          ...preset
+        }
+      })
+    }
+  }
 
   // Form states
   const [agentForm, setAgentForm] = useState({
@@ -179,8 +432,101 @@ const AIAgents = ({ adminData, settings }) => {
     source_url: '',
     uploaded_file: null
   })
+
+  const [chatbotForm, setChatbotForm] = useState({
+    name: '',
+    description: '',
+    agent_id: '',
+    trigger_button_settings: {
+      position: 'bottom-right',
+      color: '#3B82F6',
+      icon: 'chat',
+      size: 'medium',
+      offset_x: 24,
+      offset_y: 24
+    },
+    chatbot_styling: {
+      // Layout & Dimensions
+      width: 380,
+      height: 500,
+      border_radius: 12,
+
+      // Colors & Theme
+      primary_color: '#3B82F6',
+      secondary_color: '#F3F4F6',
+      background_color: '#FFFFFF',
+
+      // Header Styling
+      header_background: '#3B82F6',
+      header_text_color: '#FFFFFF',
+      header_font_size: 16,
+      header_font_weight: 600,
+
+      // Message Styling
+      message_background_user: '#3B82F6',
+      message_background_bot: '#F3F4F6',
+      message_text_color_user: '#FFFFFF',
+      message_text_color_bot: '#1F2937',
+      message_font_size: 14,
+      message_font_weight: 400,
+
+      // Input Area Styling
+      input_background: '#FFFFFF',
+      input_text_color: '#1F2937',
+      input_border_color: '#D1D5DB',
+      input_font_size: 14,
+
+      // Button Styling
+      send_button_background: '#3B82F6',
+      send_button_text_color: '#FFFFFF',
+      send_button_hover_background: '#2563EB',
+
+      // Quick Messages Styling
+      quick_message_background: 'transparent',
+      quick_message_text_color: '#3B82F6',
+      quick_message_border_color: '#3B82F6',
+      quick_message_font_size: 12,
+
+      // Typography
+      font_family: 'Inter, system-ui, sans-serif',
+
+      // Animations & Effects
+      enable_animations: true,
+      typing_indicator_color: '#9CA3AF'
+    },
+    behavior_settings: {
+      persist_sessions: true,
+      welcome_message: 'Hello! How can I help you today?',
+      typing_indicator: true,
+      auto_expand: false
+    },
+    quick_messages: [
+      'How can I contact you?',
+      'What are your business hours?',
+      'Tell me about your services'
+    ],
+    display_conditions: {
+      display_mode: ['everywhere'], // Array: can include 'everywhere', 'frontend_only', 'admin_only', 'logged_in_only'
+      frontend_pages: 'all', // 'all', 'specific'
+      frontend_urls: '', // URL patterns for frontend (newline separated)
+      admin_pages: 'all', // 'all', 'specific'
+      specific_admin_pages: [], // Array of admin page slugs
+      url_patterns: [], // Array of URL pattern objects with {pattern: '', match_type: 'contains|exact|regex'}
+      user_roles: [], // Array of role strings
+      specific_users: [], // Array of user IDs
+      devices: 'all' // 'all', 'desktop', 'mobile', 'tablet'
+    },
+    rate_limit_settings: {
+      enabled: false,
+      max_messages_per_hour: 10,
+      max_messages_per_day: 50
+    },
+    is_active: true
+  })
   
   const [isProcessing, setIsProcessing] = useState(false)
+  const [availableUsers, setAvailableUsers] = useState([])
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -195,14 +541,19 @@ const AIAgents = ({ adminData, settings }) => {
     try {
       setLoading(true)
       
-      // Load agents and knowledge base entries
-      const [agentsResponse, kbResponse] = await Promise.all([
+      // Load agents, knowledge base entries, and chatbots
+      const [agentsResponse, kbResponse, chatbotsResponse] = await Promise.all([
         fetch(`${adminData.restUrl}ai-agents`, {
           headers: {
             'X-WP-Nonce': adminData.nonces.wp_rest,
           },
         }),
         fetch(`${adminData.restUrl}knowledge-base`, {
+          headers: {
+            'X-WP-Nonce': adminData.nonces.wp_rest,
+          },
+        }),
+        fetch(`${adminData.restUrl}chatbots`, {
           headers: {
             'X-WP-Nonce': adminData.nonces.wp_rest,
           },
@@ -222,10 +573,43 @@ const AIAgents = ({ adminData, settings }) => {
           setKnowledgeBaseEntries(kbData.data || [])
         }
       }
+
+      if (chatbotsResponse.ok) {
+        const chatbotsData = await chatbotsResponse.json()
+        if (chatbotsData.success) {
+          setChatbots(chatbotsData.data || [])
+        }
+      }
     } catch (error) {
       console.error('Failed to load data:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadAvailableUsers = async () => {
+    if (!adminData?.restUrl || isLoadingUsers) {
+      return
+    }
+
+    try {
+      setIsLoadingUsers(true)
+      const response = await fetch(`${adminData.restUrl}users`, {
+        headers: {
+          'X-WP-Nonce': adminData.nonces.wp_rest,
+        },
+      })
+
+      if (response.ok) {
+        const usersData = await response.json()
+        if (usersData.success) {
+          setAvailableUsers(usersData.data || [])
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load users:', error)
+    } finally {
+      setIsLoadingUsers(false)
     }
   }
 
@@ -258,6 +642,102 @@ const AIAgents = ({ adminData, settings }) => {
     })
     setEditingKB(null)
     setIsProcessing(false)
+  }
+
+  const resetChatbotForm = () => {
+    setChatbotForm({
+      name: '',
+      description: '',
+      agent_id: '',
+      custom_header_name: '',
+      custom_header_logo: '',
+      trigger_button_settings: {
+        position: 'bottom-right',
+        color: '#3B82F6',
+        icon: 'chat',
+        size: 'medium',
+        offset_x: 24,
+        offset_y: 24
+      },
+      chatbot_styling: {
+        // Layout & Dimensions
+        width: 380,
+        height: 500,
+        border_radius: 12,
+
+        // Colors & Theme
+        primary_color: '#3B82F6',
+        secondary_color: '#F3F4F6',
+        background_color: '#FFFFFF',
+
+        // Header Styling
+        header_background: '#3B82F6',
+        header_text_color: '#FFFFFF',
+        header_font_size: 16,
+        header_font_weight: 600,
+
+        // Message Styling
+        message_background_user: '#3B82F6',
+        message_background_bot: '#F3F4F6',
+        message_text_color_user: '#FFFFFF',
+        message_text_color_bot: '#1F2937',
+        message_font_size: 14,
+        message_font_weight: 400,
+
+        // Input Area Styling
+        input_background: '#FFFFFF',
+        input_text_color: '#1F2937',
+        input_border_color: '#D1D5DB',
+        input_font_size: 14,
+
+        // Button Styling
+        send_button_background: '#3B82F6',
+        send_button_text_color: '#FFFFFF',
+        send_button_hover_background: '#2563EB',
+
+        // Quick Messages Styling
+        quick_message_background: 'transparent',
+        quick_message_text_color: '#3B82F6',
+        quick_message_border_color: '#3B82F6',
+        quick_message_font_size: 12,
+
+        // Typography
+        font_family: 'Inter, system-ui, sans-serif',
+
+        // Animations & Effects
+        enable_animations: true,
+        typing_indicator_color: '#9CA3AF'
+      },
+      behavior_settings: {
+        persist_sessions: true,
+        welcome_message: 'Hello! How can I help you today?',
+        typing_indicator: true,
+        auto_expand: false
+      },
+      quick_messages: [
+        'How can I contact you?',
+        'What are your business hours?',
+        'Tell me about your services'
+      ],
+      display_conditions: {
+        display_mode: ['everywhere'],
+        frontend_pages: 'all',
+        frontend_urls: '',
+        admin_pages: 'all',
+        specific_admin_pages: [],
+        url_patterns: [],
+        user_roles: [],
+        specific_users: [],
+        devices: 'all'
+      },
+      rate_limit_settings: {
+        enabled: false,
+        max_messages_per_hour: 10,
+        max_messages_per_day: 50
+      },
+      is_active: true
+    })
+    setEditingChatbot(null)
   }
 
   const handleCreateAgent = () => {
@@ -527,6 +1007,144 @@ const AIAgents = ({ adminData, settings }) => {
     }
   }
 
+  const handleCreateChatbot = () => {
+    resetChatbotForm()
+    setActiveTab('chatbot-form')
+  }
+
+  const handleEditChatbot = (chatbot) => {
+    setChatbotForm({
+      name: chatbot.name || '',
+      description: chatbot.description || '',
+      agent_id: chatbot.agent_id || '',
+      custom_header_name: chatbot.custom_header_name || '',
+      custom_header_logo: chatbot.custom_header_logo || '',
+      trigger_button_settings: chatbot.trigger_button_settings || {
+        position: 'bottom-right',
+        color: '#3B82F6',
+        icon: 'chat',
+        size: 'medium',
+        offset_x: 24,
+        offset_y: 24
+      },
+      chatbot_styling: chatbot.chatbot_styling || {
+        primary_color: '#3B82F6',
+        secondary_color: '#F3F4F6',
+        font_family: 'Inter, sans-serif',
+        border_radius: 12,
+        header_background: '#3B82F6',
+        header_text_color: '#FFFFFF',
+        message_background_user: '#3B82F6',
+        message_background_bot: '#F3F4F6',
+        message_text_color_user: '#FFFFFF',
+        message_text_color_bot: '#1F2937'
+      },
+      behavior_settings: chatbot.behavior_settings || {
+        persist_sessions: true,
+        welcome_message: 'Hello! How can I help you today?',
+        typing_indicator: true,
+        auto_expand: false
+      },
+      quick_messages: chatbot.quick_messages || [
+        'How can I contact you?',
+        'What are your business hours?',
+        'Tell me about your services'
+      ],
+      display_conditions: {
+        // Handle backward compatibility: convert old string format to array
+        display_mode: chatbot.display_conditions?.display_mode
+          ? (Array.isArray(chatbot.display_conditions.display_mode)
+            ? chatbot.display_conditions.display_mode
+            : [chatbot.display_conditions.display_mode])
+          : ['everywhere'],
+        frontend_pages: chatbot.display_conditions?.frontend_pages || 'all',
+        frontend_urls: chatbot.display_conditions?.frontend_urls || '',
+        admin_pages: chatbot.display_conditions?.admin_pages || 'all',
+        specific_admin_pages: chatbot.display_conditions?.specific_admin_pages || [],
+        url_patterns: chatbot.display_conditions?.url_patterns || [],
+        user_roles: chatbot.display_conditions?.user_roles || [],
+        specific_users: chatbot.display_conditions?.specific_users || [],
+        devices: chatbot.display_conditions?.devices || 'all'
+      },
+      rate_limit_settings: chatbot.rate_limit_settings || {
+        enabled: false,
+        max_messages_per_hour: 10,
+        max_messages_per_day: 50
+      },
+      is_active: chatbot.is_active === '1' || chatbot.is_active === 1
+    })
+    setEditingChatbot(chatbot)
+    setActiveTab('chatbot-form')
+  }
+
+  const handleSaveChatbot = async () => {
+    if (!adminData?.restUrl || !chatbotForm.name.trim()) {
+      showError('Chatbot name is required')
+      return
+    }
+
+    if (!chatbotForm.agent_id) {
+      showError('Please select an AI Agent')
+      return
+    }
+
+    try {
+      const url = editingChatbot 
+        ? `${adminData.restUrl}chatbots/${editingChatbot.id}`
+        : `${adminData.restUrl}chatbots`
+      
+      const response = await fetch(url, {
+        method: editingChatbot ? 'PUT' : 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-WP-Nonce': adminData.nonces.wp_rest,
+        },
+        body: JSON.stringify(chatbotForm)
+      })
+
+      const result = await response.json()
+      
+      if (result.success) {
+        showSuccess(editingChatbot ? 'Chatbot updated successfully' : 'Chatbot created successfully')
+        setActiveTab('chatbots')
+        resetChatbotForm()
+        loadData()
+      } else {
+        showError(result.message || 'Failed to save chatbot')
+      }
+    } catch (error) {
+      console.error('Failed to save chatbot:', error)
+      showError('Failed to save chatbot. Please try again.')
+    }
+  }
+
+  const handleDeleteChatbot = async (chatbotId) => {
+    if (!confirm('Are you sure you want to delete this chatbot?')) {
+      return
+    }
+
+    try {
+      const response = await fetch(`${adminData.restUrl}chatbots/${chatbotId}`, {
+        method: 'DELETE',
+        headers: {
+          'X-WP-Nonce': adminData.nonces.wp_rest,
+        },
+      })
+
+      const result = await response.json()
+      
+      if (result.success) {
+        showSuccess('Chatbot deleted successfully')
+        loadData()
+      } else {
+        showError(result.message || 'Failed to delete chatbot')
+      }
+    } catch (error) {
+      console.error('Failed to delete chatbot:', error)
+      showError('Failed to delete chatbot. Please try again.')
+    }
+  }
+
   const renderTabButton = (tabId, label, count = null) => (
     <button
       key={tabId}
@@ -741,6 +1359,1224 @@ const AIAgents = ({ adminData, settings }) => {
     </div>
   )
 
+  const renderChatbotsTab = () => (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Chatbots</h2>
+          <p className="text-gray-600 dark:text-gray-400">Create and manage AI-powered chatbots for your website visitors.</p>
+        </div>
+        <Button onClick={handleCreateChatbot}>
+          <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+          </svg>
+          Create Chatbot
+        </Button>
+      </div>
+
+      {/* Chatbots List */}
+      {loading ? (
+        <div className="flex justify-center py-12">
+          <Spinner size="lg" />
+        </div>
+      ) : chatbots.length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {chatbots.map((chatbot) => (
+            <Card key={chatbot.id} className="relative">
+              <div className="flex justify-between items-start mb-4">
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                    {chatbot.name}
+                  </h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                    {chatbot.description || 'No description'}
+                  </p>
+                </div>
+                <Badge color={chatbot.is_active ? 'success' : 'warning'} size="sm">
+                  {chatbot.is_active ? 'Active' : 'Inactive'}
+                </Badge>
+              </div>
+
+              {/* Chatbot Details */}
+              <div className="space-y-2 text-xs text-gray-600 dark:text-gray-400 mb-4">
+                <div className="flex justify-between">
+                  <span>AI Agent:</span>
+                  <span className="font-medium">
+                    {agents.find(agent => agent.id === chatbot.agent_id)?.name || 'Unknown'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Position:</span>
+                  <span className="font-medium">
+                    {chatbot.trigger_button_settings?.position || 'bottom-right'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Sessions:</span>
+                  <span className="font-medium">
+                    {chatbot.behavior_settings?.persist_sessions ? 'Persistent' : 'New each visit'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Quick Messages Preview */}
+              {chatbot.quick_messages && chatbot.quick_messages.length > 0 && (
+                <div className="mb-4">
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">Quick Messages:</div>
+                  <div className="space-y-1">
+                    {chatbot.quick_messages.slice(0, 2).map((message, index) => (
+                      <div key={index} className="text-xs bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">
+                        {message}
+                      </div>
+                    ))}
+                    {chatbot.quick_messages.length > 2 && (
+                      <div className="text-xs text-gray-500">
+                        +{chatbot.quick_messages.length - 2} more
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex gap-2">
+                <Button 
+                  size="sm" 
+                  color="gray"
+                  onClick={() => handleEditChatbot(chatbot)}
+                  className="flex-1"
+                >
+                  Edit
+                </Button>
+                <Button 
+                  size="sm" 
+                  color="failure"
+                  onClick={() => handleDeleteChatbot(chatbot.id)}
+                >
+                  Delete
+                </Button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <div className="text-center py-12">
+          <div className="w-16 h-16 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-3.582 8-8 8a8.959 8.959 0 01-4.906-1.468L3 21l2.532-5.094A8.959 8.959 0 013 12c0-4.418 3.582-8 8-8s8 3.582 8 8z" />
+            </svg>
+          </div>
+          <p className="text-gray-500 dark:text-gray-400 mb-4">No chatbots created yet</p>
+          <Button onClick={handleCreateChatbot}>Create Your First Chatbot</Button>
+        </div>
+      )}
+    </div>
+  )
+
+  const renderChatbotFormTab = () => (
+    <div className="space-y-6">
+      {/* Breadcrumb Navigation */}
+      <nav className="flex mb-4" aria-label="Breadcrumb">
+        <ol className="inline-flex items-center space-x-1 md:space-x-3">
+          <li className="inline-flex items-center">
+            <button
+              onClick={() => setActiveTab('chatbots')}
+              className="inline-flex items-center text-sm font-medium text-gray-700 hover:text-blue-600 dark:text-gray-400 dark:hover:text-white"
+            >
+              <svg className="w-3 h-3 mr-2.5" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z" />
+              </svg>
+              Chatbots
+            </button>
+          </li>
+          <li>
+            <div className="flex items-center">
+              <svg className="w-3 h-3 text-gray-400 mx-1" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+              </svg>
+              <span className="ml-1 text-sm font-medium text-gray-500 md:ml-2 dark:text-gray-400">
+                {editingChatbot ? 'Edit Chatbot' : 'Create Chatbot'}
+              </span>
+            </div>
+          </li>
+        </ol>
+      </nav>
+
+      {/* Header */}
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+            {editingChatbot ? `Edit "${editingChatbot.name}"` : 'Create New Chatbot'}
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400">
+            {editingChatbot ? 'Update your chatbot configuration and styling.' : 'Create a new chatbot with custom styling and behavior.'}
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button color="gray" onClick={() => {
+            resetChatbotForm()
+            setActiveTab('chatbots')
+          }}>
+            Cancel
+          </Button>
+          <Button onClick={handleSaveChatbot}>
+            {editingChatbot ? 'Update Chatbot' : 'Create Chatbot'}
+          </Button>
+        </div>
+      </div>
+
+      {/* Form Content with Preview */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Form Section */}
+        <div className="space-y-3">
+          {/* General Settings */}
+          <AccordionSection
+            title="General"
+            description="Basic chatbot information and settings"
+            isOpen={accordionState.general}
+            onToggle={() => toggleAccordion('general')}
+          >
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="chatbot-name" className="text-sm">Chatbot Name *</Label>
+                  <TextInput
+                    id="chatbot-name"
+                    type="text"
+                    value={chatbotForm.name}
+                    onChange={(e) => setChatbotForm({...chatbotForm, name: e.target.value})}
+                    placeholder="Enter chatbot name"
+                    className="mt-1"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="chatbot-agent" className="text-sm">AI Agent *</Label>
+                  <Select
+                    id="chatbot-agent"
+                    value={chatbotForm.agent_id}
+                    onChange={(e) => setChatbotForm({...chatbotForm, agent_id: e.target.value})}
+                    className="mt-1"
+                  >
+                    <option value="">Select an AI Agent</option>
+                    {agents.filter(agent => agent.is_active).map((agent) => (
+                      <option key={agent.id} value={agent.id}>
+                        {agent.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+
+              <div>
+                <Label htmlFor="chatbot-description" className="text-sm">Description</Label>
+                <Textarea
+                  id="chatbot-description"
+                  rows={2}
+                  value={chatbotForm.description}
+                  onChange={(e) => setChatbotForm({...chatbotForm, description: e.target.value})}
+                  placeholder="Brief description of this chatbot's purpose..."
+                  className="mt-1"
+                />
+              </div>
+
+              {/* Header Customization */}
+              <div className="border-t border-gray-200 dark:border-gray-600 pt-4 mt-4">
+                <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Header Customization</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="custom-header-name" className="text-sm">Custom Header Name</Label>
+                    <TextInput
+                      id="custom-header-name"
+                      type="text"
+                      value={chatbotForm.custom_header_name || ''}
+                      onChange={(e) => setChatbotForm({...chatbotForm, custom_header_name: e.target.value})}
+                      placeholder="Leave empty to use chatbot name"
+                      className="mt-1"
+                    />
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      If empty, the chatbot name will be displayed
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor="custom-header-logo" className="text-sm">Custom Header Logo</Label>
+                    <div className="mt-1 space-y-2">
+                      <div className="flex gap-2">
+                        <TextInput
+                          id="custom-header-logo"
+                          type="url"
+                          value={chatbotForm.custom_header_logo || ''}
+                          onChange={(e) => setChatbotForm({...chatbotForm, custom_header_logo: e.target.value})}
+                          placeholder="https://example.com/logo.png"
+                          className="flex-1"
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          color="gray"
+                          onClick={() => {
+                            if (window.wp && window.wp.media) {
+                              const frame = window.wp.media({
+                                title: 'Select Logo',
+                                button: { text: 'Use this logo' },
+                                multiple: false,
+                                library: { type: 'image' }
+                              });
+
+                              frame.on('select', function() {
+                                const attachment = frame.state().get('selection').first().toJSON();
+                                setChatbotForm({...chatbotForm, custom_header_logo: attachment.url});
+                              });
+
+                              frame.open();
+                            } else {
+                              alert('WordPress media library not available. Please use direct URL input.');
+                            }
+                          }}
+                        >
+                          Choose from Library
+                        </Button>
+                      </div>
+                      {chatbotForm.custom_header_logo && (
+                        <div className="flex items-center gap-2 p-2 bg-gray-50 dark:bg-gray-700 rounded">
+                          <img
+                            src={chatbotForm.custom_header_logo}
+                            alt="Logo preview"
+                            className="w-8 h-8 object-cover rounded"
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                            }}
+                          />
+                          <span className="text-sm text-gray-600 dark:text-gray-300 truncate flex-1">
+                            {chatbotForm.custom_header_logo}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setChatbotForm({...chatbotForm, custom_header_logo: ''})}
+                            className="text-red-500 hover:text-red-700 text-sm"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Enter URL directly or choose from WordPress media library. Leave empty to use default chat icon.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  id="chatbot-active"
+                  type="checkbox"
+                  checked={chatbotForm.is_active}
+                  onChange={(e) => setChatbotForm({...chatbotForm, is_active: e.target.checked})}
+                  className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                />
+                <Label htmlFor="chatbot-active" className="text-sm">Active</Label>
+              </div>
+            </div>
+          </AccordionSection>
+
+          {/* Trigger Button Settings */}
+          <AccordionSection
+            title="Button"
+            description="Customize the floating chat button appearance and position"
+            isOpen={accordionState.trigger}
+            onToggle={() => toggleAccordion('trigger')}
+          >
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="button-position" className="text-sm">Position</Label>
+                <Select
+                  id="button-position"
+                  value={chatbotForm.trigger_button_settings.position}
+                  onChange={(e) => setChatbotForm({
+                    ...chatbotForm,
+                    trigger_button_settings: {
+                      ...chatbotForm.trigger_button_settings,
+                      position: e.target.value
+                    }
+                  })}
+                  className="mt-1"
+                >
+                  <option value="bottom-right">Bottom Right</option>
+                  <option value="bottom-left">Bottom Left</option>
+                  <option value="top-right">Top Right</option>
+                  <option value="top-left">Top Left</option>
+                </Select>
+              </div>
+
+              <div>
+                <Label htmlFor="button-color" className="text-sm">Color</Label>
+                <div className="mt-1">
+                  <input
+                    id="button-color"
+                    type="color"
+                    value={chatbotForm.trigger_button_settings.color}
+                    onChange={(e) => setChatbotForm({
+                      ...chatbotForm,
+                      trigger_button_settings: {
+                        ...chatbotForm.trigger_button_settings,
+                        color: e.target.value
+                      }
+                    })}
+                    className="h-10 w-full rounded-md border border-gray-300 dark:border-gray-600 cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <Label htmlFor="button-size" className="text-sm">Size</Label>
+                <Select
+                  id="button-size"
+                  value={chatbotForm.trigger_button_settings.size}
+                  onChange={(e) => setChatbotForm({
+                    ...chatbotForm,
+                    trigger_button_settings: {
+                      ...chatbotForm.trigger_button_settings,
+                      size: e.target.value
+                    }
+                  })}
+                  className="mt-1"
+                >
+                  <option value="small">Small</option>
+                  <option value="medium">Medium</option>
+                  <option value="large">Large</option>
+                </Select>
+              </div>
+
+              <div>
+                <Label htmlFor="button-icon" className="text-sm">Icon</Label>
+                <Select
+                  id="button-icon"
+                  value={chatbotForm.trigger_button_settings.icon}
+                  onChange={(e) => setChatbotForm({
+                    ...chatbotForm,
+                    trigger_button_settings: {
+                      ...chatbotForm.trigger_button_settings,
+                      icon: e.target.value
+                    }
+                  })}
+                  className="mt-1"
+                >
+                  <option value="chat">Chat Bubble</option>
+                  <option value="message">Message</option>
+                  <option value="support">Support</option>
+                  <option value="help">Help</option>
+                  <option value="assistant">Assistant</option>
+                </Select>
+              </div>
+            </div>
+          </AccordionSection>
+
+          {/* Chat Styling Settings */}
+          <AccordionSection
+            title="Chat"
+            description="Customize the chat interface appearance, colors, and dimensions"
+            isOpen={accordionState.appearance}
+            onToggle={() => toggleAccordion('appearance')}
+          >
+            <div className="space-y-4">
+              {/* Layout & Dimensions */}
+              <div>
+                <h5 className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-2">Layout & Dimensions</h5>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <Label htmlFor="chatbot-width" className="text-xs">Width (px)</Label>
+                    <TextInput
+                      id="chatbot-width"
+                      type="number"
+                      min="300"
+                      max="600"
+                      value={chatbotForm.chatbot_styling.width}
+                      onChange={(e) => setChatbotForm({
+                        ...chatbotForm,
+                        chatbot_styling: {
+                          ...chatbotForm.chatbot_styling,
+                          width: parseInt(e.target.value) || 380
+                        }
+                      })}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="chatbot-height" className="text-xs">Height (px)</Label>
+                    <TextInput
+                      id="chatbot-height"
+                      type="number"
+                      min="400"
+                      max="800"
+                      value={chatbotForm.chatbot_styling.height}
+                      onChange={(e) => setChatbotForm({
+                        ...chatbotForm,
+                        chatbot_styling: {
+                          ...chatbotForm.chatbot_styling,
+                          height: parseInt(e.target.value) || 500
+                        }
+                      })}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="chatbot-border-radius" className="text-xs">Border Radius (px)</Label>
+                    <TextInput
+                      id="chatbot-border-radius"
+                      type="number"
+                      min="0"
+                      max="50"
+                      value={chatbotForm.chatbot_styling.border_radius}
+                      onChange={(e) => setChatbotForm({
+                        ...chatbotForm,
+                        chatbot_styling: {
+                          ...chatbotForm.chatbot_styling,
+                          border_radius: parseInt(e.target.value) || 12
+                        }
+                      })}
+                      className="mt-1"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Colors */}
+              <div>
+                <h5 className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-2">Colors</h5>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  <div>
+                    <Label htmlFor="primary-color" className="text-xs">Primary Color</Label>
+                    <div className="mt-1">
+                      <input
+                        id="primary-color"
+                        type="color"
+                        value={chatbotForm.chatbot_styling.primary_color}
+                        onChange={(e) => setChatbotForm({
+                          ...chatbotForm,
+                          chatbot_styling: {
+                            ...chatbotForm.chatbot_styling,
+                            primary_color: e.target.value
+                          }
+                        })}
+                        className="h-8 w-full rounded-md border border-gray-300 dark:border-gray-600 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <Label htmlFor="secondary-color" className="text-xs">Secondary Color</Label>
+                    <div className="mt-1">
+                      <input
+                        id="secondary-color"
+                        type="color"
+                        value={chatbotForm.chatbot_styling.secondary_color}
+                        onChange={(e) => setChatbotForm({
+                          ...chatbotForm,
+                          chatbot_styling: {
+                            ...chatbotForm.chatbot_styling,
+                            secondary_color: e.target.value
+                          }
+                        })}
+                        className="h-8 w-full rounded-md border border-gray-300 dark:border-gray-600 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <Label htmlFor="background-color" className="text-xs">Background</Label>
+                    <div className="mt-1">
+                      <input
+                        id="background-color"
+                        type="color"
+                        value={chatbotForm.chatbot_styling.background_color}
+                        onChange={(e) => setChatbotForm({
+                          ...chatbotForm,
+                          chatbot_styling: {
+                            ...chatbotForm.chatbot_styling,
+                            background_color: e.target.value
+                          }
+                        })}
+                        className="h-8 w-full rounded-md border border-gray-300 dark:border-gray-600 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Typography */}
+              <div>
+                <Label htmlFor="font-family" className="text-sm">Font Family</Label>
+                <Select
+                  id="font-family"
+                  value={chatbotForm.chatbot_styling.font_family}
+                  onChange={(e) => setChatbotForm({
+                    ...chatbotForm,
+                    chatbot_styling: {
+                      ...chatbotForm.chatbot_styling,
+                      font_family: e.target.value
+                    }
+                  })}
+                  className="mt-1"
+                >
+                  <option value="Inter, system-ui, sans-serif">Inter (Default)</option>
+                  <option value="system-ui, -apple-system, sans-serif">System Default</option>
+                  <option value="Arial, sans-serif">Arial</option>
+                  <option value="Helvetica, Arial, sans-serif">Helvetica</option>
+                  <option value="Georgia, serif">Georgia</option>
+                  <option value="Times, serif">Times</option>
+                  <option value="Courier, monospace">Courier</option>
+                  <option value="Roboto, sans-serif">Roboto</option>
+                  <option value="Open Sans, sans-serif">Open Sans</option>
+                </Select>
+              </div>
+            </div>
+          </AccordionSection>
+
+          {/* Behavior Settings */}
+          <AccordionSection
+            title="Presets"
+            description="Design templates, welcome messages and quick reply options"
+            isOpen={accordionState.behavior}
+            onToggle={() => toggleAccordion('behavior')}
+          >
+            <div className="space-y-4">
+              {/* Design Presets */}
+              <div>
+                <Label className="text-sm">Design Templates</Label>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">Apply pre-designed themes to quickly style your chatbot</p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => applyDesignPreset('modern')}
+                    className="p-3 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-blue-500 dark:hover:border-blue-400 transition-colors group"
+                  >
+                    <div className="flex items-center justify-center mb-2">
+                      <div className="w-6 h-6 rounded-full bg-blue-500"></div>
+                    </div>
+                    <div className="text-xs font-medium text-gray-700 dark:text-gray-300 group-hover:text-blue-600 dark:group-hover:text-blue-400">Modern</div>
+                    <div className="text-xs text-gray-500">Clean & Professional</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => applyDesignPreset('dark')}
+                    className="p-3 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-green-500 dark:hover:border-green-400 transition-colors group"
+                  >
+                    <div className="flex items-center justify-center mb-2">
+                      <div className="w-6 h-6 rounded-full bg-gray-800 border-2 border-green-500"></div>
+                    </div>
+                    <div className="text-xs font-medium text-gray-700 dark:text-gray-300 group-hover:text-green-600 dark:group-hover:text-green-400">Dark</div>
+                    <div className="text-xs text-gray-500">Sleek & Modern</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => applyDesignPreset('minimal')}
+                    className="p-3 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-gray-500 dark:hover:border-gray-400 transition-colors group"
+                  >
+                    <div className="flex items-center justify-center mb-2">
+                      <div className="w-6 h-6 rounded border border-gray-400 bg-white"></div>
+                    </div>
+                    <div className="text-xs font-medium text-gray-700 dark:text-gray-300 group-hover:text-gray-600 dark:group-hover:text-gray-400">Minimal</div>
+                    <div className="text-xs text-gray-500">Simple & Clean</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => applyDesignPreset('vibrant')}
+                    className="p-3 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-pink-500 dark:hover:border-pink-400 transition-colors group"
+                  >
+                    <div className="flex items-center justify-center mb-2">
+                      <div className="w-6 h-6 rounded-full bg-gradient-to-r from-pink-500 to-purple-600"></div>
+                    </div>
+                    <div className="text-xs font-medium text-gray-700 dark:text-gray-300 group-hover:text-pink-600 dark:group-hover:text-pink-400">Vibrant</div>
+                    <div className="text-xs text-gray-500">Bold & Colorful</div>
+                  </button>
+                </div>
+              </div>
+              <div>
+                <Label htmlFor="welcome-message" className="text-sm">Welcome Message</Label>
+                <TextInput
+                  id="welcome-message"
+                  type="text"
+                  value={chatbotForm.behavior_settings.welcome_message}
+                  onChange={(e) => setChatbotForm({
+                    ...chatbotForm,
+                    behavior_settings: {
+                      ...chatbotForm.behavior_settings,
+                      welcome_message: e.target.value
+                    }
+                  })}
+                  placeholder="Hello! How can I help you today?"
+                  className="mt-1"
+                />
+              </div>
+
+              <div>
+                <Label className="text-sm">Quick Messages</Label>
+                <div className="space-y-2 mt-2">
+                  {chatbotForm.quick_messages.map((message, index) => (
+                    <div key={index} className="flex gap-2">
+                      <TextInput
+                        type="text"
+                        value={message}
+                        onChange={(e) => {
+                          const newMessages = [...chatbotForm.quick_messages]
+                          newMessages[index] = e.target.value
+                          setChatbotForm({
+                            ...chatbotForm,
+                            quick_messages: newMessages
+                          })
+                        }}
+                        placeholder="Quick message..."
+                        className="flex-1 text-sm"
+                      />
+                      <Button
+                        size="xs"
+                        color="failure"
+                        onClick={() => {
+                          const newMessages = chatbotForm.quick_messages.filter((_, i) => i !== index)
+                          setChatbotForm({
+                            ...chatbotForm,
+                            quick_messages: newMessages
+                          })
+                        }}
+                      >
+                        ×
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    size="xs"
+                    color="gray"
+                    onClick={() => {
+                      setChatbotForm({
+                        ...chatbotForm,
+                        quick_messages: [...chatbotForm.quick_messages, '']
+                      })
+                    }}
+                  >
+                    + Add Quick Message
+                  </Button>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <input
+                    id="typing-indicator"
+                    type="checkbox"
+                    checked={chatbotForm.behavior_settings.typing_indicator}
+                    onChange={(e) => setChatbotForm({
+                      ...chatbotForm,
+                      behavior_settings: {
+                        ...chatbotForm.behavior_settings,
+                        typing_indicator: e.target.checked
+                      }
+                    })}
+                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
+                  />
+                  <Label htmlFor="typing-indicator" className="text-sm">Show typing indicator</Label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    id="persist-sessions"
+                    type="checkbox"
+                    checked={chatbotForm.behavior_settings.persist_sessions}
+                    onChange={(e) => setChatbotForm({
+                      ...chatbotForm,
+                      behavior_settings: {
+                        ...chatbotForm.behavior_settings,
+                        persist_sessions: e.target.checked
+                      }
+                    })}
+                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
+                  />
+                  <Label htmlFor="persist-sessions" className="text-sm">Keep chat open</Label>
+                </div>
+              </div>
+            </div>
+          </AccordionSection>
+
+          {/* Visibility & Display Conditions */}
+          <AccordionSection
+            title="Visibility"
+            description="Control where and when the chatbot appears on your website"
+            isOpen={accordionState.visibility}
+            onToggle={() => toggleAccordion('visibility')}
+          >
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600 dark:text-gray-300">
+                Choose where the chatbot should appear on your website (multiple selections allowed)
+              </p>
+
+              {/* Display Mode Checkboxes */}
+              <div className="space-y-3">
+                <label className="flex items-center space-x-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    value="everywhere"
+                    checked={chatbotForm.display_conditions.display_mode.includes('everywhere')}
+                    onChange={(e) => {
+                      const modes = [...chatbotForm.display_conditions.display_mode]
+                      if (e.target.checked) {
+                        if (!modes.includes('everywhere')) modes.push('everywhere')
+                      } else {
+                        const index = modes.indexOf('everywhere')
+                        if (index > -1) modes.splice(index, 1)
+                      }
+                      setChatbotForm({
+                        ...chatbotForm,
+                        display_conditions: {
+                          ...chatbotForm.display_conditions,
+                          display_mode: modes
+                        }
+                      })
+                    }}
+                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                  />
+                  <div>
+                    <div className="font-medium text-gray-900 dark:text-white">Show Everywhere</div>
+                    <div className="text-sm text-gray-600 dark:text-gray-300">Display the chatbot on all pages (frontend and admin)</div>
+                  </div>
+                </label>
+
+                <label className="flex items-center space-x-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    value="frontend_only"
+                    checked={chatbotForm.display_conditions.display_mode.includes('frontend_only')}
+                    onChange={(e) => {
+                      const modes = [...chatbotForm.display_conditions.display_mode]
+                      if (e.target.checked) {
+                        if (!modes.includes('frontend_only')) modes.push('frontend_only')
+                      } else {
+                        const index = modes.indexOf('frontend_only')
+                        if (index > -1) modes.splice(index, 1)
+                      }
+                      setChatbotForm({
+                        ...chatbotForm,
+                        display_conditions: {
+                          ...chatbotForm.display_conditions,
+                          display_mode: modes
+                        }
+                      })
+                    }}
+                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                  />
+                  <div>
+                    <div className="font-medium text-gray-900 dark:text-white">Frontend Only</div>
+                    <div className="text-sm text-gray-600 dark:text-gray-300">Display only on public pages (not in admin area)</div>
+                  </div>
+                </label>
+
+                <label className="flex items-center space-x-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    value="admin_only"
+                    checked={chatbotForm.display_conditions.display_mode.includes('admin_only')}
+                    onChange={(e) => {
+                      const modes = [...chatbotForm.display_conditions.display_mode]
+                      if (e.target.checked) {
+                        if (!modes.includes('admin_only')) modes.push('admin_only')
+                      } else {
+                        const index = modes.indexOf('admin_only')
+                        if (index > -1) modes.splice(index, 1)
+                      }
+                      setChatbotForm({
+                        ...chatbotForm,
+                        display_conditions: {
+                          ...chatbotForm.display_conditions,
+                          display_mode: modes
+                        }
+                      })
+                    }}
+                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                  />
+                  <div>
+                    <div className="font-medium text-gray-900 dark:text-white">Admin Area Only</div>
+                    <div className="text-sm text-gray-600 dark:text-gray-300">Display only in WordPress admin area (not on public pages)</div>
+                  </div>
+                </label>
+
+                <label className="flex items-center space-x-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    value="logged_in_only"
+                    checked={chatbotForm.display_conditions.display_mode.includes('logged_in_only')}
+                    onChange={(e) => {
+                      const modes = [...chatbotForm.display_conditions.display_mode]
+                      if (e.target.checked) {
+                        if (!modes.includes('logged_in_only')) modes.push('logged_in_only')
+                        // Pre-load users when this option is selected
+                        if (availableUsers.length === 0) {
+                          loadAvailableUsers()
+                        }
+                      } else {
+                        const index = modes.indexOf('logged_in_only')
+                        if (index > -1) modes.splice(index, 1)
+                      }
+                      setChatbotForm({
+                        ...chatbotForm,
+                        display_conditions: {
+                          ...chatbotForm.display_conditions,
+                          display_mode: modes
+                        }
+                      })
+                    }}
+                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                  />
+                  <div>
+                    <div className="font-medium text-gray-900 dark:text-white">Logged-in Users Only</div>
+                    <div className="text-sm text-gray-600 dark:text-gray-300">Display only when users are logged into WordPress</div>
+                  </div>
+                </label>
+              </div>
+
+              {/* Advanced Settings for Logged-in Users */}
+              {chatbotForm.display_conditions.display_mode.includes('logged_in_only') && (
+                <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600">
+                  <h5 className="font-medium text-gray-900 dark:text-white mb-3">User Restrictions</h5>
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="chatbot-user-roles" value="Allowed User Roles" className="mb-2" />
+                      <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
+                        Leave empty to allow all logged-in users, or select specific roles to restrict access.
+                      </p>
+                      <div className="space-y-2 max-h-32 overflow-y-auto">
+                        {['administrator', 'editor', 'author', 'contributor', 'subscriber'].map(role => (
+                          <label key={role} className="flex items-center space-x-2">
+                            <input
+                              type="checkbox"
+                              checked={chatbotForm.display_conditions.user_roles.includes(role)}
+                              onChange={(e) => {
+                                const roles = [...chatbotForm.display_conditions.user_roles]
+                                if (e.target.checked) {
+                                  if (!roles.includes(role)) roles.push(role)
+                                } else {
+                                  const index = roles.indexOf(role)
+                                  if (index > -1) roles.splice(index, 1)
+                                }
+                                setChatbotForm({
+                                  ...chatbotForm,
+                                  display_conditions: {
+                                    ...chatbotForm.display_conditions,
+                                    user_roles: roles
+                                  }
+                                })
+                              }}
+                              className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                            />
+                            <span className="text-sm text-gray-700 dark:text-gray-300 capitalize">{role}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <Label htmlFor="chatbot-specific-users" value="Specific Users (Advanced)" className="mb-2" />
+                      <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
+                        Select specific users who should see the chatbot. Leave empty to use role restrictions only.
+                      </p>
+                      <div className="space-y-2 max-h-40 overflow-y-auto border border-gray-300 dark:border-gray-600 rounded-lg p-3">
+                        {!isLoadingUsers && availableUsers.length === 0 && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm text-gray-600 dark:text-gray-300">No users loaded</span>
+                            <Button
+                              size="xs"
+                              onClick={loadAvailableUsers}
+                              disabled={isLoadingUsers}
+                              className="bg-blue-600 hover:bg-blue-700 text-white"
+                            >
+                              Load Users
+                            </Button>
+                          </div>
+                        )}
+
+                        {isLoadingUsers && (
+                          <div className="flex items-center justify-center p-4">
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                            <span className="ml-2 text-sm text-gray-600 dark:text-gray-300">Loading users...</span>
+                          </div>
+                        )}
+
+                        {availableUsers.length > 0 && (
+                          <>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Select Users:</span>
+                              <Button
+                                size="xs"
+                                onClick={() => {
+                                  setAvailableUsers([])
+                                  loadAvailableUsers()
+                                }}
+                                className="bg-gray-600 hover:bg-gray-700 text-white"
+                              >
+                                Refresh
+                              </Button>
+                            </div>
+                            {availableUsers.map(user => (
+                              <label key={user.id} className="flex items-center space-x-2">
+                                <input
+                                  type="checkbox"
+                                  checked={chatbotForm.display_conditions.specific_users.includes(user.id)}
+                                  onChange={(e) => {
+                                    const userIds = [...chatbotForm.display_conditions.specific_users]
+                                    if (e.target.checked) {
+                                      if (!userIds.includes(user.id)) userIds.push(user.id)
+                                    } else {
+                                      const index = userIds.indexOf(user.id)
+                                      if (index > -1) userIds.splice(index, 1)
+                                    }
+                                    setChatbotForm({
+                                      ...chatbotForm,
+                                      display_conditions: {
+                                        ...chatbotForm.display_conditions,
+                                        specific_users: userIds
+                                      }
+                                    })
+                                  }}
+                                  className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                                />
+                                <span className="text-sm text-gray-700 dark:text-gray-300" title={user.email}>
+                                  {user.display_name} ({user.username})
+                                </span>
+                              </label>
+                            ))}
+                          </>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        If both roles and specific users are selected, users must match either criteria to see the chat.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Advanced Settings for Frontend Only */}
+              {chatbotForm.display_conditions.display_mode.includes('frontend_only') && (
+                <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600">
+                  <h5 className="font-medium text-gray-900 dark:text-white mb-3">Frontend Page Restrictions</h5>
+                  <div className="space-y-4">
+                    <div>
+                      <Label value="Page Selection" className="mb-2" />
+                      <div className="space-y-2">
+                        <label className="flex items-center space-x-2">
+                          <input
+                            type="radio"
+                            name="frontend_pages"
+                            value="all"
+                            checked={chatbotForm.display_conditions.frontend_pages === 'all'}
+                            onChange={(e) => setChatbotForm({
+                              ...chatbotForm,
+                              display_conditions: {
+                                ...chatbotForm.display_conditions,
+                                frontend_pages: e.target.value
+                              }
+                            })}
+                            className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                          />
+                          <span className="text-sm text-gray-700 dark:text-gray-300">All frontend pages</span>
+                        </label>
+                        <label className="flex items-center space-x-2">
+                          <input
+                            type="radio"
+                            name="frontend_pages"
+                            value="specific"
+                            checked={chatbotForm.display_conditions.frontend_pages === 'specific'}
+                            onChange={(e) => setChatbotForm({
+                              ...chatbotForm,
+                              display_conditions: {
+                                ...chatbotForm.display_conditions,
+                                frontend_pages: e.target.value
+                              }
+                            })}
+                            className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                          />
+                          <span className="text-sm text-gray-700 dark:text-gray-300">Specific pages/patterns only</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    {chatbotForm.display_conditions.frontend_pages === 'specific' && (
+                      <div>
+                        <Label htmlFor="chatbot-frontend-urls" value="URL Patterns" className="mb-2" />
+                        <textarea
+                          id="chatbot-frontend-urls"
+                          rows="4"
+                          placeholder="Enter URL patterns, one per line. Examples:&#10;/contact&#10;/support/*&#10;/blog/*&#10;Use * as wildcard for multiple pages"
+                          value={chatbotForm.display_conditions.frontend_urls}
+                          onChange={(e) => setChatbotForm({
+                            ...chatbotForm,
+                            display_conditions: {
+                              ...chatbotForm.display_conditions,
+                              frontend_urls: e.target.value
+                            }
+                          })}
+                          className="block w-full p-2.5 text-sm text-gray-900 bg-gray-50 rounded-lg border border-gray-300 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-blue-500 dark:focus:border-blue-500"
+                        />
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          Relative URLs starting from site root. Use * for wildcards (e.g., /blog/* matches all blog pages).
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Advanced Settings for Admin Only */}
+              {chatbotForm.display_conditions.display_mode.includes('admin_only') && (
+                <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600">
+                  <h5 className="font-medium text-gray-900 dark:text-white mb-3">Admin Page Restrictions</h5>
+                  <div className="space-y-4">
+                    <div>
+                      <Label value="Admin Page Selection" className="mb-2" />
+                      <div className="space-y-2">
+                        <label className="flex items-center space-x-2">
+                          <input
+                            type="radio"
+                            name="admin_pages"
+                            value="all"
+                            checked={chatbotForm.display_conditions.admin_pages === 'all'}
+                            onChange={(e) => setChatbotForm({
+                              ...chatbotForm,
+                              display_conditions: {
+                                ...chatbotForm.display_conditions,
+                                admin_pages: e.target.value
+                              }
+                            })}
+                            className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                          />
+                          <span className="text-sm text-gray-700 dark:text-gray-300">All admin pages</span>
+                        </label>
+                        <label className="flex items-center space-x-2">
+                          <input
+                            type="radio"
+                            name="admin_pages"
+                            value="specific"
+                            checked={chatbotForm.display_conditions.admin_pages === 'specific'}
+                            onChange={(e) => setChatbotForm({
+                              ...chatbotForm,
+                              display_conditions: {
+                                ...chatbotForm.display_conditions,
+                                admin_pages: e.target.value
+                              }
+                            })}
+                            className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                          />
+                          <span className="text-sm text-gray-700 dark:text-gray-300">Specific admin pages only</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    {chatbotForm.display_conditions.admin_pages === 'specific' && (
+                      <div>
+                        <Label value="Select Admin Pages" className="mb-2" />
+                        <div className="space-y-2 max-h-32 overflow-y-auto">
+                          {[
+                            { value: 'dashboard', label: 'Dashboard' },
+                            { value: 'posts', label: 'Posts' },
+                            { value: 'pages', label: 'Pages' },
+                            { value: 'media', label: 'Media Library' },
+                            { value: 'comments', label: 'Comments' },
+                            { value: 'appearance', label: 'Appearance' },
+                            { value: 'plugins', label: 'Plugins' },
+                            { value: 'users', label: 'Users' },
+                            { value: 'tools', label: 'Tools' },
+                            { value: 'settings', label: 'Settings' },
+                            { value: 'woocommerce', label: 'WooCommerce (if active)' }
+                          ].map(page => (
+                            <label key={page.value} className="flex items-center space-x-2">
+                              <input
+                                type="checkbox"
+                                checked={chatbotForm.display_conditions.specific_admin_pages.includes(page.value)}
+                                onChange={(e) => {
+                                  const pages = [...chatbotForm.display_conditions.specific_admin_pages]
+                                  if (e.target.checked) {
+                                    if (!pages.includes(page.value)) pages.push(page.value)
+                                  } else {
+                                    const index = pages.indexOf(page.value)
+                                    if (index > -1) pages.splice(index, 1)
+                                  }
+                                  setChatbotForm({
+                                    ...chatbotForm,
+                                    display_conditions: {
+                                      ...chatbotForm.display_conditions,
+                                      specific_admin_pages: pages
+                                    }
+                                  })
+                                }}
+                                className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                              />
+                              <span className="text-sm text-gray-700 dark:text-gray-300">{page.label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Device Conditions */}
+              <div>
+                <Label htmlFor="devices" className="text-sm">Device Targeting</Label>
+                <Select
+                  id="devices"
+                  value={chatbotForm.display_conditions.devices}
+                  onChange={(e) => setChatbotForm({
+                    ...chatbotForm,
+                    display_conditions: {
+                      ...chatbotForm.display_conditions,
+                      devices: e.target.value
+                    }
+                  })}
+                  className="mt-1"
+                >
+                  <option value="all">All Devices</option>
+                  <option value="desktop">Desktop Only</option>
+                  <option value="mobile">Mobile Only</option>
+                  <option value="tablet">Tablet Only</option>
+                </Select>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Control which device types can see the chatbot
+                </p>
+              </div>
+            </div>
+          </AccordionSection>
+        </div>
+
+      {/* Preview Section */}
+      <Card>
+        <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Live Preview</h3>
+        <div className="flex justify-center p-4">
+          <div className="relative">
+            <ChatbotInterface
+              chatbot={{
+                id: 'preview',
+                name: chatbotForm.name || 'Preview Chatbot',
+                custom_header_name: chatbotForm.custom_header_name,
+                custom_header_logo: chatbotForm.custom_header_logo,
+                chatbot_styling: chatbotForm.chatbot_styling,
+                behavior_settings: chatbotForm.behavior_settings,
+                quick_messages: chatbotForm.quick_messages.filter(msg => msg.trim())
+              }}
+              isOpen={true}
+              isPreview={true}
+              className="border border-gray-200 dark:border-gray-600"
+            />
+          </div>
+        </div>
+        <div className="text-sm text-gray-500 dark:text-gray-400 text-center mt-2">
+          This is how your chatbot will appear to website visitors
+        </div>
+      </Card>
+    </div>
+  </div>
+  )
+
   return (
     <div className="space-y-6">
       {/* Tab Navigation */}
@@ -748,12 +2584,15 @@ const AIAgents = ({ adminData, settings }) => {
         <nav className="-mb-px flex space-x-2">
           {renderTabButton('agents', 'AI Agents', agents.length)}
           {renderTabButton('knowledge-base', 'Knowledge Base', knowledgeBaseEntries.length)}
+          {renderTabButton('chatbots', 'Chatbots', chatbots.length)}
         </nav>
       </div>
 
       {/* Tab Content */}
       {activeTab === 'agents' && renderAgentsTab()}
       {activeTab === 'knowledge-base' && renderKnowledgeBaseTab()}
+      {activeTab === 'chatbots' && renderChatbotsTab()}
+      {activeTab === 'chatbot-form' && renderChatbotFormTab()}
 
       {/* Agent Modal */}
       <FormModal 
@@ -1096,6 +2935,7 @@ const AIAgents = ({ adminData, settings }) => {
             </div>
           </div>
       </FormModal>
+
     </div>
   )
 }

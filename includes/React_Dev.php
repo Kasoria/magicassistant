@@ -120,19 +120,19 @@ class React_Dev {
                     $this->enqueue_admin_scripts( $hook );
                 } else {
                     // Check floating chat settings before loading public React app on admin pages
-                    if ( $this->should_show_floating_chat() ) {
+                    if ( $this->should_show_public_app() ) {
                         $this->enqueue_public_scripts( $hook );
                     }
                 }
             } else {
                 // Check floating chat settings before loading public React app
-                if ( $this->should_show_floating_chat() ) {
+                if ( $this->should_show_public_app() ) {
                     $this->enqueue_public_scripts( $hook );
                 }
             }
         } else {
             // Check floating chat settings before loading public React app on frontend
-            if ( $this->should_show_floating_chat() ) {
+            if ( $this->should_show_public_app() ) {
                 $this->enqueue_public_scripts( $hook );
             }
         }
@@ -701,7 +701,7 @@ class React_Dev {
     public function add_react_root_elements() {
         if ( ! is_admin() ) {
             // Add public root element on frontend pages only if floating chat should be shown
-            if ( $this->should_show_floating_chat() ) {
+            if ( $this->should_show_public_app() ) {
                 echo '<div id="mat-public-root"></div>';
             }
         } else {
@@ -719,13 +719,13 @@ class React_Dev {
                     // Don't add any additional roots here to avoid conflicts
                 } else {
                     // Other admin pages - add public root for floating components only if should be shown
-                    if ( $this->should_show_floating_chat() ) {
+                    if ( $this->should_show_public_app() ) {
                         echo '<div id="mat-public-root"></div>';
                     }
                 }
             } else {
                 // Fallback - add public root only if should be shown
-                if ( $this->should_show_floating_chat() ) {
+                if ( $this->should_show_public_app() ) {
                     echo '<div id="mat-public-root"></div>';
                 }
             }
@@ -813,6 +813,240 @@ class React_Dev {
         );
         
         return in_array( $screen->id, $plugin_pages );
+    }
+
+    /**
+     * Check if public app should be shown (for floating chat OR chatbots)
+     */
+    private function should_show_public_app() {
+        return $this->should_show_floating_chat() || $this->has_active_chatbots();
+    }
+
+    /**
+     * Check if there are any active chatbots that should be displayed
+     */
+    private function has_active_chatbots() {
+        // Get chatbots from database
+        if (!function_exists('MATDB') || !MATDB()) {
+            return false;
+        }
+
+        $db = MATDB();
+        $chatbots = $db->get_active_chatbots_for_display();
+
+        if (empty($chatbots)) {
+            return false;
+        }
+
+        // Check visibility conditions for each chatbot
+        foreach ($chatbots as $chatbot) {
+            if ($this->should_show_chatbot($chatbot)) {
+                return true; // At least one chatbot should be shown
+            }
+        }
+
+        return false; // No chatbots match the current conditions
+    }
+
+    /**
+     * Check if a specific chatbot should be shown based on its display conditions
+     */
+    private function should_show_chatbot($chatbot) {
+        $display_conditions = $chatbot['display_conditions'] ?? [];
+
+        // If no conditions set, default to showing
+        if (empty($display_conditions)) {
+            return true;
+        }
+
+        // Check display mode (frontend/backend)
+        // Handle both old format (string) and new format (array) for backward compatibility
+        $display_mode_raw = $display_conditions['display_mode'] ?? 'everywhere';
+        $display_modes = is_array($display_mode_raw) ? $display_mode_raw : [$display_mode_raw];
+
+        // If empty array, default to showing everywhere
+        if (empty($display_modes)) {
+            $display_modes = ['everywhere'];
+        }
+
+        $is_admin = is_admin();
+        $is_user_logged_in = is_user_logged_in();
+
+        // If 'everywhere' is selected, show in all contexts
+        if (in_array('everywhere', $display_modes)) {
+            // Continue to other checks (user restrictions, etc.)
+        } else {
+            // Check if ALL selected conditions are met (AND logic)
+            // This allows combining conditions like "frontend_only" AND "logged_in_only"
+
+            foreach ($display_modes as $mode) {
+                switch ($mode) {
+                    case 'frontend_only':
+                        if ($is_admin) {
+                            // User is in admin area but chatbot should only show on frontend
+                            return false;
+                        }
+                        break;
+
+                    case 'admin_only':
+                    case 'backend_only': // Legacy support
+                        if (!$is_admin) {
+                            // User is on frontend but chatbot should only show in admin
+                            return false;
+                        }
+                        break;
+
+                    case 'logged_in_only':
+                        if (!$is_user_logged_in) {
+                            // User is not logged in but chatbot requires login
+                            return false;
+                        }
+                        break;
+                }
+            }
+
+            // If we get here, all display mode conditions were met
+        }
+
+        // Check user role restrictions
+        if (!$this->check_chatbot_user_restrictions($display_conditions)) {
+            return false;
+        }
+
+        // Check URL pattern restrictions
+        if (!$this->check_chatbot_url_restrictions($display_conditions)) {
+            return false;
+        }
+
+        // Check device restrictions (can be checked via user agent, but simplified for now)
+        if (!$this->check_chatbot_device_restrictions($display_conditions)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Check user role restrictions for chatbot
+     */
+    private function check_chatbot_user_restrictions($display_conditions) {
+        $user_roles = $display_conditions['user_roles'] ?? 'all';
+
+        if ($user_roles === 'all') {
+            return true;
+        }
+
+        $is_logged_in = is_user_logged_in();
+
+        if ($user_roles === 'logged_in' && !$is_logged_in) {
+            return false;
+        }
+
+        if ($user_roles === 'guest' && $is_logged_in) {
+            return false;
+        }
+
+        if ($user_roles === 'specific') {
+            if (!$is_logged_in) {
+                return false;
+            }
+
+            $allowed_roles = $display_conditions['specific_roles'] ?? [];
+            if (empty($allowed_roles)) {
+                return true; // No specific roles set, allow all logged-in users
+            }
+
+            $current_user = wp_get_current_user();
+            $user_roles_array = $current_user->roles;
+
+            // Check if user has any of the allowed roles
+            if (!array_intersect($user_roles_array, $allowed_roles)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Check URL pattern restrictions for chatbot
+     */
+    private function check_chatbot_url_restrictions($display_conditions) {
+        $url_patterns = $display_conditions['url_patterns'] ?? [];
+
+        if (empty($url_patterns)) {
+            return true; // No URL restrictions
+        }
+
+        $current_url = $_SERVER['REQUEST_URI'] ?? '';
+
+        foreach ($url_patterns as $pattern_config) {
+            $pattern = $pattern_config['pattern'] ?? '';
+            $match_type = $pattern_config['match_type'] ?? 'contains';
+
+            if (empty($pattern)) {
+                continue;
+            }
+
+            $matches = false;
+            switch ($match_type) {
+                case 'exact':
+                    $matches = ($current_url === $pattern);
+                    break;
+
+                case 'contains':
+                    $matches = (strpos($current_url, $pattern) !== false);
+                    break;
+
+                case 'starts_with':
+                    $matches = (strpos($current_url, $pattern) === 0);
+                    break;
+
+                case 'ends_with':
+                    $matches = (substr($current_url, -strlen($pattern)) === $pattern);
+                    break;
+
+                case 'regex':
+                    $matches = @preg_match($pattern, $current_url);
+                    break;
+            }
+
+            if ($matches) {
+                return true; // At least one pattern matches
+            }
+        }
+
+        return false; // No patterns matched
+    }
+
+    /**
+     * Check device restrictions for chatbot
+     */
+    private function check_chatbot_device_restrictions($display_conditions) {
+        $devices = $display_conditions['devices'] ?? 'all';
+
+        if ($devices === 'all') {
+            return true;
+        }
+
+        // Simple device detection based on user agent
+        $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+
+        if ($devices === 'mobile') {
+            return wp_is_mobile();
+        }
+
+        if ($devices === 'desktop') {
+            return !wp_is_mobile();
+        }
+
+        if ($devices === 'tablet') {
+            // Basic tablet detection
+            $is_tablet = (preg_match('/(tablet|ipad|playbook)|(android(?!.*(mobi|opera mini)))/i', $user_agent));
+            return $is_tablet;
+        }
+
+        return true;
     }
 
     /**

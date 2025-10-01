@@ -17,6 +17,7 @@ class AI_Provider {
     private $current_session_id = null;
     private $is_streaming_mode = false;
     private $processing_steps = [];
+    private $chatbot_owner_user_id = null; // For storing chatbot owner context
     // Add proxy endpoints for AI
     private $openai_proxy_url = 'https://proxy.magicplugins.io/api/proxy/openai';
     private $anthropic_proxy_url = 'https://proxy.magicplugins.io/api/proxy/anthropic';
@@ -478,6 +479,50 @@ class AI_Provider {
             'callback' => array($this, 'scrape_url_content'),
             'permission_callback' => array($this, 'check_permissions'),
         ));
+
+        // CHATBOTS ENDPOINTS
+        register_rest_route('magicassistant/v1', '/chatbots', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_chatbots'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        register_rest_route('magicassistant/v1', '/chatbots', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'create_chatbot'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        register_rest_route('magicassistant/v1', '/chatbots/(?P<chatbot_id>\\d+)', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_chatbot'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        register_rest_route('magicassistant/v1', '/chatbots/(?P<chatbot_id>\\d+)', array(
+            'methods' => 'PUT',
+            'callback' => array($this, 'update_chatbot'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        register_rest_route('magicassistant/v1', '/chatbots/(?P<chatbot_id>\\d+)', array(
+            'methods' => 'DELETE',
+            'callback' => array($this, 'delete_chatbot'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        // Public chatbot endpoints (no auth required)
+        register_rest_route('magicassistant/v1', '/public/chatbots', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_public_chatbots'),
+            'permission_callback' => '__return_true',
+        ));
+
+        register_rest_route('magicassistant/v1', '/public/chatbots/(?P<chatbot_id>\\d+)/chat', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'handle_chatbot_chat'),
+            'permission_callback' => '__return_true',
+        ));
     }
     
     public function handle_chat($request) {
@@ -499,14 +544,6 @@ class AI_Provider {
         $web_search_enabled = $data['web_search_enabled'] ?? false;
         $max_tokens = $data['max_tokens'] ?? null;
         $agent_id = $data['agent_id'] ?? null;
-        
-        // DEBUG: Log incoming request details
-        error_log('🔍 AI_Provider DEBUG - Incoming chat request:');
-        error_log('   - message: ' . substr($message, 0, 100) . '...');
-        error_log('   - agent_mode: ' . ($agent_mode ? 'true' : 'false'));
-        error_log('   - session_id: ' . $session_id);
-        error_log('   - agent_id: ' . ($agent_id ? $agent_id : 'NULL'));
-        error_log('   - custom_system_message: ' . ($custom_system_message ? 'PROVIDED' : 'NULL'));
         
         // Reset tool discovery flag for new sessions
         if ($this->current_session_id !== $session_id) {
@@ -815,14 +852,7 @@ class AI_Provider {
         $page_context = $data['page_context'] ?? array();
         $session_id = $data['session_id'] ?? $this->generate_session_id();
         $agent_id = $data['agent_id'] ?? null;
-        
-        // DEBUG: Log streaming chat request details
-        error_log('🔍 AI_Provider DEBUG - Streaming chat request:');
-        error_log('   - message: ' . substr($message, 0, 100) . '...');
-        error_log('   - agent_mode: ' . ($agent_mode ? 'true' : 'false'));
-        error_log('   - session_id: ' . $session_id);
-        error_log('   - agent_id: ' . ($agent_id ? $agent_id : 'NULL'));
-        error_log('   - custom_system_message: ' . ($custom_system_message ? 'PROVIDED' : 'NULL'));
+
         
         $user_id = get_current_user_id();
         $start_time = microtime(true);
@@ -1039,19 +1069,15 @@ class AI_Provider {
         
         // Append file attachments information if present
         if (!empty($attached_files)) {
-            error_log('🔍 AI_Provider DEBUG - Processing attached files:');
-            error_log('   - Number of files: ' . count($attached_files));
             
             $files_info = "\n\nAttached Files:\n";
             foreach ($attached_files as $file) {
                 $files_info .= "- {$file['name']} ({$file['type']}, " . round($file['size'] / 1024, 1) . "KB)";
                 if (!empty($file['content'])) {
                     $files_info .= "\n";
-                    error_log('   - File with content: ' . $file['name'] . ' (content length: ' . strlen($file['content']) . ')');
                 }
             }
             $system_message .= $files_info;
-            error_log('🔍 AI_Provider DEBUG - System message after adding files (length: ' . strlen($system_message) . ')');
         }
         
         // Build conversation with system message
@@ -1229,19 +1255,15 @@ class AI_Provider {
         
         // Append file attachments information if present
         if (!empty($attached_files)) {
-            error_log('🔍 AI_Provider DEBUG - Processing attached files:');
-            error_log('   - Number of files: ' . count($attached_files));
             
             $files_info = "\n\nAttached Files:\n";
             foreach ($attached_files as $file) {
                 $files_info .= "- {$file['name']} ({$file['type']}, " . round($file['size'] / 1024, 1) . "KB)";
                 if (!empty($file['content'])) {
                     $files_info .= "\n";
-                    error_log('   - File with content: ' . $file['name'] . ' (content length: ' . strlen($file['content']) . ')');
                 }
             }
             $system_message .= $files_info;
-            error_log('🔍 AI_Provider DEBUG - System message after adding files (length: ' . strlen($system_message) . ')');
         }
         
         // Build initial conversation
@@ -1489,35 +1511,24 @@ class AI_Provider {
     
     private function build_agent_system_message($custom_system_message = null, $session_id = null, $agent_id = null) {
         
-        error_log('🔍 AI_Provider DEBUG - build_agent_system_message called:');
-        error_log('   - custom_system_message: ' . ($custom_system_message ? 'PROVIDED (' . strlen($custom_system_message) . ' chars)' : 'NULL'));
-        error_log('   - session_id: ' . ($session_id ? $session_id : 'NULL'));
-        error_log('   - agent_id: ' . ($agent_id ? $agent_id : 'NULL'));
+        // Check if this is a chatbot request (session_id starts with 'chatbot_')
+        $is_chatbot_request = $session_id && strpos($session_id, 'chatbot_') === 0;
         
         // If custom system message is provided, use it instead of the default
         if (!empty($custom_system_message)) {
-            error_log('🔍 AI_Provider DEBUG - Using custom system message, returning early');
             return $custom_system_message;
         }
         
         // Get agent context - prioritize direct agent_id over session lookup
         if ($agent_id !== null) {
-            error_log('🔍 AI_Provider DEBUG - Getting agent context by ID: ' . $agent_id);
-            $agent_context = $this->get_agent_context_by_id($agent_id);
+            // For chatbot requests, use the chatbot owner's user_id for agent lookup
+            $owner_user_id = $is_chatbot_request ? $this->chatbot_owner_user_id : null;
+            $agent_context = $this->get_agent_context_by_id($agent_id, $owner_user_id);
         } else {
-            error_log('🔍 AI_Provider DEBUG - Getting agent context by session: ' . ($session_id ? $session_id : 'NULL'));
             $agent_context = $this->get_agent_context_for_session($session_id);
         }
         $agent_info = $agent_context['agent'] ?? null;
         $knowledge_base_entries = $agent_context['knowledge_base'] ?? [];
-        
-        error_log('🔍 AI_Provider DEBUG - Agent context results:');
-        error_log('   - agent_info: ' . ($agent_info ? 'FOUND (name: ' . ($agent_info['name'] ?? 'unknown') . ')' : 'NULL'));
-        error_log('   - knowledge_base_entries: ' . count($knowledge_base_entries) . ' entries');
-        if ($agent_info) {
-            error_log('   - agent system_message: ' . (empty($agent_info['system_message']) ? 'EMPTY' : 'PROVIDED (' . strlen($agent_info['system_message']) . ' chars)'));
-        }
-        
         
         $tools_info = "\nYou have access to a comprehensive set of WordPress MCP tools including SEO analysis capabilities through DataForSEO. Use them thoughtfully when they can enhance your answer.\n";
         
@@ -1543,16 +1554,24 @@ CONTENT MODE BEST PRACTICES:
 For content optimization requests, use the content_optimize_seo tool to provide specific SEO recommendations.";
         
         
-        // Use agent's custom system message if available, otherwise use default
-        
-        if ($agent_info && !empty($agent_info['system_message'])) {
-            $base_message = $agent_info['system_message'];
-            
-            // Don't automatically append tools info - let the agent's system message have full control
-            // If the agent wants tools info, they can include it in their custom system message
+        // For chatbot requests, use ONLY the agent's system message (no default fallback)
+        if ($is_chatbot_request) {
+            if ($agent_info && !empty($agent_info['system_message'])) {
+                $base_message = $agent_info['system_message'];
+            } else {
+                // For chatbots without an agent system message, use a minimal default
+                $base_message = "You are a helpful AI assistant. Please provide concise, helpful responses to user questions.";
+            }
         } else {
-            // Build the default system message
-            $base_message = "You are MagicAssistant, a helpful AI assistant for WordPress websites operating in AGENT MODE. You can help users manage their WordPress site, create content, perform SEO analysis, and execute complex multi-step operations.
+            // Regular chat mode: Use agent's custom system message if available, otherwise use default
+            if ($agent_info && !empty($agent_info['system_message'])) {
+                $base_message = $agent_info['system_message'];
+                
+                // Don't automatically append tools info - let the agent's system message have full control
+                // If the agent wants tools info, they can include it in their custom system message
+            } else {
+                // Build the default system message
+                $base_message = "You are MagicAssistant, a helpful AI assistant for WordPress websites operating in AGENT MODE. You can help users manage their WordPress site, create content, perform SEO analysis, and execute complex multi-step operations.
 
 {$tools_info}{$content_mode_tools}
 
@@ -1579,25 +1598,35 @@ In Agent Mode, you should:
 6. Provide insights and analysis, not just raw data
 
 Be proactive and thorough, but focus on creating natural, helpful responses rather than technical data dumps.";
+            }
         }
 
-        // Add knowledge base context if available
-        if (!empty($knowledge_base_entries)) {
+        // Add knowledge base context if available AND we're not using a custom agent system message
+        // When using an agent's custom system message, the agent has full control over formatting
+        $using_agent_system_message = $agent_info && !empty($agent_info['system_message']);
+
+        if (!empty($knowledge_base_entries) && !$using_agent_system_message) {
+            // Only append knowledge base to default system message
             $base_message .= "\n\nKnowledge Base Context:\n";
             foreach ($knowledge_base_entries as $entry) {
                 $base_message .= "--- {$entry['name']} ---\n";
                 $base_message .= $entry['content'] . "\n\n";
             }
+        } elseif (!empty($knowledge_base_entries) && $using_agent_system_message) {
+            // For agent system messages, append knowledge base with "AI AGENT CONTEXT" formatting
+            $base_message .= "\n\n=== AI AGENT CONTEXT ===\n";
+            $base_message .= "Knowledge Base Context:\n";
+            foreach ($knowledge_base_entries as $entry) {
+                $base_message .= "--- {$entry['name']} ---\n";
+                $base_message .= $entry['content'] . "\n\n";
+            }
+
+            // IMPORTANT: Re-emphasize the core agent instructions after knowledge base
+            // This ensures the AI doesn't forget the main persona/instructions when additional context is added
+            $base_message .= "=== REMEMBER: Your Core Instructions ===\n";
+            $base_message .= trim($agent_info['system_message']) . "\n";
         }
-        
-        error_log('🔍 AI_Provider DEBUG - Final system message built:');
-        error_log('   - Length: ' . strlen($base_message) . ' characters');
-        error_log('   - Preview: ' . substr($base_message, 0, 200) . '...');
-        if ($agent_info) {
-            error_log('   - Used agent: ' . ($agent_info['name'] ?? 'unknown'));
-        }
-        error_log('   - KB entries: ' . count($knowledge_base_entries));
-        
+
         return $base_message;
     }
 
@@ -1704,23 +1733,20 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     /**
      * Get agent context by direct agent ID
      */
-    private function get_agent_context_by_id($agent_id) {
-        error_log('🔍 AI_Provider DEBUG - get_agent_context_by_id called with ID: ' . $agent_id);
+    private function get_agent_context_by_id($agent_id, $owner_user_id = null) {
         
         if (!$agent_id || !$this->db) {
-            error_log('🔍 AI_Provider DEBUG - Early return: agent_id=' . ($agent_id ? $agent_id : 'NULL') . ', db=' . ($this->db ? 'OK' : 'NULL'));
             return [];
         }
         
         try {
-            $user_id = get_current_user_id();
+            // Use the provided owner_user_id if available, otherwise get current user
+            $user_id = $owner_user_id ?? get_current_user_id();
             $agent_id = intval($agent_id);
             
-            error_log('🔍 AI_Provider DEBUG - Searching for agent: user_id=' . $user_id . ', agent_id=' . $agent_id);
             
-            // Get the agent information directly
             $agent = $this->db->get_ai_agents($user_id, $agent_id);
-            error_log('🔍 AI_Provider DEBUG - DB query result: ' . ($agent ? 'FOUND' : 'NOT FOUND'));
+
             if (!$agent) {
                 return [];
             }
@@ -1799,23 +1825,17 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $system_message = '';
         $conversation_messages = [];
         
-        error_log('🔍 AI_Provider DEBUG - convert_messages_to_responses_input processing:');
-        error_log('   - Total messages: ' . count($messages));
         $system_count = 0;
         
         foreach ($messages as $message) {
             if ($message['role'] === 'system') {
                 $system_count++;
-                error_log('   - System message #' . $system_count . ' (length: ' . strlen($message['content']) . ')');
-                error_log('   - Content preview: ' . substr($message['content'], 0, 100) . '...');
                 
                 // Concatenate all system messages instead of overwriting
                 if (!empty($system_message)) {
                     $system_message .= "\n\n" . $message['content'];
-                    error_log('   - Concatenating with existing system message');
                 } else {
                     $system_message = $message['content'];
-                    error_log('   - Setting as first system message');
                 }
             } else {
                 // Filter out tool-related messages as Responses API doesn't support them in input
@@ -1849,10 +1869,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             }
         }
         
-        error_log('🔍 AI_Provider DEBUG - convert_messages_to_responses_input final result:');
-        error_log('   - Final system message length: ' . strlen($system_message));
-        error_log('   - Final system message preview: ' . substr($system_message, 0, 200) . '...');
-        error_log('   - System messages processed: ' . $system_count);
         
         // For Responses API, we can send the messages directly as input
         // The API will handle the conversation flow
@@ -1962,32 +1978,25 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $system_message = '';
         $conversation_messages = [];
         
-        error_log('🔍 AI_Provider DEBUG - call_openai_responses system message extraction:');
         $system_msg_count = 0;
         
         foreach ($messages as $message) {
             if ($message['role'] === 'system') {
-                $system_msg_count++;
-                error_log('   - Processing system message #' . $system_msg_count . ' (length: ' . strlen($message['content']) . ')');
-                
                 // Concatenate all system messages instead of overwriting
                 if (!empty($system_message)) {
                     $system_message .= "\n\n" . $message['content'];
-                    error_log('   - Concatenating with existing system message');
                 } else {
                     $system_message = $message['content'];
-                    error_log('   - Setting as first system message');
                 }
             } else {
                 $conversation_messages[] = $message;
             }
         }
-        
-        error_log('🔍 AI_Provider DEBUG - Final concatenated system message:');
-        error_log('   - Length: ' . strlen($system_message));
-        error_log('   - Preview: ' . substr($system_message, 0, 200) . '...');
-        error_log('   - Total system messages processed: ' . $system_msg_count);
-        
+
+        // Agent detection for conditional tools
+        $is_using_agent_context = strpos($system_message, 'AI AGENT CONTEXT') !== false;
+        $is_using_default_message = strpos($system_message, 'You are MagicAssistant') !== false;
+
         // Ensure input_content is an array for function call iterations
         if (!is_array($input_content)) {
             $input_content = [['role' => 'user', 'content' => $input_content]];
@@ -2009,12 +2018,14 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 $this->send_status_update("Preparing OpenAI request (iteration $iteration)...");
             }
             
+            // CRITICAL DEBUG: Log what system message is being sent to OpenAI
+            $tools_for_request = $is_using_default_message ? $this->get_mcp_tools_for_openai() : [];
+
             $request_data = array(
                 'action'   => 'openai_responses',
                 'data'     => array(
                     'model'      => $this->settings['openai_model'] ?? 'gpt-4.1-mini',
                     'input'      => $input_content,
-                    'tools'      => $this->get_mcp_tools_for_openai(),
                     'store'      => false, // For zero data retention
                     'reasoning'  => $this->get_reasoning_config(),
                     'web_search_enabled' => $web_search_enabled,
@@ -2022,33 +2033,20 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 'site_url'  => home_url(),
                 'timestamp' => time(),
             );
+
+            // Only add tools if they exist (don't send empty array)
+            if (!empty($tools_for_request)) {
+                $request_data['data']['tools'] = $tools_for_request;
+            }
             
             // Add max_tokens if specified (proxy will convert to max_output_tokens for OpenAI Responses API)
             if ($max_tokens !== null) {
                 $request_data['data']['max_tokens'] = intval($max_tokens);
-                error_log('🔧 AI_Provider - Setting max_tokens for proxy: ' . intval($max_tokens));
-            } else {
-                error_log('🔧 AI_Provider - max_tokens is null, not setting');
             }
-            
-            // Debug: Log OpenAI request data
-            error_log('📤 AI_Provider - OpenAI Request: ' . json_encode([
-                'web_search_enabled' => $web_search_enabled,
-                'model' => $this->settings['openai_model'] ?? 'gpt-4.1-mini',
-                'has_tools' => !empty($this->get_mcp_tools_for_openai()),
-                'iteration' => $iteration,
-                'timeout_used' => 600,
-                'max_tokens' => $max_tokens
-            ]));
             
             // Add system message as instructions if present
             if (!empty($system_message)) {
                 $request_data['data']['instructions'] = $system_message;
-                error_log('🔍 AI_Provider DEBUG - Setting instructions for OpenAI:');
-                error_log('   - Instructions length: ' . strlen($system_message));
-                error_log('   - Instructions preview: ' . substr($system_message, 0, 200) . '...');
-            } else {
-                error_log('🔍 AI_Provider DEBUG - No system message to set as instructions');
             }
             
             // Merge license headers so MagicProxy can track usage by site & license
@@ -2083,32 +2081,12 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $is_long_content = $streaming_enabled ? $this->detect_long_content_request($user_message, $system_message) : false;
             $proxy_url = $is_long_content ? $this->openai_proxy_url . '/stream' : $this->openai_proxy_url;
             
-            error_log('📊 AI_Provider - Content Detection: ' . json_encode([
-                'streaming_enabled' => $streaming_enabled,
-                'is_long_content' => $is_long_content,
-                'proxy_url' => $proxy_url,
-                'message_preview' => substr($user_message, 0, 200)
-            ]));
-            
             if ($is_long_content) {
                 return $this->handle_streaming_response($proxy_url, $headers, $request_data, $timeout);
             }
             
             if ($is_streaming) {
                 $this->send_status_update("Sending request to OpenAI API...");
-            }
-            
-            // DEBUG: Log the complete request payload structure
-            error_log('🔍 AI_Provider DEBUG - Complete OpenAI request payload:');
-            error_log('   - Request data keys: ' . implode(', ', array_keys($request_data)));
-            if (isset($request_data['data'])) {
-                error_log('   - Request data.data keys: ' . implode(', ', array_keys($request_data['data'])));
-                if (isset($request_data['data']['instructions'])) {
-                    error_log('   - Instructions field present: YES');
-                    error_log('   - Instructions content: ' . $request_data['data']['instructions']);
-                } else {
-                    error_log('   - Instructions field present: NO');
-                }
             }
             
             $response = wp_remote_post( $proxy_url, array(
@@ -2354,64 +2332,86 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     }
     
     private function call_anthropic($messages, $api_key, $web_search_enabled = false, $is_streaming = false, $max_tokens = null) {
-        // Separate system and user messages
+        // Extract system messages and build conversation (matching OpenAI/OpenRouter approach)
         $system_message = '';
         $conversation   = [];
-        
-        error_log('🔍 AI_Provider DEBUG - call_anthropic system message extraction:');
+
         $system_msg_count = 0;
-        
+
         foreach ($messages as $m) {
             if ($m['role'] === 'system') {
-                $system_msg_count++;
-                error_log('   - Processing system message #' . $system_msg_count . ' (length: ' . strlen($m['content']) . ')');
-                
-                // Concatenate all system messages instead of overwriting
+                // Concatenate all system messages instead of overwriting (same as OpenAI/OpenRouter)
                 if (!empty($system_message)) {
                     $system_message .= "\n\n" . $m['content'];
-                    error_log('   - Concatenating with existing system message');
                 } else {
                     $system_message = $m['content'];
-                    error_log('   - Setting as first system message');
                 }
+                // CRITICAL: Don't add system messages to conversation array - they go in separate 'system' field
             } else {
+                // Only add non-system messages to conversation (matching OpenAI behavior)
                 $conversation[] = $m;
             }
         }
-        
-        error_log('🔍 AI_Provider DEBUG - Final Anthropic system message:');
-        error_log('   - Length: ' . strlen($system_message));
-        error_log('   - Preview: ' . substr($system_message, 0, 200) . '...');
-        error_log('   - Total system messages processed: ' . $system_msg_count);
-        $tools = $this->get_mcp_tools_for_anthropic();
+
+        // Remove any leading assistant messages that don't have a preceding user message
+        $cleaned_conversation = [];
+        $last_role = null;
+
+        foreach ($conversation as $msg) {
+            // Skip assistant messages that would start the conversation or create consecutive assistant messages
+            if ($msg['role'] === 'assistant' && ($last_role === null || $last_role === 'assistant')) {
+                continue;
+            }
+            // Skip consecutive user messages (keep only the last one)
+            if ($msg['role'] === 'user' && $last_role === 'user') {
+                // Remove the previous user message and add this one instead
+                array_pop($cleaned_conversation);
+            }
+
+            $cleaned_conversation[] = $msg;
+            $last_role = $msg['role'];
+        }
+
+        $conversation = $cleaned_conversation;
+
+        // Additional agent detection for conditional tools
+        $is_using_agent_context = strpos($system_message, 'AI AGENT CONTEXT') !== false;
+        $is_using_default_message = strpos($system_message, 'You are MagicAssistant') !== false;
+
+        if ($is_using_agent_context) {
+            $tools = []; // No tools for AI Agents - they should have clean custom messages
+        } elseif ($is_using_default_message) {
+            $tools = $this->get_mcp_tools_for_anthropic();
+        } else {
+            $tools = []; // No tools for custom messages either
+        }
+
         $request_data = array(
             'action'   => 'anthropic',
             'data'     => array(
                 'model'      => $this->settings['anthropic_model'] ?? 'claude-3-5-sonnet-20241022',
                 'messages'   => $conversation,
-                'tools'      => $tools,
                 'web_search_enabled' => $web_search_enabled,
             ),
             'site_url'  => home_url(),
             'timestamp' => time(),
         );
-        
+
+        // Add system message if present (must be done before tools)
+        if (!empty($system_message)) {
+            $request_data['data']['system'] = $system_message;
+        }
+
+        // Only add tools if they exist (don't send empty array)
+        if (!empty($tools)) {
+            $request_data['data']['tools'] = $tools;
+        }
+
         // Add max_tokens if specified
         if ($max_tokens !== null) {
             $request_data['data']['max_tokens'] = intval($max_tokens);
         }
-        
-        // Debug: Log Anthropic request data
-        error_log('📤 AI_Provider - Anthropic Request: ' . json_encode([
-            'web_search_enabled' => $web_search_enabled,
-            'model' => $this->settings['anthropic_model'] ?? 'claude-3-5-sonnet-20241022',
-            'has_tools' => !empty($tools),
-            'message_count' => count($conversation)
-        ]));
-        
-        if (!empty($system_message)) {
-            $request_data['data']['system'] = $system_message;
-        }
+
         // Merge license headers so MagicProxy can track usage
         $headers = array_merge( array( 'Content-Type' => 'application/json' ), $this->get_license_headers() );
 
@@ -2431,9 +2431,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $this->send_status_update("Sending request to Anthropic API...");
         }
 
+        $json_payload = wp_json_encode( $request_data );
+
         $response = wp_remote_post( $this->anthropic_proxy_url, array(
             'headers' => $headers,
-            'body'    => wp_json_encode( $request_data ),
+            'body'    => $json_payload,
             'timeout' => $timeout
         ) );
         if (is_wp_error($response)) {
@@ -2514,34 +2516,27 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $system_message = '';
         $conversation   = [];
         
-        error_log('🔍 AI_Provider DEBUG - call_openrouter system message extraction:');
         $system_msg_count = 0;
         
         foreach ($messages as $m) {
             if ($m['role'] === 'system') {
-                $system_msg_count++;
-                error_log('   - Processing system message #' . $system_msg_count . ' (length: ' . strlen($m['content']) . ')');
-                
                 // Concatenate all system messages instead of overwriting
                 if (!empty($system_message)) {
                     $system_message .= "\n\n" . $m['content'];
-                    error_log('   - Concatenating with existing system message');
                 } else {
                     $system_message = $m['content'];
-                    error_log('   - Setting as first system message');
                 }
             } else {
                 $conversation[] = $m;
             }
         }
-        
-        error_log('🔍 AI_Provider DEBUG - Final OpenRouter system message:');
-        error_log('   - Length: ' . strlen($system_message));
-        error_log('   - Preview: ' . substr($system_message, 0, 200) . '...');
-        error_log('   - Total system messages processed: ' . $system_msg_count);
-        
-        $model = $this->settings['openrouter_model'] ?? 'anthropic/claude-3.5-sonnet';
-        
+
+        // Additional agent detection for conditional tools
+        $is_using_agent_context = strpos($system_message, 'AI AGENT CONTEXT') !== false;
+        $is_using_default_message = strpos($system_message, 'You are MagicAssistant') !== false;
+
+        $model = $this->settings['openrouter_model'] ?? 'anthropic/claude-sonnet-4';
+
         $request_data = array(
             'action'   => 'openrouter',
             'data'     => array(
@@ -2552,15 +2547,18 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'site_url'  => home_url(),
             'timestamp' => time(),
         );
-        
+
         // Add max_tokens if specified
         if ($max_tokens !== null) {
             $request_data['data']['max_tokens'] = intval($max_tokens);
         }
-        
-        // Only include tools if the model supports them
-        if ($this->openrouter_model_supports_tools($model)) {
-            $request_data['data']['tools'] = $this->get_mcp_tools_for_openai(); // OpenRouter uses OpenAI-style tools
+
+        // Only include tools if model supports them AND we're using default system message
+        if ($this->openrouter_model_supports_tools($model) && $is_using_default_message) {
+            $tools_for_openrouter = $this->get_mcp_tools_for_openai(); // OpenRouter uses OpenAI-style tools
+            if (!empty($tools_for_openrouter)) {
+                $request_data['data']['tools'] = $tools_for_openrouter;
+            }
         }
         
         if (!empty($system_message)) {
@@ -2587,9 +2585,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $this->send_status_update("Sending request to OpenRouter API...");
         }
 
+        $json_payload = wp_json_encode( $request_data );
+
         $response = wp_remote_post( $this->openrouter_proxy_url, array(
             'headers' => $headers,
-            'body'    => wp_json_encode( $request_data ),
+            'body'    => $json_payload,
             'timeout' => 600
         ) );
         
@@ -3547,7 +3547,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     /**
      * Handle chat mode with streaming responses
      */
-    private function handle_chat_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null, $session_id = null) {
+    private function handle_chat_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null, $session_id = null, $agent_id = null) {
         // Reset processing steps for new conversation
         $this->processing_steps = [];
         // Enable streaming mode for tool execution status updates
@@ -3565,7 +3565,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $this->send_status_update("Building system message...");
         
         // Use agent system message builder which handles both agent and regular cases
-        $system_message = $this->build_agent_system_message($custom_system_message, $session_id);
+        $system_message = $this->build_agent_system_message($custom_system_message, $session_id, $agent_id);
         
         // Append file attachments information if present
         if (!empty($attached_files)) {
@@ -3713,15 +3713,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     // Get final response from OpenRouter
                     $this->send_status_update("Getting final response from OpenRouter...");
                     $final_response = $this->call_openrouter($messages, $api_key, $web_search_enabled, true, $max_tokens);
-                    
-                    // Debug log the final response
-                    error_log('🔍 OpenRouter Final Response in Streaming: ' . json_encode([
-                        'has_content' => !empty($final_response['content']),
-                        'content_preview' => substr($final_response['content'] ?? '', 0, 100),
-                        'has_tool_calls' => !empty($final_response['tool_calls']),
-                        'usage' => $final_response['usage'] ?? null
-                    ]));
-                    
+
                     // Track additional usage
                     $total_tokens += $this->extract_token_count($final_response, $provider) ?? 0;
                     $total_cost += $final_response['cost'] ?? 0;
@@ -3738,16 +3730,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         // Use the final response content
         $content = $response['content'] ?? '';
-        
-        // Debug log what we're about to stream
-        error_log('🎯 Content to Stream: ' . json_encode([
-            'provider' => $provider,
-            'has_content' => !empty($content),
-            'content_length' => strlen($content),
-            'content_preview' => substr($content, 0, 200),
-            'had_tool_calls' => $has_tool_calls
-        ]));
-        
+
         // Only add tool summary if we have tool results
         if ($has_tool_calls && !empty($tool_results)) {
             // Don't append tool names to content - let the AI's response speak for itself
@@ -3758,7 +3741,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         if (!empty($content)) {
             $this->stream_content_in_chunks($content);
         } else {
-            error_log('⚠️ WARNING: No content to stream for provider: ' . $provider);
             // Send an error message if we have no content
             $this->stream_content_in_chunks("I apologize, but I didn't receive a proper response. Please try again.");
         }
@@ -3780,7 +3762,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     /**
      * Handle agent mode with streaming responses
      */
-    private function handle_agent_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null, $session_id = null) {
+    private function handle_agent_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null, $session_id = null, $agent_id = null) {
         // Reset processing steps for new conversation
         $this->processing_steps = [];
         // Enable streaming mode for tool execution status updates
@@ -3804,7 +3786,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $this->send_status_update("Building enhanced agent system message...");
         
         // Prepare enhanced system message for agent mode
-        $system_message = $this->build_agent_system_message($custom_system_message, $session_id);
+        $system_message = $this->build_agent_system_message($custom_system_message, $session_id, $agent_id);
         
         // Append file attachments information if present
         if (!empty($attached_files)) {
@@ -4034,23 +4016,12 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 $final_response .= "I executed " . $total_tool_calls . " tool(s) during the process.";
             }
         }
-        
-        // Debug log what we're about to stream
-        error_log('🎯 Agent Mode - Final Content to Stream: ' . json_encode([
-            'provider' => $provider,
-            'has_content' => !empty($final_response),
-            'content_length' => strlen($final_response),
-            'content_preview' => substr($final_response, 0, 200),
-            'iterations_used' => $iteration,
-            'total_tool_calls' => $total_tool_calls
-        ]));
-        
+
         // Stream the final response content in chunks
         if (!empty($final_response)) {
             $this->send_status_update("Streaming response...");
             $this->stream_content_in_chunks($final_response);
         } else {
-            error_log('⚠️ WARNING: No final response content from agent mode for provider: ' . $provider);
             // Send a fallback message if we have no content
             $fallback_message = "I've completed the requested tools but didn't generate a final response. ";
             if ($total_tool_calls > 0) {
@@ -8736,9 +8707,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         // ContentMode requests are identified by "CONTENT MODE" in the system message
         if (strpos($system_message_lower, 'content mode') !== false || 
             strpos($system_message_lower, 'you are in content mode') !== false ||
-            strpos($message_lower, 'content mode') !== false || 
+            strpos($message_lower, 'content mode') !== false ||
             strpos($message_lower, 'you are in content mode') !== false) {
-            error_log('🚫 AI_Provider - Disabling streaming for ContentMode request to avoid timeouts');
             return false;
         }
         
@@ -8780,20 +8750,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
      * Handle streaming response from MagicProxy
      */
     private function handle_streaming_response($proxy_url, $headers, $request_data, $timeout) {
-        error_log('🔄 AI_Provider - Starting streaming request to: ' . $proxy_url);
-        
-        // DEBUG: Log the streaming request payload structure
-        error_log('🔍 AI_Provider DEBUG - Streaming OpenAI request payload:');
-        error_log('   - Request data keys: ' . implode(', ', array_keys($request_data)));
-        if (isset($request_data['data'])) {
-            error_log('   - Request data.data keys: ' . implode(', ', array_keys($request_data['data'])));
-            if (isset($request_data['data']['instructions'])) {
-                error_log('   - Instructions field present: YES');
-                error_log('   - Instructions content: ' . $request_data['data']['instructions']);
-            } else {
-                error_log('   - Instructions field present: NO');
-            }
-        }
         
         // Use WordPress HTTP API with streaming
         $args = array(
@@ -9461,9 +9417,6 @@ CRITICAL: Act as a copy machine, not a summarizer. Extract everything word-for-w
         );
         
         try {
-            // Log the scraping attempt
-            error_log('🌐 URL Scraping - Starting scrape for: ' . $url . ' using provider: ' . $provider);
-            
             // Use AllOrigins API to get raw HTML content, then extract text
             $scraped_content = $this->scrape_url_direct($url);
             
@@ -9473,7 +9426,6 @@ CRITICAL: Act as a copy machine, not a summarizer. Extract everything word-for-w
             
             return $scraped_content;
         } catch (Exception $e) {
-            error_log('💥 URL Scraping - Exception: ' . $e->getMessage());
             throw new Exception('AI scraping failed: ' . $e->getMessage());
         }
     }
@@ -9497,46 +9449,295 @@ CRITICAL: Act as a copy machine, not a summarizer. Extract everything word-for-w
     private function scrape_url_direct($url) {
         // Use AllOrigins to bypass CORS and get raw HTML
         $allorigins_url = 'https://api.allorigins.win/get?url=' . urlencode($url);
-        
-        error_log('🌐 Direct Scraping - Using AllOrigins: ' . $allorigins_url);
-        
+
         $response = wp_remote_get($allorigins_url, array(
             'timeout' => 30,
             'headers' => array(
                 'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             )
         ));
-        
+
         if (is_wp_error($response)) {
-            error_log('❌ AllOrigins request failed: ' . $response->get_error_message());
             throw new Exception('Failed to fetch content via AllOrigins: ' . $response->get_error_message());
         }
-        
+
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
-        
+
         if (json_last_error() !== JSON_ERROR_NONE) {
-            error_log('❌ Invalid JSON response from AllOrigins');
             throw new Exception('Invalid JSON response from AllOrigins');
         }
-        
+
         if (!isset($data['contents'])) {
-            error_log('❌ No contents field in AllOrigins response');
             throw new Exception('No contents field in AllOrigins response');
         }
-        
+
         $html = $data['contents'];
-        error_log('✅ HTML fetched successfully, length: ' . strlen($html) . ' chars');
         
         // Extract text content from HTML
         $text_content = $this->extract_text_from_html($html);
-        
-        $content_length = strlen($text_content);
-        $word_count = str_word_count($text_content);
-        error_log('✅ Text extracted from HTML, length: ' . $content_length . ' chars, ~' . $word_count . ' words');
-        error_log('📄 Content preview: ' . substr($text_content, 0, 300) . '...');
-        
+
         return $text_content;
+    }
+
+    /**
+     * Chatbot Methods
+     */
+    
+    /**
+     * Get chatbots for current user
+     */
+    public function get_chatbots($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+
+        $user_id = get_current_user_id();
+        $chatbots = $this->db->get_chatbots($user_id);
+
+        return array(
+            'success' => true,
+            'data' => $chatbots
+        );
+    }
+
+    /**
+     * Get single chatbot
+     */
+    public function get_chatbot($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+
+        $user_id = get_current_user_id();
+        $chatbot_id = intval($request['chatbot_id']);
+        
+        $chatbot = $this->db->get_chatbots($user_id, $chatbot_id);
+
+        if (!$chatbot) {
+            return new WP_Error('not_found', 'Chatbot not found', array('status' => 404));
+        }
+
+        return array(
+            'success' => true,
+            'data' => $chatbot
+        );
+    }
+
+    /**
+     * Create new chatbot
+     */
+    public function create_chatbot($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+
+        $user_id = get_current_user_id();
+        $data = $request->get_json_params();
+
+        // Validate required fields
+        if (empty($data['name'])) {
+            return new WP_Error('missing_name', 'Chatbot name is required', array('status' => 400));
+        }
+
+        if (empty($data['agent_id'])) {
+            return new WP_Error('missing_agent', 'AI Agent is required', array('status' => 400));
+        }
+
+        // Verify that the agent belongs to the user
+        $agent = $this->db->get_ai_agents($user_id, intval($data['agent_id']));
+        if (!$agent) {
+            return new WP_Error('invalid_agent', 'Selected AI Agent not found', array('status' => 400));
+        }
+
+        $result = $this->db->save_chatbot($user_id, $data);
+
+        if ($result === false) {
+            return new WP_Error('save_error', 'Failed to create chatbot', array('status' => 500));
+        }
+
+        return array(
+            'success' => true,
+            'message' => 'Chatbot created successfully',
+            'data' => array('id' => $result)
+        );
+    }
+
+    /**
+     * Update existing chatbot
+     */
+    public function update_chatbot($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+
+        $user_id = get_current_user_id();
+        $chatbot_id = intval($request['chatbot_id']);
+        $data = $request->get_json_params();
+
+        // Verify chatbot exists and belongs to user
+        $existing = $this->db->get_chatbots($user_id, $chatbot_id);
+        if (!$existing) {
+            return new WP_Error('not_found', 'Chatbot not found', array('status' => 404));
+        }
+
+        // Validate required fields
+        if (empty($data['name'])) {
+            return new WP_Error('missing_name', 'Chatbot name is required', array('status' => 400));
+        }
+
+        if (empty($data['agent_id'])) {
+            return new WP_Error('missing_agent', 'AI Agent is required', array('status' => 400));
+        }
+
+        // Verify that the agent belongs to the user
+        $agent = $this->db->get_ai_agents($user_id, intval($data['agent_id']));
+        if (!$agent) {
+            return new WP_Error('invalid_agent', 'Selected AI Agent not found', array('status' => 400));
+        }
+
+        $result = $this->db->save_chatbot($user_id, $data, $chatbot_id);
+
+        if ($result === false) {
+            return new WP_Error('save_error', 'Failed to update chatbot', array('status' => 500));
+        }
+
+        return array(
+            'success' => true,
+            'message' => 'Chatbot updated successfully'
+        );
+    }
+
+    /**
+     * Delete chatbot
+     */
+    public function delete_chatbot($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+
+        $user_id = get_current_user_id();
+        $chatbot_id = intval($request['chatbot_id']);
+
+        // Verify chatbot exists and belongs to user
+        $existing = $this->db->get_chatbots($user_id, $chatbot_id);
+        if (!$existing) {
+            return new WP_Error('not_found', 'Chatbot not found', array('status' => 404));
+        }
+
+        $result = $this->db->delete_chatbot($user_id, $chatbot_id);
+
+        if ($result === false) {
+            return new WP_Error('delete_error', 'Failed to delete chatbot', array('status' => 500));
+        }
+
+        return array(
+            'success' => true,
+            'message' => 'Chatbot deleted successfully'
+        );
+    }
+
+    /**
+     * Get public chatbots for display (no auth required)
+     */
+    public function get_public_chatbots($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+
+        $chatbots = $this->db->get_active_chatbots_for_display();
+
+        return array(
+            'success' => true,
+            'data' => $chatbots
+        );
+    }
+
+    /**
+     * Handle chatbot chat (public endpoint)
+     */
+    public function handle_chatbot_chat($request) {
+        if (!$this->db) {
+            return new WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+
+        $chatbot_id = intval($request['chatbot_id']);
+        $data = $request->get_json_params();
+
+        // Get chatbot configuration
+        $chatbots = $this->db->get_active_chatbots_for_display();
+        $chatbot = null;
+        foreach ($chatbots as $cb) {
+            if (intval($cb['id']) === $chatbot_id) {
+                $chatbot = $cb;
+                break;
+            }
+        }
+
+        if (!$chatbot) {
+            return new WP_Error('not_found', 'Chatbot not found or inactive', array('status' => 404));
+        }
+
+        // Rate limiting check
+        if (!empty($chatbot['rate_limit_settings'])) {
+            $rate_limit = $chatbot['rate_limit_settings'];
+            // Implement rate limiting logic here
+            // For now, we'll skip rate limiting
+        }
+
+        $message = $data['message'] ?? '';
+        $conversation_history = $data['history'] ?? [];
+
+        if (empty($message)) {
+            return new WP_Error('empty_message', 'Message is required', array('status' => 400));
+        }
+
+        try {
+            // Use the chatbot's agent configuration
+            $agent_id = intval($chatbot['agent_id']);
+            
+            // Store the chatbot owner's user_id for agent context lookup
+            $this->chatbot_owner_user_id = intval($chatbot['user_id'] ?? 0);
+            
+            
+            // Generate a session ID for this chatbot conversation
+            $session_id = 'chatbot_' . $chatbot_id . '_' . uniqid();
+
+            // Get AI provider settings
+            $provider = $this->settings['ai_provider'] ?? 'openai';
+            $model = $this->get_model_for_provider($provider);
+            $api_key = $this->get_api_key($provider);
+
+            // Use agent mode with the chatbot's agent
+            $result = $this->handle_agent_mode(
+                $message, 
+                $conversation_history, 
+                $provider, 
+                $api_key, 
+                [], // attached_files
+                null, // custom_system_message (will use agent's system message)
+                false, // web_search_enabled
+                null, // max_tokens
+                $session_id,
+                $agent_id
+            );
+
+            return array(
+                'success' => true,
+                'response' => $result['response'],
+                'provider' => $provider,
+                'model' => $model,
+                'session_id' => $session_id,
+                'reasoning' => $result['reasoning'] ?? null,
+                'tool_calls_count' => $result['tool_calls_count'] ?? 0
+            );
+
+        } catch (Exception $e) {
+            return new WP_Error('chat_error', $e->getMessage(), array('status' => 500));
+        } finally {
+            // Clear chatbot owner context after request
+            $this->chatbot_owner_user_id = null;
+        }
     }
 
 
