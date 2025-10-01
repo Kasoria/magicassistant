@@ -443,7 +443,8 @@ const AIAgents = ({ adminData, settings }) => {
       icon: 'chat',
       size: 'medium',
       offset_x: 24,
-      offset_y: 24
+      offset_y: 24,
+      custom_icon: ''
     },
     chatbot_styling: {
       // Layout & Dimensions
@@ -657,7 +658,8 @@ const AIAgents = ({ adminData, settings }) => {
         icon: 'chat',
         size: 'medium',
         offset_x: 24,
-        offset_y: 24
+        offset_y: 24,
+        custom_icon: ''
       },
       chatbot_styling: {
         // Layout & Dimensions
@@ -1019,13 +1021,14 @@ const AIAgents = ({ adminData, settings }) => {
       agent_id: chatbot.agent_id || '',
       custom_header_name: chatbot.custom_header_name || '',
       custom_header_logo: chatbot.custom_header_logo || '',
-      trigger_button_settings: chatbot.trigger_button_settings || {
-        position: 'bottom-right',
-        color: '#3B82F6',
-        icon: 'chat',
-        size: 'medium',
-        offset_x: 24,
-        offset_y: 24
+      trigger_button_settings: {
+        position: chatbot.trigger_button_settings?.position || 'bottom-right',
+        color: chatbot.trigger_button_settings?.color || '#3B82F6',
+        icon: chatbot.trigger_button_settings?.icon || 'chat',
+        size: chatbot.trigger_button_settings?.size || 'medium',
+        offset_x: chatbot.trigger_button_settings?.offset_x || 24,
+        offset_y: chatbot.trigger_button_settings?.offset_y || 24,
+        custom_icon: chatbot.trigger_button_settings?.custom_icon || ''
       },
       chatbot_styling: chatbot.chatbot_styling || {
         primary_color: '#3B82F6',
@@ -1770,6 +1773,92 @@ const AIAgents = ({ adminData, settings }) => {
                   <option value="assistant">Assistant</option>
                 </Select>
               </div>
+            </div>
+
+            {/* Custom Icon Upload */}
+            <div className="border-t border-gray-200 dark:border-gray-600 pt-4 mt-4">
+              <Label htmlFor="custom-button-icon" className="text-sm">Custom Button Icon</Label>
+              <div className="mt-2 space-y-2">
+                <div className="flex gap-2">
+                  <TextInput
+                    id="custom-button-icon"
+                    type="url"
+                    value={chatbotForm.trigger_button_settings.custom_icon}
+                    onChange={(e) => setChatbotForm({
+                      ...chatbotForm,
+                      trigger_button_settings: {
+                        ...chatbotForm.trigger_button_settings,
+                        custom_icon: e.target.value
+                      }
+                    })}
+                    placeholder="https://example.com/icon.png"
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    color="gray"
+                    onClick={() => {
+                      if (window.wp && window.wp.media) {
+                        const frame = window.wp.media({
+                          title: 'Select Button Icon',
+                          button: { text: 'Use this icon' },
+                          multiple: false,
+                          library: { type: 'image' }
+                        });
+
+                        frame.on('select', function() {
+                          const attachment = frame.state().get('selection').first().toJSON();
+                          setChatbotForm({
+                            ...chatbotForm,
+                            trigger_button_settings: {
+                              ...chatbotForm.trigger_button_settings,
+                              custom_icon: attachment.url
+                            }
+                          });
+                        });
+
+                        frame.open();
+                      } else {
+                        alert('WordPress media library not available. Please use direct URL input.');
+                      }
+                    }}
+                  >
+                    Choose from Library
+                  </Button>
+                </div>
+                {chatbotForm.trigger_button_settings.custom_icon && (
+                  <div className="flex items-center gap-2 p-2 bg-gray-50 dark:bg-gray-700 rounded">
+                    <img
+                      src={chatbotForm.trigger_button_settings.custom_icon}
+                      alt="Icon preview"
+                      className="w-8 h-8 object-cover rounded"
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                      }}
+                    />
+                    <span className="text-sm text-gray-600 dark:text-gray-300 truncate flex-1">
+                      {chatbotForm.trigger_button_settings.custom_icon}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setChatbotForm({
+                        ...chatbotForm,
+                        trigger_button_settings: {
+                          ...chatbotForm.trigger_button_settings,
+                          custom_icon: ''
+                        }
+                      })}
+                      className="text-red-500 hover:text-red-700 text-sm"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Enter URL directly or choose from WordPress media library. Leave empty to use the selected icon style above.
+              </p>
             </div>
           </AccordionSection>
 

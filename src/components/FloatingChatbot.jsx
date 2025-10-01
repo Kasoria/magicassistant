@@ -207,7 +207,7 @@ const FloatingChatbot = () => {
           <button
             key={chatbot.id}
             onClick={() => openChatbot(chatbot)}
-            className={`fixed z-50 ${buttonSize} rounded-full shadow-lg transition-all duration-200 hover:scale-110 focus:outline-none focus:ring-4 focus:ring-blue-500 focus:ring-opacity-50 text-white`}
+            className={`fixed z-50 ${buttonSize} rounded-full shadow-lg transition-all duration-200 hover:scale-110 focus:outline-none focus:ring-4 focus:ring-blue-500 focus:ring-opacity-50 text-white flex items-center justify-center overflow-hidden`}
             style={{
               backgroundColor: color,
               ...position,
@@ -216,12 +216,25 @@ const FloatingChatbot = () => {
             }}
             aria-label={`Open ${chatbot.name} chat`}
           >
+            {settings.custom_icon ? (
+              <img
+                src={settings.custom_icon}
+                alt={`${chatbot.name} icon`}
+                className="w-8 h-8 object-cover"
+                onError={(e) => {
+                  // Fallback to default icon if image fails to load
+                  e.target.style.display = 'none'
+                  e.target.nextElementSibling.style.display = 'block'
+                }}
+              />
+            ) : null}
             <svg
-              className="w-6 h-6 mx-auto"
+              className={`w-6 h-6 mx-auto ${settings.custom_icon ? 'hidden' : ''}`}
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
               strokeWidth={1.5}
+              style={{ display: settings.custom_icon ? 'none' : 'block' }}
             >
               <path
                 strokeLinecap="round"
