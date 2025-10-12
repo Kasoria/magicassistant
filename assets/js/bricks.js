@@ -8,7 +8,7 @@ window.MagicAssistantBricks = {
             console.log('MagicAssistant: Bricks Builder not ready.');
             return;
         }
-        
+
         console.log('MagicAssistant: Bricks Builder detected. Initializing integration.');
 
         this.vue = document.querySelector('.brx-body').__vue_app__;
@@ -16,9 +16,15 @@ window.MagicAssistantBricks = {
         this.vueState = this.vueGlobalProp.$_state;
         this.bricksData = bricksData;
 
-        // The main function to be called from the React component
+        // DEPRECATED: Old function that re-parses HTML (creates unwanted global classes)
         window.magicAssistantInsertHTML = (html, css, js) => {
+            console.warn('Using deprecated magicAssistantInsertHTML. Use magicAssistantInsertStructure instead.');
             this.htmlImporter({ html, css, js });
+        };
+
+        // NEW: Preferred function that directly inserts pre-converted Bricks structure
+        window.magicAssistantInsertStructure = (bricksStructure, globalClasses = []) => {
+            this.structureImporter(bricksStructure, globalClasses);
         };
     },
 
@@ -66,25 +72,86 @@ window.MagicAssistantBricks = {
         }, 10);
     },
 
+    structureImporter: function (bricksStructure, globalClasses = []) {
+        const contentType = this.helpers.getTemplateType();
+        const activeElement = this.vueState.activeElement;
+
+        if (!bricksStructure || !Array.isArray(bricksStructure) || bricksStructure.length === 0) {
+            console.error('Invalid bricks structure provided');
+            return;
+        }
+
+        // Get the root element (should be first element - section/header/footer/main)
+        const rootElement = bricksStructure[bricksStructure.length - 1]; // Last element in array is the root
+        const rootId = rootElement.id;
+
+        // Determine parent for insertion
+        let parentId;
+        const isParent = activeElement ? this.helpers.isElementOnRoot(activeElement.parent) : false;
+
+        if (!activeElement || (isParent && !this.vueGlobalProp.$_isNestable({name: activeElement.name}))) {
+            parentId = 0;
+        } else if (this.vueGlobalProp.$_isNestable({name: activeElement.name})) {
+            parentId = this.vueState.activeId;
+            // Update root element's parent
+            rootElement.parent = parentId;
+            this.helpers.getElementObject(parentId).children.push(rootId);
+        } else {
+            parentId = activeElement.parent;
+            // Update root element's parent
+            rootElement.parent = parentId;
+            this.helpers.getElementObject(parentId).children.push(rootId);
+        }
+
+        // Insert global classes if provided
+        if (globalClasses && globalClasses.length > 0) {
+            globalClasses.forEach(globalClass => {
+                const existingClass = this.vueState.globalClasses.find(c => c.name === globalClass.name);
+                if (!existingClass) {
+                    this.vueState.globalClasses.push(globalClass);
+                }
+            });
+        }
+
+        // Insert all elements into the Vue state
+        if (this.helpers.isComponentActive()) {
+            this.vueState.activeComponent.elements = this.vueState.activeComponent.elements.concat(bricksStructure.reverse());
+        } else {
+            this.vueState[contentType] = this.vueState[contentType].concat(bricksStructure.reverse());
+        }
+
+        setTimeout(() => {
+            this.helpers.openElement(rootId);
+            this.vueGlobalProp.$_showMessage('Structure imported successfully from MagicAssistant!');
+        }, 10);
+    },
+
     helpers: {
         
         parseHtmlStringToObjectArray: function(rootId, parentId, cmValues, codepenStates){
             const parser = new DOMParser();
             const doc = parser.parseFromString(cmValues.html, 'text/html');
-            
+
             doc.body.querySelectorAll('*').forEach(el => {
                 const childNodes = Array.from(el.childNodes);
                 const hasText = childNodes.some(n => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
                 const hasElements = childNodes.some(n => n.nodeType === Node.ELEMENT_NODE);
-                
+
                 if (hasText && hasElements) {
                     window.MagicAssistantBricks.helpers.wrapTextNodesInSpan(el);
                 }
             })
 
             const elementsArray = [];
-            const rootChildren = [];
-        
+            const containerId = window.MagicAssistantBricks.vueGlobalProp.$_generateId();
+
+            // Check if we have a single root semantic element (section, header, footer, main)
+            const bodyChildren = [...doc.body.children];
+            const hasSingleSemanticRoot = bodyChildren.length === 1 &&
+                ['section', 'header', 'footer', 'main'].includes(bodyChildren[0].tagName.toLowerCase());
+
+            let sectionElement, rootChildren;
+
             function setDefaultTag(elementObj, tag, hasCustomTag){
                 if(hasCustomTag){
                     elementObj.settings.tag = 'custom';
@@ -94,7 +161,7 @@ window.MagicAssistantBricks = {
                 }
             }
         
-            function traverseElement(element, parentId = rootId) {
+            function traverseElement(element, parentId) {
                 const id = window.MagicAssistantBricks.vueGlobalProp.$_generateId();
                 const tagName = element.tagName.toLowerCase();
                 const bricksName = window.MagicAssistantBricks.helpers.elementTagbyHTMLTag(element, tagName);
@@ -150,18 +217,79 @@ window.MagicAssistantBricks = {
                 return elementObj;
             }
         
-            [...doc.body.children].forEach((element) => {
-                const topLevelElement = traverseElement(element);
-                rootChildren.push(topLevelElement.id);
-            });
+            if (hasSingleSemanticRoot) {
+                // Use the semantic element as our section
+                const semanticRoot = bodyChildren[0];
+                const tagName = semanticRoot.tagName.toLowerCase();
 
+                // Parse the section element's attributes and classes
+                sectionElement = {
+                    id: rootId,
+                    name: 'section',
+                    label: 'Generated By MagicAssistant',
+                    parent: parentId,
+                    children: [containerId],
+                    settings: {}
+                };
+
+                // Apply the semantic element's ID and classes to the section
+                if (codepenStates.includesIds) {
+                    const idAttr = semanticRoot.id;
+                    if (idAttr && codepenStates.excludeIds !== '' && !codepenStates.excludeIds.replaceAll(' ', '').split(',').some(item => idAttr.trim().toLowerCase().includes(item.trim().toLowerCase()))) {
+                        sectionElement.settings._cssId = idAttr;
+                    }
+                }
+
+                if (codepenStates.includesClasses) {
+                    const fakeElem = { settings: {} };
+                    window.MagicAssistantBricks.helpers.setClassesFromParsedHTML(semanticRoot, fakeElem, codepenStates);
+                    if (fakeElem.settings._cssGlobalClasses) sectionElement.settings._cssGlobalClasses = fakeElem.settings._cssGlobalClasses;
+                    if (fakeElem.settings._cssClasses) sectionElement.settings._cssClasses = fakeElem.settings._cssClasses;
+                }
+
+                if (codepenStates.includesAttributes) {
+                    window.MagicAssistantBricks.helpers.setAttributesFromParsedHTML(semanticRoot, sectionElement, codepenStates);
+                }
+
+                // Set custom tag if needed
+                if (tagName !== 'section') {
+                    sectionElement.settings.tag = 'custom';
+                    sectionElement.settings.customTag = tagName;
+                }
+
+                // Parse children of the semantic element (they go in the container)
+                rootChildren = [];
+                [...semanticRoot.children].forEach((element) => {
+                    const childElement = traverseElement(element, containerId);
+                    rootChildren.push(childElement.id);
+                });
+
+            } else {
+                // No semantic root - create default section and parse all body children
+                sectionElement = {
+                    id: rootId,
+                    name: 'section',
+                    label: 'Generated By MagicAssistant',
+                    parent: parentId,
+                    children: [containerId],
+                    settings: {}
+                };
+
+                rootChildren = [];
+                [...doc.body.children].forEach((element) => {
+                    const topLevelElement = traverseElement(element, containerId);
+                    rootChildren.push(topLevelElement.id);
+                });
+            }
+
+            // Add CSS/JS code element if present (goes inside container)
             if(cmValues.css || cmValues.js){
                 const codeId = window.MagicAssistantBricks.vueGlobalProp.$_generateId();
                 const codeObj = {
                     id: codeId,
                     name: 'code',
                     label: 'CSS/JS Code',
-                    parent: rootId,
+                    parent: containerId,
                     children: [],
                     settings: {},
                 }
@@ -176,16 +304,18 @@ window.MagicAssistantBricks = {
                 elementsArray.splice(0, 0, codeObj);
                 rootChildren.splice(0, 0, codeId);
             }
-            const parentObj = {
-                id: rootId,
-                name: 'div',
-                label: 'Generated By MagicAssistant',
-                parent: parentId,
+
+            // Create container element
+            const containerObj = {
+                id: containerId,
+                name: 'container',
+                parent: rootId,
                 children: rootChildren,
                 settings: {},
-            }
+            };
 
-            elementsArray.push(parentObj);
+            elementsArray.push(containerObj);
+            elementsArray.push(sectionElement);
             return elementsArray;
         },
 
@@ -203,14 +333,15 @@ window.MagicAssistantBricks = {
             if(tag.startsWith("b-")){
                 return tag.replace("b-","");
             }
+            // IMPORTANT: <a> tags are mapped to 'button' elements
+            // The href attribute is processed separately to add link settings to the button
             const completeMapping = {
-                'section': ['section'],
-                'div': ['div', 'a', 'article', 'nav', 'ol', 'ul', 'li', 'aside'],
+                'div': ['div', 'article', 'nav', 'ol', 'ul', 'li', 'aside', 'section', 'header', 'footer', 'main'],
                 'text-basic': ['p', 'span', 'figcaption', 'address'],
                 'heading': ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
                 'image': ['img', 'picture'],
                 'video': ['video'],
-                'button': ['button'],
+                'button': ['button', 'a'],  // Both <button> and <a> tags become button elements
                 'code': ['style', 'script']
             };
         

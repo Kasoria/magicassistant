@@ -7,7 +7,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import ContentMode from './ContentMode'
 
-const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) => {
+const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, onAiResponseUpdate }) => {
+  console.log('🧱 ChatInterface mounted - isBricksMode:', isBricksMode, 'URL:', window.location.href);
   const [isContentMode, setIsContentMode] = useState(false)
   // Helper function to add UTM parameters to Unsplash links
   const addUnsplashUTMParams = (url) => {
@@ -15,14 +16,18 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
     const separator = url.includes('?') ? '&' : '?'
     return `${url}${separator}utm_source=magicassistant&utm_medium=referral`
   }
-  const [messages, setMessages] = useState([
-    {
+  const [messages, setMessages] = useState(() => {
+    const welcomeContent = isBricksMode
+      ? '🧱 **Bricks Mode Activated!**\n\nI\'m ready to help you build beautiful Bricks sections. Just describe what you want to create:\n\n• Hero sections\n• Pricing tables\n• Feature grids\n• CTA sections\n• Contact forms\n• And much more!\n\nI\'ll generate professional designs with Tailwind CSS and convert them to native Bricks elements for you.'
+      : 'Hello! I\'m your WordPress AI assistant. I can help you create content, manage your site, and answer questions. What would you like to do today?';
+
+    return [{
       role: 'assistant',
-      content: 'Hello! I\'m your WordPress AI assistant. I can help you create content, manage your site, and answer questions. What would you like to do today?',
+      content: welcomeContent,
       timestamp: new Date(),
-      isWelcomeMessage: true // Mark this as the welcome message
-    }
-  ])
+      isWelcomeMessage: true
+    }];
+  })
   const [inputMessage, setInputMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isStreaming, setIsStreaming] = useState(false)
@@ -151,11 +156,9 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
     }
   }
   
-  // Helper: detect Bricks editor
-  const isBricksEditor = new URLSearchParams(window.location.search).get('bricks') === 'run';
-
-  // Chat mode options for react-select (exclude Content Mode in drawer mode)
+  // Chat mode options for react-select
   const chatModeOptions = [
+    ...(isBricksMode ? [{ value: 'bricks', label: '🧱 Bricks Mode' }] : []),
     { value: 'chat', label: 'Chat Mode' },
     { value: 'agent', label: 'Agent Mode' },
     ...(isDrawerMode ? [] : [{ value: 'content', label: 'Content Mode' }])
@@ -166,13 +169,17 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
 
   // Helper to get current chat mode value
   const getCurrentChatMode = () => {
+    if (isBricksMode) return 'bricks'
     if (isContentMode) return 'content'
     return forceAgentMode ? 'agent' : 'chat'
   }
 
   // Handler for chat mode changes
   const handleChatModeChange = (option) => {
-    if (option.value === 'content') {
+    if (option.value === 'bricks') {
+      // Bricks mode is always active when in Bricks editor, can't change
+      return
+    } else if (option.value === 'content') {
       setIsContentMode(true)
     } else {
       setIsContentMode(false)
@@ -776,7 +783,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
       // Check if streaming is enabled
       const isStreamingEnabled = settings?.streaming_enabled === true
 
-      if (isStreamingEnabled) {
+      // Disable streaming in Bricks mode - Bricks endpoint doesn't support streaming
+      if (isStreamingEnabled && !isBricksMode) {
         // Set loading to false to ensure no loading spinner shows
         setIsLoading(false)
         // Set streaming state to disable UI during streaming
@@ -798,35 +806,54 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
           message_preview: apiMessageContent.substring(0, 100)
         })
         
+        // Choose endpoint based on Bricks mode
+        const endpoint = isBricksMode ? `${adminData.restUrl}bricks/generate` : `${adminData.restUrl}chat`;
+
+        console.log('=== CHAT DEBUG ===');
+        console.log('isBricksMode:', isBricksMode);
+        console.log('Endpoint:', endpoint);
+        console.log('==================');
+
+        // Prepare request body based on mode
+        const requestBody = isBricksMode ? {
+          prompt: apiMessageContent,
+          history: messages.filter(msg => msg.role !== 'system').map(msg => ({
+            role: msg.role,
+            content: msg.fullContent || msg.content
+          })),
+          session_id: currentSessionId,
+          agent_id: selectedAgentId
+        } : {
+          message: apiMessageContent, // Use the API version with full content
+          history: messages.filter(msg => msg.role !== 'system').map(msg => ({
+            role: msg.role,
+            content: msg.fullContent || msg.content // Use fullContent for AI context if available
+          })),
+          agent_mode: forceAgentMode,
+          session_id: currentSessionId,
+          page_url: pageContext.url,
+          page_context: pageContext,
+          attached_files: attachedFiles.length > 0 ? attachedFiles.map(f => ({
+            name: f.name,
+            type: f.type,
+            size: f.size,
+            content: f.content,
+            isImage: f.isImage || false
+          })) : undefined,
+          custom_system_message: enableCustomSystem && customSystemMessage ? customSystemMessage : undefined,
+          web_search_enabled: webSearchEnabled,
+          agent_id: selectedAgentId
+        };
+
         // Use regular fetch for non-streaming
-        const response = await fetch(`${adminData.restUrl}chat`, {
+        const response = await fetch(endpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'X-WP-Nonce': adminData.nonces.wp_rest,
             'X-Web-Search-Enabled': webSearchEnabled ? 'true' : 'false',
           },
-          body: JSON.stringify({
-            message: apiMessageContent, // Use the API version with full content
-            history: messages.filter(msg => msg.role !== 'system').map(msg => ({
-              role: msg.role,
-              content: msg.fullContent || msg.content // Use fullContent for AI context if available
-            })),
-            agent_mode: forceAgentMode,
-            session_id: currentSessionId,
-            page_url: pageContext.url,
-            page_context: pageContext,
-            attached_files: attachedFiles.length > 0 ? attachedFiles.map(f => ({
-              name: f.name,
-              type: f.type,
-              size: f.size,
-              content: f.content,
-              isImage: f.isImage || false
-            })) : undefined,
-            custom_system_message: enableCustomSystem && customSystemMessage ? customSystemMessage : undefined,
-            web_search_enabled: webSearchEnabled,
-            agent_id: selectedAgentId
-          })
+          body: JSON.stringify(requestBody)
         })
 
         const data = await response.json()
@@ -840,18 +867,32 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
             // Persist as last opened session
             saveLastSession(data.session_id)
           }
-          
-          const responseContent = data.response;
-          const chatContent = getTextFromResponse(responseContent)
-          
-          const { html: extractedHtml, css: extractedCss, js: extractedJs } = getPartsFromResponse(responseContent)
+
+          // Handle response based on mode
+          let chatContent, extractedHtml, extractedCss, extractedJs;
+
+          if (isBricksMode) {
+            // Bricks mode response includes converted HTML/CSS/JS
+            chatContent = data.ai_response || 'Generated Bricks structure successfully!';
+            extractedHtml = data.html || '';
+            extractedCss = data.css || '';
+            extractedJs = data.js || '';
+          } else {
+            // Regular chat mode
+            const responseContent = data.response;
+            chatContent = getTextFromResponse(responseContent);
+            const parts = getPartsFromResponse(responseContent);
+            extractedHtml = parts.html;
+            extractedCss = parts.css;
+            extractedJs = parts.js;
+          }
 
           const assistantMessage = {
             role: 'assistant',
             content: chatContent,
             timestamp: new Date(),
             provider: data.provider,
-            agent_mode: forceAgentMode,
+            agent_mode: isBricksMode ? 'bricks' : forceAgentMode,
             tool_calls_count: data.tool_calls_count || 0,
             debug_tool_data: data.debug_tool_data || [],
             tokens_used: data.tokens_used,
@@ -860,7 +901,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
             isError: false,
             html: extractedHtml,
             css: extractedCss,
-            js: extractedJs
+            js: extractedJs,
+            bricks_structure: isBricksMode ? data.bricks_structure : undefined
           }
           setMessages(prev => [...prev, assistantMessage])
           // Update credit info from response
@@ -1720,13 +1762,24 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
   }
 
   const insertMessageHtml = (msg) => {
-    const html = msg.html || (typeof msg.content === 'string' && msg.content.includes('<') ? msg.content : '');
-    if (typeof window.magicAssistantInsertHTML === 'function' && html) {
-      window.magicAssistantInsertHTML(html, msg.css || '', msg.js || '');
-    } else if (!html) {
-      alert('No HTML found in this message.');
+    // Extract content from wrapped structure (new format) or use array directly (backwards compatibility)
+    const bricksContent = msg.bricks_structure?.content || msg.bricks_structure;
+    const globalClasses = msg.bricks_structure?.globalClasses || msg.globalClasses || [];
+
+    // Prefer using the pre-converted bricks_structure (avoids creating global classes)
+    if (typeof window.magicAssistantInsertStructure === 'function' && bricksContent) {
+      window.magicAssistantInsertStructure(bricksContent, globalClasses);
     } else {
-      alert('MagicAssistant Bricks integration not found!');
+      // Fallback to HTML parsing
+      const html = msg.html || (typeof msg.content === 'string' && msg.content.includes('<') ? msg.content : '');
+      if (typeof window.magicAssistantInsertHTML === 'function' && html) {
+        console.warn('Using fallback HTML parser. Bricks structure not available.');
+        window.magicAssistantInsertHTML(html, msg.css || '', msg.js || '');
+      } else if (!html) {
+        alert('No HTML found in this message.');
+      } else {
+        alert('MagicAssistant Bricks integration not found! Make sure you are in Bricks Builder.');
+      }
     }
   };
 
@@ -2098,7 +2151,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                 value={chatModeOptions.find(option => option.value === getCurrentChatMode())}
                 onChange={handleChatModeChange}
                 options={chatModeOptions}
-                isDisabled={false}
+                isDisabled={isBricksMode}
                 darkMode={isDarkMode}
                 size="compact"
               />
@@ -2163,7 +2216,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
               value={chatModeOptions.find(option => option.value === getCurrentChatMode())}
               onChange={handleChatModeChange}
               options={chatModeOptions}
-              isDisabled={false}
+              isDisabled={isBricksMode}
               darkMode={isDarkMode}
               size="compact"
             />
@@ -2356,14 +2409,34 @@ const ChatInterface = ({ adminData, isDrawerMode = false, onAiResponseUpdate }) 
                     </>
                   )}
                   {message.role === 'assistant' && typeof window.magicAssistantInsertHTML === 'function' && (message.html || (typeof message.content === 'string' && message.content.includes('<'))) && (
-                    <button
-                      type="button"
-                      onClick={() => insertMessageHtml(message)}
-                      className="inline-flex cursor-pointer justify-center rounded p-1 text-white bg-green-600 hover:bg-green-700 transition-colors ml-1 text-xs"
-                      title="Insert this HTML into Bricks"
-                    >
-                      Insert into Bricks
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => insertMessageHtml(message)}
+                        className="inline-flex cursor-pointer justify-center rounded p-1 text-white bg-green-600 hover:bg-green-700 transition-colors ml-1 text-xs"
+                        title="Insert this HTML into Bricks"
+                      >
+                        Insert into Bricks
+                      </button>
+                      {message.bricks_structure && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const json = JSON.stringify(message.bricks_structure, null, 2);
+                            navigator.clipboard.writeText(json).then(() => {
+                              alert('Bricks JSON structure copied to clipboard!');
+                            }).catch(err => {
+                              console.error('Failed to copy:', err);
+                              alert('Failed to copy to clipboard');
+                            });
+                          }}
+                          className="inline-flex cursor-pointer justify-center rounded p-1 text-white bg-blue-600 hover:bg-blue-700 transition-colors ml-1 text-xs"
+                          title="Copy Bricks JSON structure to clipboard"
+                        >
+                          📋 Copy JSON
+                        </button>
+                      )}
+                    </>
                   )}
                   {message.agent_mode && (
                     <span className="px-2 py-1 bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded text-xs">

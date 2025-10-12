@@ -523,6 +523,21 @@ class AI_Provider {
             'callback' => array($this, 'handle_chatbot_chat'),
             'permission_callback' => '__return_true',
         ));
+
+        // BRICKS BUILDER ENDPOINTS
+        error_log('REGISTERING BRICKS ROUTES: /bricks/generate and /bricks/convert');
+        register_rest_route('magicassistant/v1', '/bricks/generate', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'handle_bricks_generation'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
+        register_rest_route('magicassistant/v1', '/bricks/convert', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'handle_bricks_conversion'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        error_log('BRICKS ROUTES REGISTERED SUCCESSFULLY');
     }
     
     public function handle_chat($request) {
@@ -3308,7 +3323,9 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     }
     
     public function check_permissions() {
-        return current_user_can('manage_options');
+        $can_manage = current_user_can('manage_options');
+        error_log('BRICKS PERMISSIONS CHECK: ' . ($can_manage ? 'ALLOWED' : 'DENIED'));
+        return $can_manage;
     }
     
     
@@ -4113,10 +4130,14 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     }
     
     /**
-     * Get license key from settings
+     * Get license key from licensing client
      */
     private function get_license_key() {
-        return $this->settings['license_key'] ?? '';
+        $licensing_client = $this->get_licensing_client();
+        if (!$licensing_client || !method_exists($licensing_client, 'settings') || !$licensing_client->settings()) {
+            return '';
+        }
+        return $licensing_client->settings()->license_key ?? '';
     }
     
     /**
@@ -9739,6 +9760,596 @@ CRITICAL: Act as a copy machine, not a summarizer. Extract everything word-for-w
             // Clear chatbot owner context after request
             $this->chatbot_owner_user_id = null;
         }
+    }
+
+    /**
+     * Handle Bricks generation request - AI generates HTML with Tailwind, then converts to Bricks
+     *
+     * @param WP_REST_Request $request
+     * @return array|WP_Error
+     */
+    public function handle_bricks_generation($request) {
+        error_log('====================================');
+        error_log('BRICKS ENDPOINT CALLED: handle_bricks_generation');
+        error_log('====================================');
+
+        @set_time_limit(300); // 5 minutes for generation
+
+        $data = $request->get_json_params();
+        error_log('BRICKS: Request data keys: ' . implode(', ', array_keys($data)));
+
+        $prompt = $data['prompt'] ?? '';
+        $conversation_history = $data['history'] ?? [];
+        $session_id = $data['session_id'] ?? $this->generate_session_id();
+        $agent_id = $data['agent_id'] ?? null;
+
+        error_log('BRICKS: Prompt length: ' . strlen($prompt));
+        error_log('BRICKS: History count: ' . count($conversation_history));
+
+        if (empty($prompt)) {
+            error_log('BRICKS ERROR: Empty prompt provided');
+            return new WP_Error('empty_prompt', 'Prompt is required', array('status' => 400));
+        }
+
+        try {
+            // Build Bricks-specific system message
+            $bricks_system_message = $this->build_bricks_system_message();
+            error_log('=== BRICKS DEBUG START ===');
+            error_log('BRICKS: Using Bricks-specific system message (length: ' . strlen($bricks_system_message) . ')');
+            error_log('BRICKS: User prompt: ' . substr($prompt, 0, 200));
+
+            // Get AI provider settings
+            $provider = $this->settings['ai_provider'] ?? 'anthropic';
+            $model = $this->get_model_for_provider($provider);
+            $api_key = $this->get_api_key($provider);
+            error_log('BRICKS: Provider: ' . $provider . ', Model: ' . $model);
+
+            // Build conversation for AI (NO TOOLS - direct generation only)
+            $messages = array();
+
+            // Add conversation history if exists
+            foreach ($conversation_history as $msg) {
+                $messages[] = array(
+                    'role' => $msg['role'],
+                    'content' => $msg['content']
+                );
+            }
+
+            // Add current user prompt
+            $messages[] = array(
+                'role' => 'user',
+                'content' => $prompt
+            );
+
+            // Call AI provider directly WITHOUT tools
+            if ($provider === 'anthropic') {
+                $response = $this->call_anthropic_simple($messages, $bricks_system_message, $api_key);
+            } elseif ($provider === 'openai') {
+                $response = $this->call_openai_simple($messages, $bricks_system_message, $api_key);
+            } else {
+                $response = $this->call_openrouter_simple($messages, $bricks_system_message, $api_key);
+            }
+
+            // Extract HTML from AI response
+            $ai_response = $response['response'] ?? '';
+            error_log('BRICKS: AI Response length: ' . strlen($ai_response));
+            error_log('BRICKS: AI Response preview: ' . substr($ai_response, 0, 500));
+
+            $html = $this->extract_html_from_response($ai_response);
+            $js = $this->extract_js_from_response($ai_response);
+
+            error_log('BRICKS: Extracted HTML length: ' . strlen($html));
+            error_log('BRICKS: Extracted HTML preview: ' . substr($html, 0, 300));
+
+            if (strpos($html, 'style=') !== false) {
+                error_log('BRICKS WARNING: HTML contains inline style attributes!');
+            }
+            if (strpos($html, '<style') !== false) {
+                error_log('BRICKS WARNING: HTML contains <style> tags!');
+            }
+
+            if (empty($html)) {
+                error_log('BRICKS ERROR: No HTML extracted from AI response');
+                return new WP_Error('no_html_generated', 'AI did not generate HTML content', array('status' => 500));
+            }
+
+            // Convert HTML + Tailwind to Bricks JSON
+            require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'includes/Bricks_Converter.php';
+            $converter = new Bricks_Converter();
+
+            error_log('BRICKS: Starting conversion...');
+            $conversion_result = $converter->convert($html, $js);
+            error_log('BRICKS: Conversion completed. Success: ' . ($conversion_result['success'] ? 'YES' : 'NO'));
+
+            if (!$conversion_result['success']) {
+                return new WP_Error('conversion_failed', $conversion_result['error'], array('status' => 500));
+            }
+
+            // Debug: Log the structure
+            error_log('BRICKS STRUCTURE: ' . print_r($conversion_result['bricks_structure'], true));
+
+            // Wrap structure in Bricks clipboard format
+            $bricks_clipboard_structure = array(
+                'content' => $conversion_result['bricks_structure'],
+                'source' => 'bricksCopiedElements',
+                'sourceUrl' => get_site_url(),
+                'version' => '1.9.9',  // Bricks version - may need to detect dynamically
+                'globalClasses' => array(),
+                'globalElements' => array()
+            );
+
+            return array(
+                'success' => true,
+                'ai_response' => $ai_response,
+                'html' => $conversion_result['html'],
+                'css' => $conversion_result['css'],
+                'js' => $conversion_result['js'],
+                'bricks_structure' => $bricks_clipboard_structure,
+                'metadata' => $conversion_result['metadata'],
+                'provider' => $provider,
+                'model' => $model
+            );
+
+        } catch (Exception $e) {
+            return new WP_Error('generation_error', $e->getMessage(), array('status' => 500));
+        }
+    }
+
+    /**
+     * Handle Bricks conversion request - Convert existing HTML + Tailwind to Bricks
+     *
+     * @param WP_REST_Request $request
+     * @return array|WP_Error
+     */
+    public function handle_bricks_conversion($request) {
+        $data = $request->get_json_params();
+        $html = $data['html'] ?? '';
+        $js = $data['js'] ?? '';
+
+        if (empty($html)) {
+            return new WP_Error('empty_html', 'HTML is required', array('status' => 400));
+        }
+
+        try {
+            require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'includes/Bricks_Converter.php';
+            $converter = new Bricks_Converter();
+
+            // Validate HTML first
+            $validation = $converter->validate($html);
+            if (!$validation['valid']) {
+                return new WP_Error('invalid_html', $validation['error'], array('status' => 400));
+            }
+
+            // Convert to Bricks
+            $result = $converter->convert($html, $js);
+
+            if (!$result['success']) {
+                return new WP_Error('conversion_failed', $result['error'], array('status' => 500));
+            }
+
+            return array(
+                'success' => true,
+                'html' => $result['html'],
+                'css' => $result['css'],
+                'js' => $result['js'],
+                'bricks_structure' => $result['bricks_structure'],
+                'metadata' => $result['metadata']
+            );
+
+        } catch (Exception $e) {
+            return new WP_Error('conversion_error', $e->getMessage(), array('status' => 500));
+        }
+    }
+
+    /**
+     * Build Bricks-specific system message for AI
+     *
+     * @return string
+     */
+    private function build_bricks_system_message() {
+        return "You are MagicAssistant in BRICKS BUILDER MODE.
+
+**ABSOLUTE CRITICAL RULES - VIOLATION WILL CAUSE SYSTEM FAILURE:**
+
+⚠️ **RULE #1: NEVER GENERATE CSS - ONLY TAILWIND CLASSES IN HTML**
+   - The ONLY allowed output is HTML with Tailwind CSS utility classes in class=\"...\" attributes
+   - <style> tags are STRICTLY FORBIDDEN and will break the system
+   - Separate CSS blocks are STRICTLY FORBIDDEN
+   - Inline style=\"...\" attributes are STRICTLY FORBIDDEN
+   - Custom CSS of ANY kind is STRICTLY FORBIDDEN
+
+   The conversion system AUTOMATICALLY handles CSS generation from Tailwind classes.
+   Your job is ONLY to write HTML with Tailwind class names.
+
+⚠️ **RULE #2: SINGLE HTML BLOCK ONLY**
+   - Output EXACTLY ONE ```html code block
+   - ZERO text before the code block
+   - ZERO text after the code block
+   - ZERO explanations or comments outside the HTML
+
+**MANDATORY OUTPUT FORMAT:**
+```html
+<!-- HTML with Tailwind classes ONLY -->
+```
+
+**HOW TO STYLE - USE TAILWIND CLASSES IN HTML:**
+Every style MUST be a Tailwind utility class in the class attribute:
+
+• Layout & Spacing:
+  - container, mx-auto, px-4, py-8, p-6, m-4, space-y-4
+  - flex, flex-col, items-center, justify-between, gap-4
+  - grid, grid-cols-2, md:grid-cols-3, gap-8
+
+• Typography:
+  - text-sm, text-base, text-xl, text-2xl, text-4xl, text-6xl
+  - font-light, font-normal, font-semibold, font-bold
+  - leading-tight, leading-relaxed
+  - text-left, text-center, text-right
+
+• Colors:
+  - bg-blue-600, bg-gray-100, bg-white
+  - text-white, text-gray-900, text-blue-600
+  - border-gray-200, border-blue-500
+
+• Effects:
+  - rounded-lg, rounded-full, shadow-lg, shadow-xl
+  - hover:bg-blue-700, hover:shadow-2xl
+  - transition, duration-300
+
+• Responsive:
+  - md:text-4xl, lg:grid-cols-4, sm:px-6
+
+**CORRECT EXAMPLE - STUDY THIS:**
+```html
+<section class=\"bg-gradient-to-r from-blue-600 to-blue-800 text-white py-24\">
+  <div class=\"container mx-auto px-4\">
+    <div class=\"max-w-3xl\">
+      <h1 class=\"text-5xl md:text-6xl font-bold mb-6 leading-tight\">Transform Your Business Today</h1>
+      <p class=\"text-xl mb-8 text-blue-100 leading-relaxed\">Powerful solutions designed to help you grow faster and achieve more.</p>
+      <div class=\"flex flex-wrap gap-4\">
+        <a href=\"#\" class=\"bg-white text-blue-600 px-8 py-4 rounded-lg font-semibold hover:bg-blue-50 transition duration-300 shadow-lg\">Get Started</a>
+        <a href=\"#\" class=\"border-2 border-white text-white px-8 py-4 rounded-lg font-semibold hover:bg-white hover:text-blue-600 transition duration-300\">Learn More</a>
+      </div>
+    </div>
+  </div>
+</section>
+```
+
+**WRONG - THESE WILL BREAK THE SYSTEM:**
+
+❌ NEVER DO THIS - Style tags:
+```html
+<style>
+  .hero { background: blue; padding: 2rem; }
+</style>
+<div class=\"hero\">Content</div>
+```
+
+❌ NEVER DO THIS - Inline styles:
+```html
+<div style=\"background: blue; padding: 2rem;\">Content</div>
+```
+
+❌ NEVER DO THIS - Custom classes without Tailwind:
+```html
+<div class=\"custom-hero\">Content</div>
+```
+
+✅ ALWAYS DO THIS - Tailwind classes:
+```html
+<div class=\"bg-blue-600 p-8\">Content</div>
+```
+
+**REMEMBER:**
+- NO <style> tags ever
+- NO style=\"...\" attributes ever
+- NO custom CSS ever
+- ONLY Tailwind utility classes in class=\"...\" attributes
+- The system converts Tailwind to CSS automatically
+
+NOW GENERATE THE REQUESTED COMPONENT - ONLY HTML WITH TAILWIND CLASSES.";
+    }
+
+    /**
+     * Extract HTML from AI response (handles code blocks)
+     *
+     * @param string $response AI response
+     * @return string Extracted HTML
+     */
+    private function extract_html_from_response($response) {
+        $html = '';
+
+        // Try to extract from code blocks
+        if (preg_match('/```html\s*(.*?)\s*```/s', $response, $matches)) {
+            $html = trim($matches[1]);
+        } elseif (preg_match('/```\s*(.*?)\s*```/s', $response, $matches)) {
+            $content = trim($matches[1]);
+            // Check if it looks like HTML
+            if (strpos($content, '<') !== false) {
+                $html = $content;
+            }
+        } elseif (strpos($response, '<') !== false && strpos($response, '>') !== false) {
+            // If no code blocks, check if response itself is HTML
+            $html = trim($response);
+        }
+
+        // Sanitize: Remove any <style> tags (AI should NOT generate these)
+        if (strpos($html, '<style') !== false) {
+            error_log('WARNING: AI generated <style> tags in Bricks mode - removing them. AI should only use Tailwind classes.');
+            $html = preg_replace('/<style[^>]*>.*?<\/style>/is', '', $html);
+        }
+
+        // Sanitize: Remove inline style attributes (AI should NOT generate these)
+        if (strpos($html, 'style=') !== false) {
+            error_log('WARNING: AI generated inline style attributes in Bricks mode - removing them. AI should only use Tailwind classes.');
+            $html = preg_replace('/\s+style=["\'][^"\']*["\']/i', '', $html);
+        }
+
+        return trim($html);
+    }
+
+    /**
+     * Extract JavaScript from AI response
+     *
+     * @param string $response AI response
+     * @return string Extracted JavaScript
+     */
+    private function extract_js_from_response($response) {
+        if (preg_match('/```javascript\s*(.*?)\s*```/s', $response, $matches)) {
+            return trim($matches[1]);
+        }
+        if (preg_match('/```js\s*(.*?)\s*```/s', $response, $matches)) {
+            return trim($matches[1]);
+        }
+        return '';
+    }
+
+    /**
+     * Simple Anthropic API call without tools (for Bricks generation)
+     *
+     * @param array $messages Conversation messages
+     * @param string $system_message System prompt
+     * @param string $api_key API key
+     * @return array Response
+     */
+    private function call_anthropic_simple($messages, $system_message, $api_key) {
+        $model = $this->settings['anthropic_model'] ?? 'claude-3-5-sonnet-20241022';
+
+        $api_messages = array();
+        foreach ($messages as $msg) {
+            $api_messages[] = array(
+                'role' => $msg['role'],
+                'content' => $msg['content']
+            );
+        }
+
+        // Get license key for proxy authentication
+        $license_key = $this->get_license_key();
+
+        // Prepare request in proxy format
+        $request_data = array(
+            'action' => 'anthropic',
+            'data' => array(
+                'model' => $model,
+                'max_tokens' => 4096,
+                'temperature' => 0.3,
+                'system' => $system_message,
+                'messages' => $api_messages,
+                'web_search_enabled' => false
+            ),
+            'systemMessage' => $system_message
+        );
+
+        $headers = array(
+            'Content-Type' => 'application/json'
+        );
+
+        // Add license key if available
+        if ($license_key) {
+            $headers['X-License-Key'] = $license_key;
+        }
+
+        // Add user API key if provided
+        if ($api_key) {
+            $headers['X-User-Api-Key'] = $api_key;
+        }
+
+        $response = wp_remote_post($this->anthropic_proxy_url, array(
+            'timeout' => 60,
+            'headers' => $headers,
+            'body' => json_encode($request_data)
+        ));
+
+        if (is_wp_error($response)) {
+            throw new Exception('Anthropic API error: ' . $response->get_error_message());
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+
+        // Handle proxy response format
+        if (isset($body['data']) && isset($body['data']['content'][0]['text'])) {
+            $content = $body['data']['content'][0]['text'];
+        } else {
+            $content = $body['content'][0]['text'] ?? '';
+        }
+
+        return array('response' => $content);
+    }
+
+    /**
+     * Simple OpenAI API call without tools (for Bricks generation)
+     *
+     * @param array $messages Conversation messages
+     * @param string $system_message System prompt
+     * @param string $api_key API key
+     * @return array Response
+     */
+    private function call_openai_simple($messages, $system_message, $api_key) {
+        $model = $this->settings['openai_model'] ?? 'gpt-4o';
+
+        $api_messages = array(
+            array('role' => 'system', 'content' => $system_message)
+        );
+
+        foreach ($messages as $msg) {
+            $api_messages[] = array(
+                'role' => $msg['role'],
+                'content' => $msg['content']
+            );
+        }
+
+        // Get license key for proxy authentication
+        $license_key = $this->get_license_key();
+
+        // Prepare request in proxy format
+        $request_data = array(
+            'action' => 'openai_responses',
+            'data' => array(
+                'model' => $model,
+                'messages' => $api_messages,
+                'temperature' => 0.3,
+                'max_tokens' => 4096,
+                'web_search_enabled' => false
+            ),
+            'systemMessage' => $system_message
+        );
+
+        $headers = array(
+            'Content-Type' => 'application/json'
+        );
+
+        // Add license key if available
+        if ($license_key) {
+            $headers['X-License-Key'] = $license_key;
+        }
+
+        // Add user API key if provided
+        if ($api_key) {
+            $headers['X-User-Api-Key'] = $api_key;
+        }
+
+        $response = wp_remote_post($this->openai_proxy_url, array(
+            'timeout' => 60,
+            'headers' => $headers,
+            'body' => json_encode($request_data)
+        ));
+
+        if (is_wp_error($response)) {
+            throw new Exception('OpenAI API error: ' . $response->get_error_message());
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+
+        // Handle proxy response format
+        if (isset($body['data']) && isset($body['data']['choices'][0]['message']['content'])) {
+            $content = $body['data']['choices'][0]['message']['content'];
+        } else {
+            $content = $body['choices'][0]['message']['content'] ?? '';
+        }
+
+        return array('response' => $content);
+    }
+
+    /**
+     * Simple OpenRouter API call without tools (for Bricks generation)
+     *
+     * @param array $messages Conversation messages
+     * @param string $system_message System prompt
+     * @param string $api_key API key
+     * @return array Response
+     */
+    private function call_openrouter_simple($messages, $system_message, $api_key) {
+        $model = $this->settings['openrouter_model'] ?? 'anthropic/claude-3.5-sonnet';
+
+        error_log('OPENROUTER SIMPLE: Using model: ' . $model);
+
+        $api_messages = array(
+            array('role' => 'system', 'content' => $system_message)
+        );
+
+        foreach ($messages as $msg) {
+            $api_messages[] = array(
+                'role' => $msg['role'],
+                'content' => $msg['content']
+            );
+        }
+
+        error_log('OPENROUTER SIMPLE: Message count: ' . count($api_messages));
+
+        // Get license key for proxy authentication
+        $license_key = $this->get_license_key();
+        error_log('OPENROUTER SIMPLE: License key retrieved: ' . ($license_key ? 'YES (length: ' . strlen($license_key) . ')' : 'NO'));
+
+        // Prepare request in proxy format
+        $request_data = array(
+            'action' => 'openrouter',
+            'data' => array(
+                'model' => $model,
+                'messages' => $api_messages,
+                'temperature' => 0.3,
+                'max_tokens' => 4096,
+                'web_search_enabled' => false
+            ),
+            'systemMessage' => $system_message
+        );
+
+        $headers = array(
+            'Content-Type' => 'application/json'
+        );
+
+        // Add license key if available
+        if ($license_key) {
+            $headers['X-License-Key'] = $license_key;
+        }
+
+        // Add user API key if provided
+        if ($api_key) {
+            $headers['X-User-Api-Key'] = $api_key;
+        }
+
+        error_log('OPENROUTER SIMPLE: Making API call to: ' . $this->openrouter_proxy_url);
+
+        $response = wp_remote_post($this->openrouter_proxy_url, array(
+            'timeout' => 60,
+            'headers' => $headers,
+            'body' => json_encode($request_data)
+        ));
+
+        if (is_wp_error($response)) {
+            error_log('OPENROUTER SIMPLE ERROR: ' . $response->get_error_message());
+            throw new Exception('OpenRouter API error: ' . $response->get_error_message());
+        }
+
+        $response_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+
+        error_log('OPENROUTER SIMPLE: Response code: ' . $response_code);
+        error_log('OPENROUTER SIMPLE: Response body length: ' . strlen($response_body));
+        error_log('OPENROUTER SIMPLE: Response body preview: ' . substr($response_body, 0, 500));
+
+        $body = json_decode($response_body, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            error_log('OPENROUTER SIMPLE: JSON decode error: ' . json_last_error_msg());
+            throw new Exception('OpenRouter JSON decode error: ' . json_last_error_msg());
+        }
+
+        if (isset($body['error'])) {
+            $error_msg = is_string($body['error']) ? $body['error'] : ($body['error']['message'] ?? json_encode($body['error']));
+            error_log('OPENROUTER SIMPLE: API returned error: ' . $error_msg);
+            throw new Exception('OpenRouter API error: ' . $error_msg);
+        }
+
+        // Handle proxy response format
+        if (isset($body['data']) && isset($body['data']['choices'][0]['message']['content'])) {
+            $content = $body['data']['choices'][0]['message']['content'];
+        } else {
+            $content = $body['choices'][0]['message']['content'] ?? '';
+        }
+
+        error_log('OPENROUTER SIMPLE: Extracted content length: ' . strlen($content));
+
+        return array('response' => $content);
     }
 
 

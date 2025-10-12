@@ -332,19 +332,40 @@ const FloatingChat = ({ pluginData }) => {
   };
 
   const handleInsertIntoBricks = () => {
-    if (typeof window.magicAssistantInsertHTML === 'function' && latestAiResponse.html) {
-      window.magicAssistantInsertHTML(latestAiResponse.html, latestAiResponse.css, latestAiResponse.js);
-      // Optional: Close the drawer after insertion
+    // Extract content from wrapped structure (new format) or use array directly (backwards compatibility)
+    const bricksContent = latestAiResponse.bricks_structure?.content || latestAiResponse.bricks_structure;
+    const globalClasses = latestAiResponse.bricks_structure?.globalClasses || latestAiResponse.globalClasses || [];
+
+    console.log('🔍 BRICKS INSERT DEBUG:', {
+      hasBricksStructure: !!latestAiResponse.bricks_structure,
+      structureLength: Array.isArray(bricksContent) ? bricksContent.length : 'N/A',
+      hasHTML: !!latestAiResponse.html,
+      hasInsertFunction: typeof window.magicAssistantInsertStructure === 'function',
+      fullResponse: latestAiResponse
+    });
+
+    // Prefer using the pre-converted bricks_structure (avoids creating global classes)
+    if (typeof window.magicAssistantInsertStructure === 'function' && bricksContent) {
+      console.log('✅ Using pre-converted Bricks structure with', bricksContent.length, 'elements');
+      window.magicAssistantInsertStructure(bricksContent, globalClasses);
       closeDrawer();
-    } else if (!latestAiResponse.html) {
-      alert('No AI-generated HTML to insert. Please generate a section first.');
+    } else if (typeof window.magicAssistantInsertHTML === 'function' && latestAiResponse.html) {
+      // Fallback to HTML parsing (will create global classes from Tailwind)
+      console.warn('⚠️ Using fallback HTML parser. Bricks structure not available.');
+      window.magicAssistantInsertHTML(latestAiResponse.html, latestAiResponse.css, latestAiResponse.js);
+      closeDrawer();
+    } else if (!latestAiResponse.html && !latestAiResponse.bricks_structure) {
+      alert('No AI-generated content to insert. Please generate a section first.');
     } else {
-      alert('MagicAssistant Bricks integration not found!');
+      alert('MagicAssistant Bricks integration not found! Make sure you are in Bricks Builder.');
     }
   };
 
   // Check if we are inside the Bricks editor
   const isBricksEditor = new URLSearchParams(window.location.search).get('bricks') === 'run';
+
+  // Show Bricks mode indicator
+  const showBricksIndicator = isBricksEditor && isOpen;
 
   // Get button background color style
   const getButtonStyle = () => {
@@ -469,7 +490,14 @@ const FloatingChat = ({ pluginData }) => {
         
         {/* Drawer Header */}
         <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900">
-          <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">MagicAssistant</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">MagicAssistant</h2>
+            {isBricksEditor && (
+              <span className="px-2 py-1 text-xs font-semibold bg-orange-500 text-white rounded">
+                Bricks Mode
+              </span>
+            )}
+          </div>
           <div className="flex items-center space-x-2">
             <Button size="xs" color="light" onClick={closeDrawer}>
               Close
@@ -480,7 +508,12 @@ const FloatingChat = ({ pluginData }) => {
         {/* Drawer Content */}
         <div className="h-[calc(100%-80px)] overflow-hidden">
           <ToastProvider position="top-right" maxToasts={3}>
-            <ChatInterface adminData={pluginData} isDrawerMode={true} onAiResponseUpdate={handleAiResponseUpdate} />
+            <ChatInterface
+              adminData={pluginData}
+              isDrawerMode={true}
+              isBricksMode={isBricksEditor}
+              onAiResponseUpdate={handleAiResponseUpdate}
+            />
           </ToastProvider>
         </div>
       </div>
