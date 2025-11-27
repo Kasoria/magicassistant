@@ -6,9 +6,10 @@ import ConfirmationModal from './ConfirmationModal'
 import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import ContentMode from './ContentMode'
+import { parseHtmlStringToObjectArray, getDefaultParserStates, generateId } from '../utils/bricksParser'
+import { insertBricksStructure, isBricksBuilder } from '../utils/bricksInserter'
 
 const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, onAiResponseUpdate }) => {
-  console.log('🧱 ChatInterface mounted - isBricksMode:', isBricksMode, 'URL:', window.location.href);
   const [isContentMode, setIsContentMode] = useState(false)
   // Helper function to add UTM parameters to Unsplash links
   const addUnsplashUTMParams = (url) => {
@@ -18,7 +19,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
   }
   const [messages, setMessages] = useState(() => {
     const welcomeContent = isBricksMode
-      ? '🧱 **Bricks Mode Activated!**\n\nI\'m ready to help you build beautiful Bricks sections. Just describe what you want to create:\n\n• Hero sections\n• Pricing tables\n• Feature grids\n• CTA sections\n• Contact forms\n• And much more!\n\nI\'ll generate professional designs with Tailwind CSS and convert them to native Bricks elements for you.'
+      ? '🧱 **Bricks Mode Activated!**\n\nI\'m ready to help you build beautiful Bricks sections using our component library!\n\n**I can:**\n• Search and retrieve pre-built components from the library\n• Insert components directly into your Bricks canvas\n• Generate new designs when you need something custom\n\n**Just ask me:**\n• "Find a hero section component for SaaS"\n• "Insert a pricing table component"\n• "Show me feature section components with buttons"\n• "Create a custom CTA section"\n\nI\'ll use our pre-built component library first, then generate custom designs when needed!'
       : 'Hello! I\'m your WordPress AI assistant. I can help you create content, manage your site, and answer questions. What would you like to do today?';
 
     return [{
@@ -81,6 +82,69 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
   const [webSearchEnabled, setWebSearchEnabled] = useState(false)
   const [selectedAgentId, setSelectedAgentId] = useState(null)
   const [availableAgents, setAvailableAgents] = useState([])
+  
+  // Bricks framework selector state
+  // Load saved framework from localStorage, default to Native
+  const [selectedFramework, setSelectedFramework] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('magicassistant_bricks_framework');
+      return saved || 'Native';
+    }
+    return 'Native';
+  })
+  
+  // Image generation states
+  const [imageGenerationMode, setImageGenerationMode] = useState(false)
+  const [imageGenProvider, setImageGenProvider] = useState('openai')
+  const [imageGenModel, setImageGenModel] = useState('dall-e-3')
+  const [imageAspectRatio, setImageAspectRatio] = useState('1024x1024')
+  const [imageOutputFormat, setImageOutputFormat] = useState('png')
+  
+  // Bricks site context states
+  const [siteContextEnabled, setSiteContextEnabled] = useState(() => {
+    if (typeof window !== 'undefined' && isBricksMode) {
+      const saved = localStorage.getItem('magicassistant_bricks_site_context_enabled');
+      return saved === 'true';
+    }
+    return false;
+  })
+  const [selectedSiteContextPages, setSelectedSiteContextPages] = useState(() => {
+    if (typeof window !== 'undefined' && isBricksMode) {
+      const saved = localStorage.getItem('magicassistant_bricks_site_context_pages');
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch (e) {
+          return [];
+        }
+      }
+    }
+    return [];
+  })
+  const [siteMetaTitle, setSiteMetaTitle] = useState('')
+  const [siteMetaDescription, setSiteMetaDescription] = useState('')
+  const [isSiteContextModalOpen, setIsSiteContextModalOpen] = useState(false)
+  
+  // Helper: Sanitize message history to prevent large base64 images from being sent
+  const sanitizeMessageHistory = (messages) => {
+    return messages
+      .filter(msg => msg.role !== 'system')
+      .map(msg => {
+        // If this is an image generation message, replace the content with a simple description
+        if (msg.isImageGeneration) {
+          const imageCount = msg.generatedImages?.length || 1
+          return {
+            role: msg.role,
+            content: `[Generated ${imageCount} image${imageCount > 1 ? 's' : ''} using AI]`
+          }
+        }
+        // For regular messages, use fullContent or content
+        return {
+          role: msg.role,
+          content: msg.fullContent || msg.content
+        }
+      })
+  }
   
   // Helper: reset lightbox state when opening
   const resetLightboxState = () => {
@@ -187,6 +251,89 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
     }
   }
 
+  // Helper: extract Bricks component data from tool results
+  // Returns an array of components (can be empty, or contain one or more components)
+  const extractBricksComponentFromToolData = (debugToolData) => {
+    if (!debugToolData || !Array.isArray(debugToolData)) {
+      return [];
+    }
+    
+    // Helper: Parse result if it's a JSON string
+    const parseToolResult = (result) => {
+      if (!result) return null;
+      if (typeof result === 'string') {
+        try {
+          return JSON.parse(result);
+        } catch (e) {
+          console.warn('⚠️ Failed to parse tool result JSON:', e);
+          return null;
+        }
+      }
+      return result;
+    };
+    
+    // Helper: Extract component data from a component object
+    const extractComponentData = (component) => {
+      if (!component || !component.bricksJson || !Array.isArray(component.bricksJson) || component.bricksJson.length === 0) {
+        return null;
+      }
+      
+      // Extract the first element which contains content and globalClasses
+      const bricksData = component.bricksJson[0];
+      // Extract the content array (actual Bricks elements) and global classes
+      const bricksContent = bricksData?.content || bricksData; // Fallback to bricksData if no content property
+      const extractedGlobalClasses = bricksData?.globalClasses || component.globalClasses || [];
+      
+      // Ensure bricksContent is an array for insertion
+      const finalBricksStructure = Array.isArray(bricksContent) ? bricksContent : (Array.isArray(bricksData) ? bricksData : [bricksData]);
+      
+      return {
+        name: component.name || 'Bricks Component',
+        category: component.category || 'other',
+        bricksJson: finalBricksStructure, // Array of Bricks elements for insertion
+        globalClasses: extractedGlobalClasses,
+        thumbnail: component.thumbnail || null
+      };
+    };
+    
+    const components = [];
+    
+    // Collect ALL bricks_insert_component results (multiple components can be inserted)
+    for (let i = 0; i < debugToolData.length; i++) {
+      const tool = debugToolData[i];
+      if (tool.tool === 'bricks_insert_component' && tool.success) {
+        const parsedResult = parseToolResult(tool.result);
+        if (parsedResult?.component) {
+          const componentData = extractComponentData(parsedResult.component);
+          if (componentData) {
+            components.push(componentData);
+          }
+        }
+      }
+    }
+    
+    // Collect ALL bricks_get_component results that return single components (not search results)
+    for (let i = 0; i < debugToolData.length; i++) {
+      const tool = debugToolData[i];
+      if (tool.tool === 'bricks_get_component' && tool.success) {
+        const parsedResult = parseToolResult(tool.result);
+        // Make sure it's a single component object, not a search results array
+        if (parsedResult?.component && !Array.isArray(parsedResult.component) && parsedResult.component.bricksJson) {
+          const componentData = extractComponentData(parsedResult.component);
+          if (componentData) {
+            // Only add if not already added from bricks_insert_component
+            const alreadyAdded = components.some(c => c.name === componentData.name && c.category === componentData.category);
+            if (!alreadyAdded) {
+              components.push(componentData);
+            }
+          }
+        }
+      }
+    }
+    
+    return components;
+  }
+
   // Helper: extract main textual content from various response formats (Anthropic, OpenAI, etc.)
   const getTextFromResponse = (resp) => {
     if (resp == null) return ''
@@ -269,6 +416,18 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
   }, [messages])
 
   useEffect(() => {
+    if (isSiteContextModalOpen && isBricksMode) {
+      if (!siteMetaTitle && !siteMetaDescription) {
+        fetchSiteMetaData()
+      }
+      if (availablePosts.length === 0 && !loadingPosts) {
+        fetchAvailablePosts()
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSiteContextModalOpen])
+
+  useEffect(() => {
     loadSettings()
     loadChatSessions(true) // Auto-load last session only on initial mount
     loadAvailableAgents() // Load AI agents
@@ -289,7 +448,201 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
     }
     setEnableCustomSystem(savedEnableCustom)
     setPersistFiles(savedPersistFiles)
+    
+    // Load site meta data if in bricks mode
+    if (isBricksMode) {
+      fetchSiteMetaData()
+      fetchAvailablePosts()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const fetchSiteMetaData = async () => {
+    if (!isBricksMode) return
+    
+    try {
+      const response = await fetch(`${adminData.restUrl}site-meta`, {
+        headers: {
+          'X-WP-Nonce': adminData.nonces.wp_rest,
+        }
+      })
+      const data = await response.json()
+      if (data.success) {
+        setSiteMetaTitle(data.meta_title || '')
+        setSiteMetaDescription(data.meta_description || '')
+      }
+    } catch (error) {
+      console.error('Failed to fetch site meta data:', error)
+    }
+  }
+
+  const saveSiteContextSettings = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('magicassistant_bricks_site_context_enabled', siteContextEnabled.toString())
+      localStorage.setItem('magicassistant_bricks_site_context_pages', JSON.stringify(selectedSiteContextPages))
+      showSuccess('Site context settings saved!')
+    }
+  }
+
+  const MAX_SITE_CONTEXT_ITEMS = 10
+
+  const handleSiteContextPageSelect = (pageId) => {
+    if (!pageId) return
+    
+    const pageIdNum = parseInt(pageId)
+    if (isNaN(pageIdNum)) return
+    
+    setSelectedSiteContextPages(prev => {
+      // If already selected, remove it
+      if (prev.includes(pageIdNum)) {
+        return prev.filter(id => id !== pageIdNum)
+      }
+      // If not selected and under limit, add it
+      if (prev.length < MAX_SITE_CONTEXT_ITEMS) {
+        return [...prev, pageIdNum]
+      }
+      // At limit, show error
+      showError(`Maximum ${MAX_SITE_CONTEXT_ITEMS} pages/posts can be selected`)
+      return prev
+    })
+  }
+
+  const renderSiteContextSettings = () => (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <svg className="w-5 h-5 text-green-600 dark:text-green-400" fill="currentColor" viewBox="0 0 20 20">
+          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+        </svg>
+        <div>
+          <h3 className="text-sm font-medium text-green-900 dark:text-green-100 leading-tight">Bricks Site Context</h3>
+          <p className="text-xs text-green-700 dark:text-green-300 leading-tight">Optionally send site info so the AI picks components that fit your niche.</p>
+        </div>
+      </div>
+      
+      <label className="flex items-center cursor-pointer select-none">
+        <input
+          type="checkbox"
+          id="siteContextEnabled"
+          checked={siteContextEnabled}
+          onChange={(e) => setSiteContextEnabled(e.target.checked)}
+          className="peer sr-only"
+        />
+        <span
+          className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+            siteContextEnabled
+              ? 'bg-green-600 border-green-600'
+              : 'bg-white border-green-500 dark:bg-gray-800 dark:border-green-400'
+          }`}
+        >
+          {siteContextEnabled && (
+            <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </span>
+        <span className="ml-2 text-sm font-medium text-green-900 dark:text-green-100">
+          Enable site context
+        </span>
+      </label>
+
+      {siteContextEnabled && (
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm font-medium text-green-900 dark:text-green-100 mb-1">
+              Pages / posts ({selectedSiteContextPages.length}/{MAX_SITE_CONTEXT_ITEMS})
+            </label>
+            <p className="text-xs text-green-700 dark:text-green-300 mb-2">Pick up to ten entries that best represent your site.</p>
+            {loadingPosts ? (
+              <div className="flex items-center justify-center p-3 bg-green-50 dark:bg-green-900/20 rounded">
+                <Spinner size="sm" />
+                <span className="ml-2 text-xs text-green-700 dark:text-green-300">Loading…</span>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {availablePosts.length > 0 ? (
+                  <>
+                    {selectedSiteContextPages.map((selectedId, index) => (
+                      <div key={index} className="flex items-center gap-2">
+                        <select
+                          value={selectedId}
+                          onChange={(e) => {
+                            const newPages = [...selectedSiteContextPages]
+                            newPages[index] = parseInt(e.target.value)
+                            setSelectedSiteContextPages(newPages)
+                          }}
+                          className="flex-1 p-2 border border-green-300 dark:border-green-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-green-500 text-sm"
+                        >
+                          <option value="">Select…</option>
+                          {availablePosts.map(post => (
+                            <option key={post.id} value={post.id}>
+                              {post.title} ({post.type === 'page' ? 'Page' : 'Post'})
+                            </option>
+                          ))}
+                        </select>
+                        <Button
+                          size="xs"
+                          color="failure"
+                          onClick={() => {
+                            setSelectedSiteContextPages(prev => prev.filter((_, i) => i !== index))
+                          }}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    ))}
+                    {selectedSiteContextPages.length < MAX_SITE_CONTEXT_ITEMS && (
+                      <select
+                        value=""
+                        onChange={(e) => handleSiteContextPageSelect(e.target.value)}
+                        className="w-full p-2 border border-green-300 dark:border-green-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-green-500 text-sm"
+                      >
+                        <option value="">+ Add page/post…</option>
+                        {availablePosts
+                          .filter(post => !selectedSiteContextPages.includes(post.id))
+                          .map(post => (
+                            <option key={post.id} value={post.id}>
+                              {post.title} ({post.type === 'page' ? 'Page' : 'Post'})
+                            </option>
+                          ))}
+                      </select>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-xs text-green-700 dark:text-green-300">No pages or posts found.</p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {(siteMetaTitle || siteMetaDescription) && (
+            <div className="bg-green-100/80 dark:bg-green-800/30 rounded p-3 space-y-1">
+              <p className="text-xs font-medium text-green-900 dark:text-green-100">Site meta</p>
+              {siteMetaTitle && (
+                <p className="text-xs text-green-800 dark:text-green-200">
+                  <span className="font-semibold">Title:</span> {siteMetaTitle}
+                </p>
+              )}
+              {siteMetaDescription && (
+                <p className="text-xs text-green-800 dark:text-green-200">
+                  <span className="font-semibold">Description:</span> {siteMetaDescription}
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="flex justify-end">
+            <Button
+              onClick={saveSiteContextSettings}
+              size="sm"
+              className="bg-green-600 hover:bg-green-700 text-white"
+            >
+              Save site context
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 
   const loadSettings = async () => {
     try {
@@ -455,7 +808,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
       content: "Initializing request...", // Will be updated by real status events
       timestamp: new Date(),
       provider: 'openai', // Default, will be updated
-      agent_mode: forceAgentMode,
+      agent_mode: isBricksMode ? 'bricks' : forceAgentMode, // Set 'bricks' for Bricks mode, otherwise use forceAgentMode
       tool_calls_count: 0,
       debug_tool_data: [],
       tokens_used: 0,
@@ -483,11 +836,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
       // Create the streaming request body
       const requestBody = {
         message: apiMessageContent,
-        history: messages.filter(msg => msg.role !== 'system').map(msg => ({
-          role: msg.role,
-          content: msg.fullContent || msg.content
-        })),
-        agent_mode: forceAgentMode,
+        history: sanitizeMessageHistory(messages),
+        agent_mode: isBricksMode ? 'bricks' : forceAgentMode, // Set 'bricks' for Bricks mode, otherwise use forceAgentMode
         session_id: currentSessionId,
         page_url: pageContext.url,
         page_context: pageContext,
@@ -501,18 +851,15 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
         custom_system_message: enableCustomSystem && customSystemMessage ? customSystemMessage : undefined,
         web_search_enabled: webSearchEnabled,
         agent_id: selectedAgentId,
-        streaming: true // Flag to enable streaming
+        streaming: true, // Flag to enable streaming
+        ...(isBricksMode && siteContextEnabled ? {
+          site_context_enabled: true,
+          site_context_pages: selectedSiteContextPages,
+          site_meta_title: siteMetaTitle,
+          site_meta_description: siteMetaDescription
+        } : {})
       }
       
-      // DEBUG: Log the request body
-      console.log('🔍 ChatInterface DEBUG - Streaming request body:', {
-        agent_mode: forceAgentMode,
-        session_id: currentSessionId,
-        agent_id: selectedAgentId,
-        custom_system_message: enableCustomSystem && customSystemMessage ? 'PROVIDED' : 'NULL',
-        message_preview: apiMessageContent.substring(0, 100)
-      })
-
       // Use fetch for streaming with proper POST data since EventSource doesn't support POST
       const response = await fetch(`${adminData.restUrl}chat-stream`, {
         method: 'POST',
@@ -618,6 +965,42 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
                   // Extract HTML, CSS, JS from final content
                   const { html: extractedHtml, css: extractedCss, js: extractedJs } = getPartsFromResponse(accumulatedContent);
                   
+                  // For Bricks mode, check if we have component data from the library
+                  let bricksStructure = null;
+                  let bricksGlobalClasses = [];
+                  
+                  // Check both data.debug_tool_data and responseMetadata.debug_tool_data
+                  const toolData = data.debug_tool_data || responseMetadata.debug_tool_data || [];
+                  
+                  if (isBricksMode && toolData && Array.isArray(toolData) && toolData.length > 0) {
+                    const components = extractBricksComponentFromToolData(toolData);
+                    if (components && components.length > 0) {
+                      // Combine all components into a single structure for now (we'll store them separately in message)
+                      // For insertion, we'll handle each component separately
+                      const allElements = [];
+                      const allGlobalClasses = [];
+                      components.forEach((comp) => {
+                        allElements.push(...comp.bricksJson);
+                        allGlobalClasses.push(...(comp.globalClasses || []));
+                      });
+                      bricksStructure = allElements;
+                      bricksGlobalClasses = allGlobalClasses;
+                      // Store components array for thumbnail display
+                      responseMetadata.components = components;
+                    } else if (extractedHtml) {
+                      // Fallback to HTML parsing (legacy flow)
+                      try {
+                        const rootId = generateId();
+                        const parentId = 0;
+                        const parserStates = getDefaultParserStates();
+                        const cmValues = { html: extractedHtml, css: extractedCss, js: extractedJs };
+                        bricksStructure = parseHtmlStringToObjectArray(rootId, parentId, cmValues, parserStates, bricksGlobalClasses);
+                      } catch (parseError) {
+                        console.error('❌ Streaming: Error parsing HTML:', parseError);
+                      }
+                    }
+                  }
+                  
                   // Final update with all metadata and extracted parts
                   setMessages(prev => {
                     const newMessages = [...prev];
@@ -630,12 +1013,15 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
                         cost: data.cost || 0,
                         response_time: data.response_time || 0,
                         reasoning: data.reasoning || null,
-                        debug_tool_data: data.debug_tool_data || [],
+                        debug_tool_data: data.debug_tool_data || responseMetadata.debug_tool_data || [],
                         processing_steps: data.processing_steps || [],
                         isStreaming: false,
                         html: extractedHtml,
                         css: extractedCss,
-                        js: extractedJs
+                        js: extractedJs,
+                        bricks_structure: isBricksMode ? (bricksStructure || null) : undefined,
+                        globalClasses: isBricksMode ? bricksGlobalClasses : undefined,
+                        components: isBricksMode && responseMetadata.components ? responseMetadata.components : undefined
                       };
                     }
                     return newMessages;
@@ -653,13 +1039,25 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
                     setCreditsInfo(data.credits);
                   }
 
-                  // Provide HTML back to parent if present
-                  if (onAiResponseUpdate && extractedHtml) {
-                    onAiResponseUpdate({
-                      html: extractedHtml,
-                      css: extractedCss,
-                      js: extractedJs
-                    });
+                  // Provide data back to parent component
+                  if (onAiResponseUpdate) {
+                    if (isBricksMode && bricksStructure) {
+                      // Bricks mode with component or parsed structure
+                      onAiResponseUpdate({
+                        html: extractedHtml,
+                        css: extractedCss,
+                        js: extractedJs,
+                        bricks_structure: bricksStructure,
+                        globalClasses: bricksGlobalClasses
+                      });
+                    } else if (extractedHtml) {
+                      // Regular HTML/CSS/JS
+                      onAiResponseUpdate({
+                        html: extractedHtml,
+                        css: extractedCss,
+                        js: extractedJs
+                      });
+                    }
                   }
 
                   // Streaming complete
@@ -716,6 +1114,59 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
     }
   }
 
+  // Helper: Detect if user wants to generate an image
+  const detectImageGenerationIntent = (message) => {
+    const imageKeywords = [
+      'generate image',
+      'create image',
+      'make image',
+      'draw image',
+      'generate picture',
+      'create picture',
+      'make picture',
+      'generate an image',
+      'create an image',
+      'make an image'
+    ]
+    
+    const lowerMessage = message.toLowerCase()
+    return imageKeywords.some(keyword => lowerMessage.includes(keyword))
+  }
+
+  // Helper: Generate image
+  const generateImage = async (prompt, provider = 'openai', model = 'dall-e-3', size = '1024x1024', format = 'png') => {
+    try {
+      const response = await fetch(`${adminData.restUrl}generate-image`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-WP-Nonce': adminData.nonces.wp_rest,
+        },
+        body: JSON.stringify({
+          prompt: prompt,
+          provider: provider,
+          model: model,
+          size: size,
+          format: format,
+          quality: 'standard',
+          style: 'vivid',
+          session_id: currentSessionId // Pass current session ID
+        })
+      })
+
+      const data = await response.json()
+
+      if (!data.success) {
+        throw new Error(data.message || 'Image generation failed')
+      }
+
+      return data
+    } catch (error) {
+      console.error('Image generation error:', error)
+      throw error
+    }
+  }
+
   const sendMessage = async () => {
     if (!inputMessage.trim() && attachedFiles.length === 0) return
     
@@ -761,10 +1212,82 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
     }
 
     setMessages(prev => [...prev, userMessage])
+    const messageToSend = inputMessage
     setInputMessage('')
     // Only clear files if persistence is disabled
     if (!persistFiles) {
       setAttachedFiles([])
+    }
+
+    // Handle image generation if mode is enabled
+    if (imageGenerationMode) {
+      setIsLoading(true)
+      try {
+        const result = await generateImage(
+          messageToSend,
+          imageGenProvider,
+          imageGenModel,
+          imageAspectRatio,
+          imageOutputFormat
+        )
+        
+        // Update session ID if this is a new session
+        if (!currentSessionId && result.session_id) {
+          setCurrentSessionId(result.session_id)
+          // Save as last opened session
+          saveLastSession(result.session_id)
+          // Refresh chat sessions list to include the new session
+          loadChatSessions()
+        }
+        
+        // Create markdown content with generated images
+        let imageContent = '🎨 **Image Generated Successfully!**\n\n'
+        
+        result.images.forEach((image, index) => {
+          const imageUrl = image.url || image.b64_json
+          if (imageUrl) {
+            // Use SEO-friendly alt text from backend or fallback
+            const altText = image.alt || `Generated Image ${index + 1}`
+            imageContent += `![${altText}](${imageUrl})\n\n`
+            if (image.revised_prompt) {
+              imageContent += `*Revised Prompt:* ${image.revised_prompt}\n\n`
+            }
+          }
+        })
+        
+        const assistantMessage = {
+          role: 'assistant',
+          content: imageContent,
+          timestamp: new Date(),
+          provider: `${imageGenProvider}-${imageGenModel}`,
+          agent_mode: false,
+          tool_calls_count: 0,
+          isError: false,
+          isImageGeneration: true,
+          generatedImages: result.images
+        }
+        
+        setMessages(prev => [...prev, assistantMessage])
+        
+        // Update credits info
+        if (result.credits) {
+          setCreditsInfo(result.credits)
+        }
+        
+        setIsLoading(false)
+        return
+      } catch (error) {
+        console.error('Image generation error:', error)
+        const errorMessage = {
+          role: 'assistant',
+          content: `Sorry, I encountered an error generating the image: ${error.message || 'Unknown error'}`,
+          timestamp: new Date(),
+          isError: true
+        }
+        setMessages(prev => [...prev, errorMessage])
+        setIsLoading(false)
+        return
+      }
     }
 
     try {
@@ -777,14 +1300,15 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
         post_id: currentPost.id || null,
         post_type: currentPost.type || null,
         post_title: currentPost.title || '',
-        context: currentPost.context || 'unknown'
+        context: currentPost.context || 'unknown',
+        ...(isBricksMode ? { bricks_framework: selectedFramework } : {})
       }
 
       // Check if streaming is enabled
       const isStreamingEnabled = settings?.streaming_enabled === true
 
-      // Disable streaming in Bricks mode - Bricks endpoint doesn't support streaming
-      if (isStreamingEnabled && !isBricksMode) {
+      // Streaming now works in Bricks mode via the regular /chat endpoint with agent_mode: 'bricks'
+      if (isStreamingEnabled) {
         // Set loading to false to ensure no loading spinner shows
         setIsLoading(false)
         // Set streaming state to disable UI during streaming
@@ -797,39 +1321,15 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
         // Only set loading state for non-streaming requests
         setIsLoading(true)
         
-        // DEBUG: Log the regular chat request
-        console.log('🔍 ChatInterface DEBUG - Regular chat request:', {
-          agent_mode: forceAgentMode,
-          session_id: currentSessionId,
-          agent_id: selectedAgentId,
-          custom_system_message: enableCustomSystem && customSystemMessage ? 'PROVIDED' : 'NULL',
-          message_preview: apiMessageContent.substring(0, 100)
-        })
-        
-        // Choose endpoint based on Bricks mode
-        const endpoint = isBricksMode ? `${adminData.restUrl}bricks/generate` : `${adminData.restUrl}chat`;
+        // Always use the /chat endpoint - Bricks mode is now handled via agent_mode: 'bricks'
+        // This ensures we use the new MCP-based component library system
+        const endpoint = `${adminData.restUrl}chat`;
 
-        console.log('=== CHAT DEBUG ===');
-        console.log('isBricksMode:', isBricksMode);
-        console.log('Endpoint:', endpoint);
-        console.log('==================');
-
-        // Prepare request body based on mode
-        const requestBody = isBricksMode ? {
-          prompt: apiMessageContent,
-          history: messages.filter(msg => msg.role !== 'system').map(msg => ({
-            role: msg.role,
-            content: msg.fullContent || msg.content
-          })),
-          session_id: currentSessionId,
-          agent_id: selectedAgentId
-        } : {
+        // Prepare request body - use consistent format for all modes
+        const requestBody = {
           message: apiMessageContent, // Use the API version with full content
-          history: messages.filter(msg => msg.role !== 'system').map(msg => ({
-            role: msg.role,
-            content: msg.fullContent || msg.content // Use fullContent for AI context if available
-          })),
-          agent_mode: forceAgentMode,
+          history: sanitizeMessageHistory(messages),
+          agent_mode: isBricksMode ? 'bricks' : forceAgentMode, // Set 'bricks' for Bricks mode, otherwise use forceAgentMode
           session_id: currentSessionId,
           page_url: pageContext.url,
           page_context: pageContext,
@@ -842,7 +1342,13 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
           })) : undefined,
           custom_system_message: enableCustomSystem && customSystemMessage ? customSystemMessage : undefined,
           web_search_enabled: webSearchEnabled,
-          agent_id: selectedAgentId
+          agent_id: selectedAgentId,
+          ...(isBricksMode && siteContextEnabled ? {
+            site_context_enabled: true,
+            site_context_pages: selectedSiteContextPages,
+            site_meta_title: siteMetaTitle,
+            site_meta_description: siteMetaDescription
+          } : {})
         };
 
         // Use regular fetch for non-streaming
@@ -869,14 +1375,87 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
           }
 
           // Handle response based on mode
-          let chatContent, extractedHtml, extractedCss, extractedJs;
+          let chatContent, extractedHtml, extractedCss, extractedJs, parsedBricksStructure, globalClasses, components;
 
           if (isBricksMode) {
-            // Bricks mode response includes converted HTML/CSS/JS
-            chatContent = data.ai_response || 'Generated Bricks structure successfully!';
-            extractedHtml = data.html || '';
-            extractedCss = data.css || '';
-            extractedJs = data.js || '';
+            // First, check if we have a component from the component library (via MCP tools)
+            components = extractBricksComponentFromToolData(data.debug_tool_data);
+            
+            if (components && components.length > 0) {
+              // Combine all components for storage, but keep track of individual components
+              const allElements = [];
+              const allGlobalClasses = [];
+              
+              components.forEach((comp) => {
+                allElements.push(...comp.bricksJson);
+                allGlobalClasses.push(...(comp.globalClasses || []));
+              });
+              
+              parsedBricksStructure = allElements;
+              globalClasses = allGlobalClasses;
+              
+              // Update chat content to reflect component usage
+              if (components.length === 1) {
+                const comp = components[0];
+                chatContent = data.ai_response || `✅ **Component Ready: "${comp.name}"**\n\nThis component is ready to insert into your Bricks canvas. Click the "Insert into Bricks" button below!`;
+                if (comp.category) {
+                  chatContent += `\n\n**Component Details:**\n- Category: ${comp.category}\n- ${comp.bricksJson.length} Bricks elements\n- ${comp.globalClasses.length} CSS classes`;
+                }
+              } else {
+                chatContent = data.ai_response || `✅ **${components.length} Components Ready**\n\nAll components are ready to insert into your Bricks canvas. Click the "Insert into Bricks" button below to insert all components at once!`;
+                chatContent += `\n\n**Components:**\n${components.map((comp, idx) => {
+                  return `${idx + 1}. ${comp.name} (${comp.category || 'other'}) - ${comp.bricksJson.length} elements, ${comp.globalClasses.length} classes`;
+                }).join('\n')}`;
+              }
+              
+              extractedHtml = '';
+              extractedCss = '';
+              extractedJs = '';
+            } else {
+              // Fallback: Bricks mode response includes converted HTML/CSS/JS (legacy flow)
+              chatContent = data.ai_response || 'Generated Bricks structure successfully!';
+              extractedHtml = data.html || '';
+              extractedCss = data.css || '';
+              extractedJs = data.js || '';
+
+              // Parse HTML into Bricks structure if we have HTML
+              if (extractedHtml) {
+                try {
+                  // Generate IDs for root and parent
+                  const rootId = generateId();
+                  const parentId = 0; // Root level insertion
+                  
+                  // Get default parser states
+                  const parserStates = getDefaultParserStates();
+                  
+                  // Initialize global classes array (will be populated by parser)
+                  globalClasses = [];
+                  
+                  // Parse HTML into Bricks elements array
+                  const cmValues = {
+                    html: extractedHtml,
+                    css: extractedCss,
+                    js: extractedJs
+                  };
+                  
+                  parsedBricksStructure = parseHtmlStringToObjectArray(
+                    rootId,
+                    parentId,
+                    cmValues,
+                    parserStates,
+                    globalClasses
+                  );
+                  
+                  // Add success message with stats
+                  chatContent += `\n\n**Structure Generated:**\n- ${parsedBricksStructure.length} Bricks elements\n- ${globalClasses.length} CSS classes\n- ${extractedCss ? 'Includes CSS styling' : 'No CSS'}\n- ${extractedJs ? 'Includes JavaScript' : 'No JavaScript'}`;
+                } catch (parseError) {
+                  console.error('❌ Error parsing HTML:', parseError);
+                  chatContent += '\n\n⚠️ Warning: HTML was generated but could not be parsed into Bricks structure. You can still use the raw HTML/CSS.';
+                  parsedBricksStructure = null;
+                  globalClasses = [];
+                }
+              }
+            }
           } else {
             // Regular chat mode
             const responseContent = data.response;
@@ -902,15 +1481,26 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
             html: extractedHtml,
             css: extractedCss,
             js: extractedJs,
-            bricks_structure: isBricksMode ? data.bricks_structure : undefined
-          }
-          setMessages(prev => [...prev, assistantMessage])
+          bricks_structure: isBricksMode ? parsedBricksStructure : undefined,
+          globalClasses: isBricksMode ? globalClasses : undefined,
+          components: isBricksMode && components.length > 0 ? components : undefined // Store components with thumbnails
+        }
+        setMessages(prev => [...prev, assistantMessage])
           // Update credit info from response
           if (data.credits) {
             setCreditsInfo(data.credits)
           }
-          // Provide HTML back to parent (e.g., drawer) if present
-          if (onAiResponseUpdate && extractedHtml) {
+          // Provide parsed Bricks structure back to parent (e.g., Bricks builder) if present
+          if (onAiResponseUpdate && isBricksMode && parsedBricksStructure) {
+            onAiResponseUpdate({
+              html: extractedHtml,
+              css: extractedCss,
+              js: extractedJs,
+              bricks_structure: parsedBricksStructure,
+              globalClasses: globalClasses
+            });
+          } else if (onAiResponseUpdate && extractedHtml) {
+            // Fallback for non-Bricks mode or if parsing failed
             onAiResponseUpdate({
               html: extractedHtml,
               css: extractedCss,
@@ -1037,6 +1627,36 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
                 saveAsFeaturedImage(src, '', alt || 'AI Generated Image', '', '')
               }
               
+              const handleSaveToLibrary = async () => {
+                try {
+                  // Try to find the generated image data to get proper title
+                  const currentMsg = messages.find(m => m.generatedImages?.some(img => img.url === src))
+                  const imageData = currentMsg?.generatedImages?.find(img => img.url === src)
+                  
+                  const resp = await fetch(`${adminData.restUrl}save-to-media-library`, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'X-WP-Nonce': adminData.nonces.wp_rest,
+                    },
+                    body: JSON.stringify({
+                      image_url: src,
+                      alt: imageData?.alt || alt || 'AI Generated Image',
+                      title: imageData?.title || alt || 'AI Generated Image'
+                    }),
+                  })
+                  const data = await resp.json()
+                  if (data.success) {
+                    showSuccess(data.message || 'Image saved to Media Library!')
+                  } else {
+                    showError(data.message || 'Failed to save image')
+                  }
+                } catch (err) {
+                  console.error('Save to media library error', err)
+                  showError('Failed to save image to Media Library')
+                }
+              }
+              
               return (
                 <div className="inline-block my-4">
                   <img 
@@ -1045,12 +1665,20 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
                     className="rounded-lg shadow max-w-full block cursor-pointer hover:opacity-75 transition-opacity" 
                     onClick={handleImageClick}
                   />
-                  <button
-                    onClick={handleSaveAsFeatured}
-                    className="mt-2 inline-flex items-center gap-1 text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded"
-                  >
-                    Set as Featured
-                  </button>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      onClick={handleSaveToLibrary}
+                      className="inline-flex items-center gap-1 text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded"
+                    >
+                      Save to Library
+                    </button>
+                    <button
+                      onClick={handleSaveAsFeatured}
+                      className="inline-flex items-center gap-1 text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded"
+                    >
+                      Set as Featured
+                    </button>
+                  </div>
                 </div>
               )
             }
@@ -1506,7 +2134,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
         post_id: currentPost.id || null,
         post_type: currentPost.type || null,
         post_title: currentPost.title || '',
-        context: currentPost.context || 'unknown'
+        context: currentPost.context || 'unknown',
+        ...(isBricksMode ? { bricks_framework: selectedFramework } : {})
       }
 
       const response = await fetch(`${adminData.restUrl}chat`, {
@@ -1518,34 +2147,127 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
         },
         body: JSON.stringify({
           message: editingMessageContent.trim(),
-          history: messagesUpToEdit.filter(msg => msg.role !== 'system').map(msg => ({
-            role: msg.role,
-            content: msg.fullContent || msg.content // Use fullContent for AI context if available
-          })),
-          agent_mode: forceAgentMode,
+          history: sanitizeMessageHistory(messagesUpToEdit),
+          agent_mode: isBricksMode ? 'bricks' : forceAgentMode, // Set 'bricks' for Bricks mode, otherwise use forceAgentMode
           session_id: currentSessionId,
           is_message_edit: true,
           truncate_at_message: editingMessageIndex,
           page_url: pageContext.url,
           page_context: pageContext,
           web_search_enabled: webSearchEnabled,
-          agent_id: selectedAgentId
+          agent_id: selectedAgentId,
+          ...(isBricksMode && siteContextEnabled ? {
+            site_context_enabled: true,
+            site_context_pages: selectedSiteContextPages,
+            site_meta_title: siteMetaTitle,
+            site_meta_description: siteMetaDescription
+          } : {})
         })
       })
 
       const data = await response.json()
 
       if (data.success) {
-        const responseContent = data.response;
-        const chatContent = getTextFromResponse(responseContent)
-        const { html: extractedHtml, css: extractedCss, js: extractedJs } = getPartsFromResponse(responseContent)
+        // Handle response based on mode
+        let chatContent, extractedHtml, extractedCss, extractedJs, parsedBricksStructure, globalClasses, components;
+
+        if (isBricksMode) {
+          // First, check if we have a component from the component library (via MCP tools)
+          components = extractBricksComponentFromToolData(data.debug_tool_data);
+          
+          if (components && components.length > 0) {
+            // Combine all components for storage, but keep track of individual components
+            const allElements = [];
+            const allGlobalClasses = [];
+            
+            components.forEach((comp) => {
+              allElements.push(...comp.bricksJson);
+              allGlobalClasses.push(...(comp.globalClasses || []));
+            });
+            
+            parsedBricksStructure = allElements;
+            globalClasses = allGlobalClasses;
+            
+            // Update chat content to reflect component usage
+            if (components.length === 1) {
+              const comp = components[0];
+              chatContent = data.response || `✅ **Component Ready: "${comp.name}"**\n\nThis component is ready to insert into your Bricks canvas. Click the "Insert into Bricks" button below!`;
+              if (comp.category) {
+                chatContent += `\n\n**Component Details:**\n- Category: ${comp.category}\n- ${comp.bricksJson.length} Bricks elements\n- ${comp.globalClasses.length} CSS classes`;
+              }
+            } else {
+              chatContent = data.response || `✅ **${components.length} Components Ready**\n\nAll components are ready to insert into your Bricks canvas. Click the "Insert into Bricks" button below to insert all components at once!`;
+              chatContent += `\n\n**Components:**\n${components.map((comp, idx) => {
+                return `${idx + 1}. ${comp.name} (${comp.category || 'other'}) - ${comp.bricksJson.length} elements, ${comp.globalClasses.length} classes`;
+              }).join('\n')}`;
+            }
+            
+            extractedHtml = '';
+            extractedCss = '';
+            extractedJs = '';
+          } else {
+            // Fallback: Bricks mode response includes converted HTML/CSS/JS (legacy flow)
+            const responseContent = data.response;
+            chatContent = getTextFromResponse(responseContent);
+            const parts = getPartsFromResponse(responseContent);
+            extractedHtml = parts.html;
+            extractedCss = parts.css;
+            extractedJs = parts.js;
+
+            // Parse HTML into Bricks structure if we have HTML
+            if (extractedHtml) {
+              try {
+                // Generate IDs for root and parent
+                const rootId = generateId();
+                const parentId = 0; // Root level insertion
+                
+                // Get default parser states
+                const parserStates = getDefaultParserStates();
+                
+                // Initialize global classes array (will be populated by parser)
+                globalClasses = [];
+                
+                // Parse HTML into Bricks elements array
+                const cmValues = {
+                  html: extractedHtml,
+                  css: extractedCss,
+                  js: extractedJs
+                };
+                
+                parsedBricksStructure = parseHtmlStringToObjectArray(
+                  rootId,
+                  parentId,
+                  cmValues,
+                  parserStates,
+                  globalClasses
+                );
+                
+                // Add success message with stats
+                chatContent += `\n\n**Structure Generated:**\n- ${parsedBricksStructure.length} Bricks elements\n- ${globalClasses.length} CSS classes\n- ${extractedCss ? 'Includes CSS styling' : 'No CSS'}\n- ${extractedJs ? 'Includes JavaScript' : 'No JavaScript'}`;
+              } catch (parseError) {
+                console.error('❌ Error parsing HTML:', parseError);
+                chatContent += '\n\n⚠️ Warning: HTML was generated but could not be parsed into Bricks structure. You can still use the raw HTML/CSS.';
+                parsedBricksStructure = null;
+                globalClasses = [];
+              }
+            }
+          }
+        } else {
+          // Regular chat mode
+          const responseContent = data.response;
+          chatContent = getTextFromResponse(responseContent);
+          const parts = getPartsFromResponse(responseContent);
+          extractedHtml = parts.html;
+          extractedCss = parts.css;
+          extractedJs = parts.js;
+        }
 
         const assistantMessage = {
           role: 'assistant',
           content: chatContent,
           timestamp: new Date(),
           provider: data.provider,
-          agent_mode: data.agent_mode,
+          agent_mode: isBricksMode ? 'bricks' : (data.agent_mode || forceAgentMode),
           tool_calls_count: data.tool_calls_count || 0,
           debug_tool_data: data.debug_tool_data || [],
           tokens_used: data.tokens_used,
@@ -1554,9 +2276,30 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
           isError: false,
           html: extractedHtml,
           css: extractedCss,
-          js: extractedJs
+          js: extractedJs,
+          bricks_structure: isBricksMode ? parsedBricksStructure : undefined,
+          globalClasses: isBricksMode ? globalClasses : undefined,
+          components: isBricksMode && components.length > 0 ? components : undefined // Store components with thumbnails
         }
         setMessages(prev => [...prev, assistantMessage])
+        
+        // Provide parsed Bricks structure back to parent (e.g., Bricks builder) if present
+        if (onAiResponseUpdate && isBricksMode && parsedBricksStructure) {
+          onAiResponseUpdate({
+            html: extractedHtml,
+            css: extractedCss,
+            js: extractedJs,
+            bricks_structure: parsedBricksStructure,
+            globalClasses: globalClasses
+          });
+        } else if (onAiResponseUpdate && extractedHtml) {
+          // Fallback for non-Bricks mode or if parsing failed
+          onAiResponseUpdate({
+            html: extractedHtml,
+            css: extractedCss,
+            js: extractedJs
+          });
+        }
       } else {
         const errorMessage = {
           role: 'assistant',
@@ -1764,7 +2507,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
   const insertMessageHtml = (msg) => {
     // Extract content from wrapped structure (new format) or use array directly (backwards compatibility)
     const bricksContent = msg.bricks_structure?.content || msg.bricks_structure;
-    const globalClasses = msg.bricks_structure?.globalClasses || msg.globalClasses || [];
+    // Try multiple extraction paths: direct globalClasses field, nested in bricks_structure, or fallback
+    const globalClasses = msg.globalClasses || msg.bricks_structure?.globalClasses || [];
 
     // Prefer using the pre-converted bricks_structure (avoids creating global classes)
     if (typeof window.magicAssistantInsertStructure === 'function' && bricksContent) {
@@ -2291,9 +3035,34 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
                     </div>
                   </div>
                 ) : (
-                  <div className={`${message.isError ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'} ${message.isStreaming ? 'opacity-60 italic' : ''}`}>
-                    {formatMessage(message.content)}
-                  </div>
+                  <>
+                    {/* Component Thumbnails */}
+                    {message.components && message.components.length > 0 && (
+                      <div className="mb-4 flex flex-wrap gap-3">
+                        {message.components.map((comp, compIdx) => (
+                          comp.thumbnail && (
+                            <div key={compIdx} className="relative group">
+                              <img
+                                src={comp.thumbnail}
+                                alt={comp.name || 'Component preview'}
+                                className="w-full h-24 object-cover rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+                                title={comp.name}
+                                onError={(e) => {
+                                  e.target.style.display = 'none';
+                                }}
+                              />
+                              <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs px-2 py-1 rounded-b-lg opacity-0 group-hover:opacity-100 transition-opacity truncate">
+                                {comp.name}
+                              </div>
+                            </div>
+                          )
+                        ))}
+                      </div>
+                    )}
+                    <div className={`${message.isError ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'} ${message.isStreaming ? 'opacity-60 italic' : ''}`}>
+                      {formatMessage(message.content)}
+                    </div>
+                  </>
                 )}
                 
                 {/* Chain of Thought */}
@@ -2408,34 +3177,82 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
                       <span>{message.provider}</span>
                     </>
                   )}
-                  {message.role === 'assistant' && typeof window.magicAssistantInsertHTML === 'function' && (message.html || (typeof message.content === 'string' && message.content.includes('<'))) && (
+                  {message.role === 'assistant' && isBricksMode && message.bricks_structure && Array.isArray(message.bricks_structure) && (
                     <>
                       <button
                         type="button"
-                        onClick={() => insertMessageHtml(message)}
-                        className="inline-flex cursor-pointer justify-center rounded p-1 text-white bg-green-600 hover:bg-green-700 transition-colors ml-1 text-xs"
-                        title="Insert this HTML into Bricks"
+                        onClick={async () => {
+                          if (!isBricksBuilder()) {
+                            alert('Not in Bricks Builder! Please open this in the Bricks editor.');
+                            return;
+                          }
+                          
+                          // Extract all components from debug_tool_data to handle multiple components
+                          let components = [];
+                          if (message.debug_tool_data && Array.isArray(message.debug_tool_data)) {
+                            components = extractBricksComponentFromToolData(message.debug_tool_data);
+                          }
+                          
+                          if (components && components.length > 0) {
+                            // Insert each component separately, one after another
+                            let allSuccess = true;
+                            for (let i = 0; i < components.length; i++) {
+                              const comp = components[i];
+                              
+                              // Small delay between insertions to ensure proper sequencing
+                              if (i > 0) {
+                                await new Promise(resolve => setTimeout(resolve, 300));
+                              }
+                              
+                              const success = insertBricksStructure(comp.bricksJson, comp.globalClasses || []);
+                              if (!success) {
+                                console.error(`❌ Failed to insert component ${i + 1}: ${comp.name}`);
+                                allSuccess = false;
+                                // Continue with other components even if one fails
+                              }
+                            }
+                            
+                            if (!allSuccess) {
+                              console.error('Some components failed to insert. Check console for details.');
+                            }
+                          } else {
+                            // Fallback: Insert combined structure (backwards compatibility)
+                            const globalClasses = message.globalClasses || [];
+                            const success = insertBricksStructure(message.bricks_structure, globalClasses);
+                            if (!success) {
+                              alert('Failed to insert structure. Check console for details.');
+                            }
+                          }
+                        }}
+                        className="inline-flex items-center gap-1 cursor-pointer justify-center rounded px-2 py-1 text-white bg-green-600 hover:bg-green-700 transition-colors ml-1 text-xs font-medium"
+                        title="Insert component(s) into Bricks canvas"
                       >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
                         Insert into Bricks
                       </button>
-                      {message.bricks_structure && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const json = JSON.stringify(message.bricks_structure, null, 2);
-                            navigator.clipboard.writeText(json).then(() => {
-                              alert('Bricks JSON structure copied to clipboard!');
-                            }).catch(err => {
-                              console.error('Failed to copy:', err);
-                              alert('Failed to copy to clipboard');
-                            });
-                          }}
-                          className="inline-flex cursor-pointer justify-center rounded p-1 text-white bg-blue-600 hover:bg-blue-700 transition-colors ml-1 text-xs"
-                          title="Copy Bricks JSON structure to clipboard"
-                        >
-                          📋 Copy JSON
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          // Include both bricks_structure and globalClasses for complete paste functionality
+                          const jsonData = {
+                            content: message.bricks_structure || [],
+                            globalClasses: message.globalClasses || [],
+                            source: 'bricksCopiedElements',
+                            sourceUrl: typeof window !== 'undefined' ? window.location.href : '',
+                            version: '1.9.9'
+                          };
+                          const json = JSON.stringify(jsonData, null, 2);
+                          navigator.clipboard.writeText(json).catch(err => {
+                            console.error('Failed to copy:', err);
+                          });
+                        }}
+                        className="inline-flex items-center gap-1 cursor-pointer justify-center rounded px-2 py-1 text-white bg-blue-600 hover:bg-blue-700 transition-colors ml-1 text-xs font-medium"
+                        title="Copy Bricks JSON structure with global classes to clipboard"
+                      >
+                        📋 Copy JSON
+                      </button>
                     </>
                   )}
                   {message.agent_mode && (
@@ -2561,6 +3378,83 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
               </div>
             )}
             
+            {/* Image Generation Options Panel */}
+            {imageGenerationMode && (
+              <div className="mb-3 p-3 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-700 rounded-lg">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-medium text-purple-900 dark:text-purple-100">🎨 Image Generation Settings</h4>
+                  <span className="text-xs text-purple-600 dark:text-purple-300">Mode Active</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Provider</label>
+                    <select
+                      value={imageGenProvider}
+                      onChange={(e) => {
+                        setImageGenProvider(e.target.value)
+                        // Reset model when provider changes
+                        if (e.target.value === 'openai') setImageGenModel('dall-e-3')
+                        else if (e.target.value === 'google') setImageGenModel('gemini-2.5-flash-image')
+                      }}
+                      className="w-full text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    >
+                      <option value="openai">OpenAI</option>
+                      <option value="google">Google</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Model</label>
+                    <select
+                      value={imageGenModel}
+                      onChange={(e) => setImageGenModel(e.target.value)}
+                      className="w-full text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    >
+                      {imageGenProvider === 'openai' && (
+                        <>
+                          <option value="dall-e-3">DALL-E 3</option>
+                          <option value="dall-e-2">DALL-E 2</option>
+                        </>
+                      )}
+                      {imageGenProvider === 'google' && (
+                        <>
+                          <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (Nano Banana)</option>
+                          <option value="imagen-4.0-fast-generate-001">Imagen 4 (Fast)</option>
+                          <option value="imagen-4.0-generate-001">Imagen 4 (Standard)</option>
+                          <option value="imagen-4.0-ultra-generate-001">Imagen 4 (Ultra)</option>
+                          <option value="imagen-3.0-generate-002">Imagen 3</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Aspect Ratio</label>
+                    <select
+                      value={imageAspectRatio}
+                      onChange={(e) => setImageAspectRatio(e.target.value)}
+                      className="w-full text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    >
+                      <option value="1024x1024">Square (1:1)</option>
+                      <option value="1024x1792">Portrait (9:16)</option>
+                      <option value="1792x1024">Landscape (16:9)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Output Format</label>
+                    <select
+                      value={imageOutputFormat}
+                      onChange={(e) => setImageOutputFormat(e.target.value)}
+                      className="w-full text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    >
+                      <option value="png">PNG</option>
+                      <option value="jpeg">JPEG</option>
+                      <option value="webp">WebP</option>
+                    </select>
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-purple-600 dark:text-purple-300">Type your image description below and hit send to generate</p>
+              </div>
+            )}
+            
             <div 
               className={`${
                 isDragOver ? 'ring-2 ring-blue-500 ring-opacity-50 rounded-lg' : ''
@@ -2570,7 +3464,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
               onDrop={handleDrop}
             >
               <Textarea
-                placeholder="Ask me anything about your WordPress site..."
+                placeholder={imageGenerationMode ? "Describe the image you want to generate..." : "Ask me anything about your WordPress site..."}
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
                 onKeyPress={handleKeyPress}
@@ -2630,6 +3524,63 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
                     </svg>
                     </button>
                   </Tooltip>
+                  
+                  {/* Image Generation Button */}
+                  <Tooltip content="Generate image with DALL-E" className="z-50">
+                    <button
+                      onClick={() => setImageGenerationMode(!imageGenerationMode)}
+                      disabled={isLoading || isStreaming}
+                      className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                        imageGenerationMode 
+                          ? 'bg-purple-600 hover:bg-purple-700 dark:bg-purple-500 dark:hover:bg-purple-600' 
+                          : 'bg-purple-100 hover:bg-purple-200 dark:bg-purple-700 dark:hover:bg-purple-600'
+                      }`}
+                      title={imageGenerationMode ? "Disable Image Generation" : "Enable Image Generation"}
+                    >
+                      <svg className={`w-4 h-4 ${imageGenerationMode ? 'text-white' : 'text-purple-600 dark:text-purple-300'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                    </button>
+                  </Tooltip>
+
+                  {/* Bricks Site Context Button */}
+                  {isBricksMode && (
+                    <Tooltip content="Site context settings" className="z-50">
+                      <button
+                        onClick={() => setIsSiteContextModalOpen(true)}
+                        disabled={isLoading || isStreaming}
+                        className="flex items-center justify-center w-8 h-8 bg-green-100 hover:bg-green-200 dark:bg-green-700 dark:hover:bg-green-600 rounded-lg transition-colors"
+                      >
+                        <svg className="w-4 h-4 text-green-600 dark:text-green-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-3-3v6m9-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      </button>
+                    </Tooltip>
+                  )}
+                  
+                  {/* Bricks Framework Selector (only in Bricks mode) */}
+                  {isBricksMode && (
+                    <Tooltip content="Select framework for component filtering" className="z-50">
+                      <select
+                        value={selectedFramework}
+                        onChange={(e) => {
+                          const newFramework = e.target.value;
+                          setSelectedFramework(newFramework);
+                          // Save to localStorage for persistence
+                          if (typeof window !== 'undefined') {
+                            localStorage.setItem('magicassistant_bricks_framework', newFramework);
+                          }
+                        }}
+                        className="text-xs px-2 py-1 h-8 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        title="Select framework for component filtering"
+                      >
+                        <option value="Native">Native</option>
+                        <option value="ACSS">ACSS</option>
+                        <option value="CoreFramework">CoreFramework</option>
+                        <option value="ATF">ATF</option>
+                      </select>
+                    </Tooltip>
+                  )}
                 </div>
                 
                 {/* Send button - right side */}
@@ -2899,7 +3850,37 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
               </div>
             </div>
 
+            {/* Bricks Site Context Settings - Only show in Bricks Mode */}
+            {isBricksMode && (
+              <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4 border border-green-200 dark:border-green-800">
+                {renderSiteContextSettings()}
+              </div>
+            )}
+
             
+          </div>
+        </ConfirmationModal>
+      )}
+
+      {isBricksMode && (
+        <ConfirmationModal
+          isOpen={isSiteContextModalOpen}
+          onClose={() => setIsSiteContextModalOpen(false)}
+          title="Bricks Site Context"
+          showActions={false}
+          maxWidth="max-w-3xl"
+        >
+          <div className="space-y-4">
+            {renderSiteContextSettings()}
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                color="gray"
+                onClick={() => setIsSiteContextModalOpen(false)}
+              >
+                Close
+              </Button>
+            </div>
           </div>
         </ConfirmationModal>
       )}

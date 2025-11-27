@@ -362,8 +362,73 @@ class MCP_Server {
         // Register generic REST API tools
         $this->register_rest_api_tools();
         
+        // Register Bricks component library tools
+        $this->register_bricks_component_tools();
+        
         // Register resources
         $this->register_default_resources();
+    }
+    
+    private function register_bricks_component_tools() {
+        // bricks_get_component - Get Bricks component by ID or search criteria
+        $this->register_tool(array(
+            'name' => 'bricks_get_component',
+            'description' => 'Search and retrieve MULTIPLE pre-built Bricks components for intelligent analysis and selection. RETURNS ARRAY OF COMPONENTS: This tool returns multiple components (10+ by default) that you MUST analyze to select the best visual and contextual match. DO NOT just use the first result - analyze ALL returned components using the scoring framework (Context Match 40%, Visual Elements 40%, Layout Structure 20%). Components are generic wireframes/designs usable for any website. Keep search parameters BROAD (use category only when possible) to maximize options for analysis. Use "limit" parameter strategically: start with 10, increase to 20-30 if no suitable match found. Match components by their VISUAL STYLE and DESIGN FEATURES appropriate to user context, not by industry keywords.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'component_id' => array(
+                        'type' => 'string',
+                        'description' => 'Component ID or slug to retrieve'
+                    ),
+                    'category' => array(
+                        'type' => 'string',
+                        'description' => 'Filter by category (header, footer, hero, features, testimonials, pricing, cta, content, forms, galleries, other). REQUIRED for most searches.',
+                        'enum' => array('header', 'footer', 'hero', 'features', 'testimonials', 'pricing', 'cta', 'content', 'forms', 'galleries', 'other')
+                    ),
+                    'elements' => array(
+                        'type' => 'array',
+                        'items' => array('type' => 'string'),
+                        'description' => 'Filter by Bricks elements (e.g., ["image"], ["button"]). Use sparingly - only when user EXPLICITLY mentions specific elements. Omit this parameter for broad searches to maximize results for analysis. You will select the best match from returned components using the scoring framework.'
+                    ),
+                    'keywords' => array(
+                        'type' => 'string',
+                        'description' => 'Style/design keywords (e.g., "modern", "minimalist", "bold"). Use sparingly - only when user explicitly mentions style. DO NOT use industry keywords. Keep searches broad to get more components for intelligent analysis and selection.'
+                    ),
+                    'framework' => array(
+                        'type' => 'string',
+                        'description' => 'Filter by framework (Native, ACSS, CoreFramework, ATF). Default is Native if not specified.',
+                        'enum' => array('Native', 'ACSS', 'CoreFramework', 'ATF')
+                    ),
+                    'limit' => array(
+                        'type' => 'integer',
+                        'description' => 'Maximum number of components to return for analysis. STRATEGY: Start with 10 (default) to get multiple options for intelligent selection. If first batch contains no suitable match after analyzing all results, retry with 20-30 to get more options. More components = better chance of finding the perfect visual match.',
+                        'default' => 10,
+                        'minimum' => 1,
+                        'maximum' => 50
+                    )
+                ),
+                'required' => array()
+            ),
+            'callback' => array($this, 'bricks_get_component')
+        ));
+        
+        // bricks_insert_component - Insert Bricks component into canvas
+        $this->register_tool(array(
+            'name' => 'bricks_insert_component',
+            'description' => 'Insert a pre-built Bricks component into the Bricks builder canvas. Must be called within Bricks builder context.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'component_id' => array(
+                        'type' => 'string',
+                        'description' => 'Component ID or slug to insert'
+                    )
+                ),
+                'required' => array('component_id')
+            ),
+            'callback' => array($this, 'bricks_insert_component')
+        ));
     }
     
     private function register_media_tools() {
@@ -12306,6 +12371,198 @@ class MCP_Server {
         );
         
         return $repurposed;
+    }
+    
+    /**
+     * Get Bricks component from MagicProxy API
+     */
+    public function bricks_get_component($args) {
+        try {
+            // Get MagicProxy API URL from settings
+            $proxy_url = $this->db->get_setting('magicproxy_url', 'https://proxy.magicplugins.io');
+            
+            // Build query parameters
+            $params = array();
+            
+            if (!empty($args['component_id'])) {
+                // Get specific component by ID or slug
+                $endpoint = $proxy_url . '/api/bricks/components/' . urlencode($args['component_id']);
+                $params['incrementUsage'] = 'true';
+            } else {
+                // Search components
+                $endpoint = $proxy_url . '/api/bricks/search';
+                
+                if (!empty($args['keywords'])) {
+                    $params['q'] = $args['keywords'];
+                }
+                if (!empty($args['category'])) {
+                    $params['category'] = $args['category'];
+                }
+                if (!empty($args['elements']) && is_array($args['elements'])) {
+                    $params['elements'] = implode(',', $args['elements']);
+                }
+                if (!empty($args['framework'])) {
+                    $params['framework'] = $args['framework'];
+                }
+                if (!empty($args['limit'])) {
+                    $params['limit'] = min(50, max(1, intval($args['limit'])));
+                } else {
+                    $params['limit'] = 10;
+                }
+            }
+            
+            // Build URL with query string
+            if (!empty($params)) {
+                $endpoint .= '?' . http_build_query($params);
+            }
+            
+            // Get license headers from AI Provider (includes license key, status, ID, etc.)
+            $license_headers = array();
+            if ($this->ai_provider && method_exists($this->ai_provider, 'get_license_headers')) {
+                $license_headers = $this->ai_provider->get_license_headers();
+            } else {
+                // Fallback: try to get license key directly if AI Provider is not available
+                $license_key = $this->db ? $this->db->get_setting('license_key') : '';
+                if (!empty($license_key)) {
+                    $license_headers['X-License-Key'] = $license_key;
+                }
+            }
+            
+            // Prepare request headers - merge license headers with additional headers
+            // Convert header keys to lowercase for compatibility with Express.js
+            $request_headers = array(
+                'Accept' => 'application/json'
+            );
+            
+            // Merge license headers (convert to lowercase for Express.js)
+            foreach ($license_headers as $key => $value) {
+                $lower_key = strtolower($key);
+                $request_headers[$lower_key] = $value;
+            }
+            
+            // Add site URL if not already present
+            if (!isset($request_headers['x-site-url'])) {
+                $request_headers['x-site-url'] = get_site_url();
+            }
+            
+            // Debug: Log request details
+            error_log('=== BRICKS COMPONENT API REQUEST ===');
+            error_log('Endpoint: ' . $endpoint);
+            error_log('Method: GET');
+            error_log('License headers from AI Provider: ' . json_encode($license_headers, JSON_PRETTY_PRINT));
+            error_log('Final request headers: ' . json_encode($request_headers, JSON_PRETTY_PRINT));
+            error_log('Query Params: ' . json_encode($params, JSON_PRETTY_PRINT));
+            error_log('Arguments: ' . json_encode($args, JSON_PRETTY_PRINT));
+            
+            // Make API request with license headers
+            $response = wp_remote_get($endpoint, array(
+                'timeout' => 15,
+                'headers' => $request_headers
+            ));
+            
+            if (is_wp_error($response)) {
+                error_log('BRICKS COMPONENT API ERROR: ' . $response->get_error_message());
+                error_log('Error Code: ' . $response->get_error_code());
+                error_log('Error Data: ' . json_encode($response->get_error_data(), JSON_PRETTY_PRINT));
+                throw new Exception('Failed to fetch component: ' . $response->get_error_message());
+            }
+            
+            $status_code = wp_remote_retrieve_response_code($response);
+            $response_headers = wp_remote_retrieve_headers($response);
+            $body = wp_remote_retrieve_body($response);
+            
+            // Debug: Log response details
+            error_log('=== BRICKS COMPONENT API RESPONSE ===');
+            error_log('Status Code: ' . $status_code);
+            error_log('Response Headers: ' . json_encode($response_headers, JSON_PRETTY_PRINT));
+            error_log('Response Body Length: ' . strlen($body) . ' bytes');
+            error_log('Response Body (first 2000 chars): ' . substr($body, 0, 2000));
+            
+            if ($status_code !== 200) {
+                error_log('BRICKS COMPONENT API ERROR: Non-200 status code');
+                error_log('Full Error Response: ' . $body);
+                throw new Exception('API returned status ' . $status_code);
+            }
+            
+            $data = json_decode($body, true);
+            
+            // Debug: Log parsed response data
+            if ($data) {
+                error_log('Parsed Response Data: ' . json_encode(array(
+                    'success' => $data['success'] ?? 'unknown',
+                    'has_data' => isset($data['data']),
+                    'data_type' => isset($data['data']) ? gettype($data['data']) : 'none',
+                    'error' => $data['error'] ?? null,
+                    'component_count' => isset($data['data']['components']) ? count($data['data']['components']) : (isset($data['data']['name']) ? 1 : 0)
+                ), JSON_PRETTY_PRINT));
+            } else {
+                error_log('BRICKS COMPONENT API ERROR: Failed to parse JSON response');
+                error_log('JSON Error: ' . json_last_error_msg());
+            }
+            error_log('=== END BRICKS COMPONENT API DEBUG ===');
+            
+            if (!$data || !$data['success']) {
+                throw new Exception($data['error'] ?? 'Failed to fetch component');
+            }
+            
+            // Return component data
+            if (!empty($args['component_id'])) {
+                // Single component
+                return array(
+                    'component' => $data['data'],
+                    'message' => 'Component retrieved successfully. Use bricks_insert_component to insert it into the canvas.'
+                );
+            } else {
+                // Search results
+                return array(
+                    'components' => $data['data']['components'],
+                    'total' => $data['data']['pagination']['total'],
+                    'message' => 'Found ' . count($data['data']['components']) . ' component(s). Use component ID or slug with bricks_get_component to get full details, then bricks_insert_component to insert.'
+                );
+            }
+            
+        } catch (Exception $e) {
+            throw new Exception('Error fetching Bricks component: ' . $e->getMessage());
+        }
+    }
+    
+    /**
+     * Insert Bricks component into canvas
+     */
+    public function bricks_insert_component($args) {
+        try {
+            $component_id = $args['component_id'] ?? '';
+            
+            if (empty($component_id)) {
+                throw new Exception('component_id is required');
+            }
+            
+            // First, get the component
+            $component_data = $this->bricks_get_component(array('component_id' => $component_id));
+            
+            if (empty($component_data['component'])) {
+                throw new Exception('Component not found');
+            }
+            
+            $component = $component_data['component'];
+            
+            // Return data for JavaScript bridge to handle insertion
+            return array(
+                'success' => true,
+                'component' => array(
+                    'name' => $component['name'],
+                    'category' => $component['category'],
+                    'bricksJson' => $component['bricksJson'],
+                    'globalClasses' => $component['globalClasses'] ?? array(),
+                    'thumbnail' => $component['thumbnail'] ?? null
+                ),
+                'message' => 'Component data ready for insertion',
+                'instructions' => 'The JavaScript bridge will handle inserting this component into the Bricks canvas using bricksInserter.js'
+            );
+            
+        } catch (Exception $e) {
+            throw new Exception('Error inserting Bricks component: ' . $e->getMessage());
+        }
     }
 }
 

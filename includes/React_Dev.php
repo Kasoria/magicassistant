@@ -52,10 +52,6 @@ class React_Dev {
         add_action( 'wp_head', array( $this, 'add_fallback_script_loading' ), 1 );
         add_action( 'admin_head', array( $this, 'add_fallback_script_loading' ), 1 );
         
-        // Enqueue Bricks integration script
-        add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_bricks_scripts' ) );
-        add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_bricks_scripts' ) );
-        
         // Add React root elements to both frontend and admin
         add_action( 'wp_footer', array( $this, 'add_react_root_elements' ) );
         add_action( 'admin_footer', array( $this, 'add_react_root_elements' ) );
@@ -118,7 +114,16 @@ class React_Dev {
                 if ( in_array( $screen->id, $plugin_pages ) ) {
                     // Load admin React app
                     $this->enqueue_admin_scripts( $hook );
+                } elseif ( $screen->id === 'upload' ) {
+                    // Load media library integration
+                    $this->enqueue_media_library_scripts( $hook );
+                } elseif ( $screen->base === 'post' && get_post_type() === 'attachment' ) {
+                    $this->enqueue_image_editor_scripts( $hook );
                 } else {
+                    // Debug: log what screen we're on
+                    if ( get_post_type() === 'attachment' ) {
+                        error_log( 'MagicAssistant: Attachment page but wrong screen base - screen base: ' . $screen->base . ', screen id: ' . $screen->id );
+                    }
                     // Check floating chat settings before loading public React app on admin pages
                     if ( $this->should_show_public_app() ) {
                         $this->enqueue_public_scripts( $hook );
@@ -163,6 +168,206 @@ class React_Dev {
             $this->enqueue_public_prod_scripts( $hook );
         }
         $this->localize_public_data();
+    }
+
+    /**
+     * Enqueue media library React scripts
+     */
+    private function enqueue_media_library_scripts( $hook ) {
+        if ( $this->is_dev_mode ) {
+            $this->enqueue_media_library_dev_scripts( $hook );
+        } else {
+            $this->enqueue_media_library_prod_scripts( $hook );
+        }
+        $this->localize_media_library_data();
+    }
+
+    /**
+     * Enqueue image editor React scripts
+     */
+    private function enqueue_image_editor_scripts( $hook ) {
+        if ( $this->is_dev_mode ) {
+            $this->enqueue_image_editor_dev_scripts( $hook );
+        } else {
+            $this->enqueue_image_editor_prod_scripts( $hook );
+        }
+        $this->localize_image_editor_data();
+    }
+
+    /**
+     * Enqueue media library development scripts from Vite dev server
+     */
+    private function enqueue_media_library_dev_scripts( $hook ) {
+        // Vite client for HMR - only enqueue if not already enqueued
+        if ( ! wp_script_is( 'vite-client', 'enqueued' ) ) {
+            wp_enqueue_script(
+                'vite-client',
+                $this->vite_dev_server . '/@vite/client',
+                array(),
+                null,
+                false
+            );
+            
+            // Add type="module" to Vite client using centralized method
+            add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
+        }
+        
+        // Media library React app from Vite dev server
+        wp_enqueue_script(
+            'mat-react-media-library-dev',
+            $this->vite_dev_server . '/src/media-library.jsx',
+            array( 'vite-client' ),
+            null,
+            true
+        );
+        
+        // Add type="module" to media library dev script using centralized method
+        add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
+    }
+
+    /**
+     * Enqueue media library production built scripts
+     */
+    private function enqueue_media_library_prod_scripts( $hook ) {
+        $dist_path = MAGIC_ASSISTANT_PLUGIN_PATH . 'dist/';
+        $dist_url = MAGIC_ASSISTANT_PLUGIN_URL . 'dist/';
+        
+        // Load vendor chunks first
+        $vendor_handles = $this->enqueue_vendor_chunks( $dist_path, $dist_url );
+        
+        // Load the main CSS file (Vite generates styles-[hash].css)
+        $this->enqueue_main_css( $dist_path, $dist_url );
+        
+        // Media library React app
+        if ( file_exists( $dist_path . 'media-library.js' ) ) {
+            wp_enqueue_script(
+                'mat-react-media-library',
+                $dist_url . 'media-library.js',
+                $vendor_handles,
+                MAGIC_ASSISTANT_VERSION,
+                true
+            );
+            
+            // Add type="module" to media library script using centralized method
+            add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
+        }
+    }
+
+    /**
+     * Localize data for media library React app
+     */
+    private function localize_media_library_data() {
+        $handle = $this->is_dev_mode ? 'mat-react-media-library-dev' : 'mat-react-media-library';
+        
+        wp_localize_script( $handle, 'matAdminData', array(
+            'ajaxurl' => admin_url( 'admin-ajax.php' ),
+            'restUrl' => rest_url( 'magicassistant/v1/' ),
+            'nonces' => array(
+                'wp_rest' => wp_create_nonce( 'wp_rest' ),
+                'mat_admin' => wp_create_nonce( 'mat_admin_nonce' ),
+                'mat_ajax' => wp_create_nonce( 'mat_ajax_nonce' ),
+            ),
+            'currentUser' => wp_get_current_user()->ID,
+            'isAdmin' => is_admin(),
+            'isDev' => $this->is_dev_mode,
+            'pluginUrl' => MAGIC_ASSISTANT_PLUGIN_URL,
+        ));
+    }
+
+    /**
+     * Enqueue image editor development scripts from Vite dev server
+     */
+    private function enqueue_image_editor_dev_scripts( $hook ) {
+        
+        if ( ! wp_script_is( 'vite-client', 'enqueued' ) ) {
+            wp_enqueue_script(
+                'vite-client',
+                $this->vite_dev_server . '/@vite/client',
+                array(),
+                null,
+                false
+            );
+            
+            // Add type="module" to Vite client using centralized method
+            add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
+        }
+        
+        // Image editor React app from Vite dev server
+        wp_enqueue_script(
+            'mat-react-image-editor-dev',
+            $this->vite_dev_server . '/src/image-editor.jsx',
+            array( 'vite-client' ),
+            null,
+            true
+        );
+        
+        // Add type="module" to image editor dev script using centralized method
+        add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
+    }
+
+    /**
+     * Enqueue image editor production built scripts
+     */
+    private function enqueue_image_editor_prod_scripts( $hook ) {
+        $dist_path = MAGIC_ASSISTANT_PLUGIN_PATH . 'dist/';
+        $dist_url = MAGIC_ASSISTANT_PLUGIN_URL . 'dist/';
+        
+        // Load vendor chunks first
+        $vendor_handles = $this->enqueue_vendor_chunks( $dist_path, $dist_url );
+        
+        // Load the main CSS file (Vite generates styles-[hash].css)
+        $this->enqueue_main_css( $dist_path, $dist_url );
+        
+        // Image editor React app
+        if ( file_exists( $dist_path . 'image-editor.js' ) ) {
+            wp_enqueue_script(
+                'mat-react-image-editor',
+                $dist_url . 'image-editor.js',
+                $vendor_handles,
+                MAGIC_ASSISTANT_VERSION,
+                true
+            );
+            
+            // Add type="module" to image editor script using centralized method
+            add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
+        } else {
+            error_log( 'MagicAssistant: image-editor.js not found at: ' . $dist_path . 'image-editor.js' );
+        }
+    }
+
+    /**
+     * Localize data for image editor React app
+     */
+    private function localize_image_editor_data() {
+        $handle = $this->is_dev_mode ? 'mat-react-image-editor-dev' : 'mat-react-image-editor';
+        
+        // Only localize if the script is actually enqueued
+        if ( ! wp_script_is( $handle, 'enqueued' ) && ! wp_script_is( $handle, 'registered' ) ) {
+            error_log( 'MagicAssistant: Attempted to localize image editor data but script handle not found: ' . $handle );
+            return;
+        }
+        
+        // Get current attachment ID - try multiple methods
+        $attachment_id = get_the_ID();
+        if ( ! $attachment_id || get_post_type( $attachment_id ) !== 'attachment' ) {
+            // Try getting from URL parameter
+            $attachment_id = isset( $_GET['post'] ) ? intval( $_GET['post'] ) : 0;
+        }
+        
+        wp_localize_script( $handle, 'matImageEditorData', array(
+            'ajaxurl' => admin_url( 'admin-ajax.php' ),
+            'restUrl' => rest_url( 'magicassistant/v1/' ),
+            'nonces' => array(
+                'wp_rest' => wp_create_nonce( 'wp_rest' ),
+                'mat_admin' => wp_create_nonce( 'mat_admin_nonce' ),
+                'mat_ajax' => wp_create_nonce( 'mat_ajax_nonce' ),
+            ),
+            'currentUser' => wp_get_current_user()->ID,
+            'isAdmin' => is_admin(),
+            'isDev' => $this->is_dev_mode,
+            'pluginUrl' => MAGIC_ASSISTANT_PLUGIN_URL,
+            'attachmentId' => $attachment_id,
+        ));
     }
     
     /**
@@ -410,28 +615,6 @@ class React_Dev {
         }
         
         return $vendor_handles;
-    }
-    
-    /**
-     * Enqueue Bricks integration scripts if Bricks editor is active
-     */
-    public function enqueue_bricks_scripts() {
-        if ( isset( $_GET['bricks'] ) && $_GET['bricks'] === 'run' ) {
-            $this->enqueue_bricks_integration_scripts();
-        }
-    }
-
-    /**
-     * Enqueue the bricks.js for Bricks Builder integration
-     */
-    private function enqueue_bricks_integration_scripts() {
-        $handle = 'mat-bricks-integration';
-        $src = MAGIC_ASSISTANT_PLUGIN_URL . 'assets/js/bricks.js';
-        $deps = array('jquery'); 
-        $version = MAGIC_ASSISTANT_VERSION;
-        $in_footer = true;
-    
-        wp_enqueue_script($handle, $src, $deps, $version, $in_footer);
     }
     
     /**
@@ -717,6 +900,12 @@ class React_Dev {
                     // These are our main plugin admin pages - they need the admin root
                     // The admin root is already added by the admin_page() method in MAT_Admin class
                     // Don't add any additional roots here to avoid conflicts
+                } elseif ( $screen->id === 'upload' ) {
+                    // Media library page - add media library root
+                    echo '<div id="mat-media-library-root"></div>';
+                } elseif ( $screen->base === 'post' && get_post_type() === 'attachment' ) {
+                    // Attachment editor page - add image editor root
+                    echo '<div id="mat-image-editor-root"></div>';
                 } else {
                     // Other admin pages - add public root for floating components only if should be shown
                     if ( $this->should_show_public_app() ) {
@@ -1263,9 +1452,13 @@ class React_Dev {
             'mat-react-admin-dev',
             'mat-react-public-dev',
             'mat-react-public-dev-floating',
+            'mat-react-media-library-dev',
+            'mat-react-image-editor-dev',
             'mat-react-admin',
             'mat-react-public',
             'mat-react-public-floating',
+            'mat-react-media-library',
+            'mat-react-image-editor',
             'mat-vendor-chunk',
             'mat-flowbite-chunk',
             'mat-utils-chunk',
@@ -1333,11 +1526,7 @@ class React_Dev {
      */
     private function should_add_fallback_loading() {
         // Check for Breakdance zero theme
-        if ( function_exists( 'bricks_is_builder_main' ) || 
-             ( isset( $_GET['bricks'] ) && $_GET['bricks'] === 'run' ) ||
-             get_option( 'template' ) === 'bricks' ) {
-            return true;
-        }
+        // Removed Bricks-specific checks
 
         // Check for other known themes that disable WordPress functionality
         $theme = wp_get_theme();

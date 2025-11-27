@@ -66,6 +66,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         ai_provider: settings.ai_provider || 'openai',
         openai_model: settings.openai_model || 'gpt-4.1-mini',
         anthropic_model: settings.anthropic_model || 'claude-sonnet-4-5-20250929',
+        google_model: settings.google_model || 'gemini-2.5-flash',
         openrouter_model: settings.openrouter_model || 'anthropic/claude-3.5-sonnet',
         agent_mode: settings.agent_mode || 'never',
         max_agent_iterations: parseInt(settings.max_agent_iterations) || 10,
@@ -146,6 +147,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
       let settingsKey = ''
       if (provider === 'openai') settingsKey = 'openai_api_key'
       else if (provider === 'anthropic') settingsKey = 'anthropic_api_key'
+      else if (provider === 'google') settingsKey = 'google_api_key'
       else if (provider === 'openrouter') settingsKey = 'openrouter_api_key'
       else if (provider === 'debug_view') settingsKey = 'debug_view_password'
       
@@ -514,6 +516,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           ai_provider: localSettings.ai_provider,
           openai_model: localSettings.openai_model,
           anthropic_model: localSettings.anthropic_model,
+          google_model: localSettings.google_model,
           openrouter_model: localSettings.openrouter_model,
           agent_mode: localSettings.agent_mode,
           max_agent_iterations: localSettings.max_agent_iterations,
@@ -578,10 +581,19 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku' }
   ]
 
+  const googleModels = [
+    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (Latest)' },
+    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (Latest)' },
+    { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image (Nano Banana)' },
+    { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite' },
+    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
+    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' }
+  ]
 
   const aiProviderOptions = [
     { value: 'openai', label: 'OpenAI' },
     { value: 'anthropic', label: 'Anthropic (Claude)' },
+    { value: 'google', label: 'Google (Gemini)' },
     { value: 'openrouter', label: 'OpenRouter (Multiple Providers)' }
   ]
 
@@ -1069,6 +1081,63 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                           size="xs"
                           color="failure"
                           onClick={() => handleDeleteApiKeyClick('anthropic')}
+                          disabled={isSavingSettings}
+                        >
+                          Delete Key
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {localSettings.ai_provider === 'google' && (
+                <div className="space-y-4 border-t border-gray-200 dark:border-gray-600 pt-4">
+                  <h5 className="font-medium text-brand-dark dark:text-white">Google Configuration</h5>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="google-model" value="Model" className="mb-2" />
+                      <CustomSelect
+                        id="google-model"
+                        value={googleModels.find(option => option.value === (localSettings.google_model || 'gemini-2.5-flash'))}
+                        onChange={(selectedOption) => handleLocalChange('google_model', selectedOption.value)}
+                        isDisabled={isSavingSettings}
+                        options={googleModels}
+                        darkMode={darkMode}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="google-api-key" value="API Key" className="mb-2" />
+                    <div className="flex gap-2">
+                      <TextInput
+                        id="google-api-key"
+                        type="password"
+                        placeholder="Enter your Google AI API key"
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        className="flex-1"
+                        disabled={isSavingSettings}
+                      />
+                      <Button 
+                        onClick={() => handleApiKeySubmit('google')}
+                        disabled={!apiKey.trim() || isSavingSettings}
+                        size="sm"
+                      >
+                        {isSavingSettings ? 'Saving...' : 'Save'}
+                      </Button>
+                    </div>
+                    {settings?.google_api_key && (
+                      <div className="mt-1 flex items-center justify-between">
+                        <p className="text-sm text-green-600 dark:text-green-400">
+                          ✓ API key configured (encrypted in database)
+                        </p>
+                        <Button
+                          size="xs"
+                          color="failure"
+                          onClick={() => handleDeleteApiKeyClick('google')}
                           disabled={isSavingSettings}
                         >
                           Delete Key

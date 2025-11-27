@@ -22,10 +22,22 @@ export default defineConfig({
       input: {
         main: './src/main.jsx',
         admin: './src/admin.jsx',
-        debug: path.resolve(__dirname, 'src/debug.jsx')
+        debug: path.resolve(__dirname, 'src/debug.jsx'),
+        mediaLibrary: './src/media-library.jsx',
+        imageEditor: './src/image-editor.jsx'
       },
       output: {
-        entryFileNames: '[name].js',
+        entryFileNames: (chunkInfo) => {
+          // Handle special case for media-library (keep it as media-library.js instead of camelCase)
+          if (chunkInfo.name === 'mediaLibrary') {
+            return 'media-library.js';
+          }
+          // Handle special case for image-editor (keep it as image-editor.js instead of camelCase)
+          if (chunkInfo.name === 'imageEditor') {
+            return 'image-editor.js';
+          }
+          return '[name].js';
+        },
         chunkFileNames: '[name]-[hash].js',
         assetFileNames: (assetInfo) => {
           // Keep font files at root level

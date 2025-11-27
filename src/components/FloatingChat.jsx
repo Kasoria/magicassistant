@@ -72,6 +72,10 @@ const icons = {
 }
 
 const FloatingChat = ({ pluginData }) => {
+  // Don't render if we're inside an iframe (Bricks canvas)
+  // The main window should render the floating chat, not the canvas iframe
+  const isInIframe = typeof window !== 'undefined' && window.self !== window.top
+
   const [isOpen, setIsOpen] = useState(false)
   const [isAnimating, setIsAnimating] = useState(false)
   const [adminBarHeight, setAdminBarHeight] = useState(0)
@@ -328,37 +332,9 @@ const FloatingChat = ({ pluginData }) => {
   }
 
   const handleAiResponseUpdate = (response) => {
-    setLatestAiResponse(response);
-  };
-
-  const handleInsertIntoBricks = () => {
-    // Extract content from wrapped structure (new format) or use array directly (backwards compatibility)
-    const bricksContent = latestAiResponse.bricks_structure?.content || latestAiResponse.bricks_structure;
-    const globalClasses = latestAiResponse.bricks_structure?.globalClasses || latestAiResponse.globalClasses || [];
-
-    console.log('🔍 BRICKS INSERT DEBUG:', {
-      hasBricksStructure: !!latestAiResponse.bricks_structure,
-      structureLength: Array.isArray(bricksContent) ? bricksContent.length : 'N/A',
-      hasHTML: !!latestAiResponse.html,
-      hasInsertFunction: typeof window.magicAssistantInsertStructure === 'function',
-      fullResponse: latestAiResponse
-    });
-
-    // Prefer using the pre-converted bricks_structure (avoids creating global classes)
-    if (typeof window.magicAssistantInsertStructure === 'function' && bricksContent) {
-      console.log('✅ Using pre-converted Bricks structure with', bricksContent.length, 'elements');
-      window.magicAssistantInsertStructure(bricksContent, globalClasses);
-      closeDrawer();
-    } else if (typeof window.magicAssistantInsertHTML === 'function' && latestAiResponse.html) {
-      // Fallback to HTML parsing (will create global classes from Tailwind)
-      console.warn('⚠️ Using fallback HTML parser. Bricks structure not available.');
-      window.magicAssistantInsertHTML(latestAiResponse.html, latestAiResponse.css, latestAiResponse.js);
-      closeDrawer();
-    } else if (!latestAiResponse.html && !latestAiResponse.bricks_structure) {
-      alert('No AI-generated content to insert. Please generate a section first.');
-    } else {
-      alert('MagicAssistant Bricks integration not found! Make sure you are in Bricks Builder.');
-    }
+    // Callback from ChatInterface when AI generates Bricks structure
+    // The insert buttons are now part of each message, so nothing needed here
+    console.log('📥 AI Response received - Insert buttons available in message');
   };
 
   // Check if we are inside the Bricks editor
@@ -383,7 +359,7 @@ const FloatingChat = ({ pluginData }) => {
   }
 
   const buttonClasses =
-    'fixed z-50 flex items-center justify-center h-14 w-14 rounded-full shadow-lg transition-colors focus:outline-none cursor-grab active:cursor-grabbing text-white ' +
+    'fixed z-[99999] flex items-center justify-center h-14 w-14 rounded-full shadow-lg transition-colors focus:outline-none cursor-grab active:cursor-grabbing text-white ' +
     (buttonCustomization.backgroundColor === 'custom' ? '' : backgroundColors[buttonCustomization.backgroundColor])
 
   // Handle backdrop click to close drawer
@@ -396,6 +372,11 @@ const FloatingChat = ({ pluginData }) => {
 
   // Track whether the pointer actually moved while mouse button held
   const hasMovedRef = useRef(false)
+
+  // Don't render anything if we're inside an iframe (Bricks canvas)
+  if (isInIframe) {
+    return null
+  }
 
   return (
     <>
@@ -462,18 +443,18 @@ const FloatingChat = ({ pluginData }) => {
 
       {/* Backdrop (conditional) */}
       {(isOpen || isAnimating) && (
-        <div 
-          className={`fixed inset-0 z-40 bg-black/10 transition-opacity duration-300 ease-in-out ${isOpen ? 'opacity-100' : 'opacity-0'}`}
+        <div
+          className={`fixed inset-0 z-[99998] bg-black/10 transition-opacity duration-300 ease-in-out ${isOpen ? 'opacity-100' : 'opacity-0'}`}
           onClick={handleBackdropClick}
         />
       )}
 
       {/* Drawer panel (always mounted to keep chat state) */}
-      <div 
+      <div
         ref={drawerRef}
         className={`fixed right-0 bg-white dark:bg-gray-900 shadow-xl transform transition-transform duration-300 ease-in-out ${
           isOpen ? 'translate-x-0' : 'translate-x-full'
-        } ${(isOpen || isAnimating) ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'} z-50`}
+        } ${(isOpen || isAnimating) ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'} z-[99999]`}
         style={{
           top: `${adminBarHeight}px`,
           height: `calc(100vh - ${adminBarHeight}px)`,
@@ -494,7 +475,7 @@ const FloatingChat = ({ pluginData }) => {
             <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">MagicAssistant</h2>
             {isBricksEditor && (
               <span className="px-2 py-1 text-xs font-semibold bg-orange-500 text-white rounded">
-                Bricks Mode
+                🧱 Bricks Mode
               </span>
             )}
           </div>

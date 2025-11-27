@@ -18,9 +18,12 @@ class AI_Provider {
     private $is_streaming_mode = false;
     private $processing_steps = [];
     private $chatbot_owner_user_id = null; // For storing chatbot owner context
+    private $current_agent_mode = null; // Track current agent mode for tool filtering
+    private $current_page_context = null; // Track current page context for framework injection
     // Add proxy endpoints for AI
     private $openai_proxy_url = 'https://proxy.magicplugins.io/api/proxy/openai';
     private $anthropic_proxy_url = 'https://proxy.magicplugins.io/api/proxy/anthropic';
+    private $google_proxy_url = 'https://proxy.magicplugins.io/api/proxy/google';
     private $openrouter_proxy_url = 'https://proxy.magicplugins.io/api/proxy/openrouter';
     
     public function __construct() {
@@ -53,6 +56,13 @@ class AI_Provider {
         register_rest_route('magicassistant/v1', '/chat-stream', array(
             'methods' => array('GET', 'POST'),
             'callback' => array($this, 'handle_chat_stream'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        // Image generation endpoint
+        register_rest_route('magicassistant/v1', '/generate-image', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'generate_image'),
             'permission_callback' => array($this, 'check_permissions'),
         ));
         
@@ -390,10 +400,38 @@ class AI_Provider {
             'permission_callback' => array($this, 'check_permissions'),
         ));
         
+        // SAVE IMAGE TO MEDIA LIBRARY ENDPOINT
+        register_rest_route('magicassistant/v1', '/save-to-media-library', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'save_to_media_library'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        // REPLACE ATTACHMENT FILE ENDPOINT (for image editor)
+        register_rest_route('magicassistant/v1', '/replace-attachment', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'replace_attachment_file'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        // RESTORE ATTACHMENT FILE ENDPOINT (undo AI edit)
+        register_rest_route('magicassistant/v1', '/restore-attachment', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'restore_attachment_file'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
         // GET POSTS AND PAGES ENDPOINT
         register_rest_route('magicassistant/v1', '/posts-and-pages', array(
             'methods' => 'GET',
             'callback' => array($this, 'get_posts_and_pages'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+        
+        // SITE META ENDPOINT
+        register_rest_route('magicassistant/v1', '/site-meta', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_site_meta'),
             'permission_callback' => array($this, 'check_permissions'),
         ));
         
@@ -523,21 +561,6 @@ class AI_Provider {
             'callback' => array($this, 'handle_chatbot_chat'),
             'permission_callback' => '__return_true',
         ));
-
-        // BRICKS BUILDER ENDPOINTS
-        error_log('REGISTERING BRICKS ROUTES: /bricks/generate and /bricks/convert');
-        register_rest_route('magicassistant/v1', '/bricks/generate', array(
-            'methods' => 'POST',
-            'callback' => array($this, 'handle_bricks_generation'),
-            'permission_callback' => array($this, 'check_permissions'),
-        ));
-
-        register_rest_route('magicassistant/v1', '/bricks/convert', array(
-            'methods' => 'POST',
-            'callback' => array($this, 'handle_bricks_conversion'),
-            'permission_callback' => array($this, 'check_permissions'),
-        ));
-        error_log('BRICKS ROUTES REGISTERED SUCCESSFULLY');
     }
     
     public function handle_chat($request) {
@@ -559,6 +582,10 @@ class AI_Provider {
         $web_search_enabled = $data['web_search_enabled'] ?? false;
         $max_tokens = $data['max_tokens'] ?? null;
         $agent_id = $data['agent_id'] ?? null;
+        $site_context_enabled = $data['site_context_enabled'] ?? false;
+        $site_context_pages = $data['site_context_pages'] ?? [];
+        $site_meta_title = $data['site_meta_title'] ?? '';
+        $site_meta_description = $data['site_meta_description'] ?? '';
         
         // Reset tool discovery flag for new sessions
         if ($this->current_session_id !== $session_id) {
@@ -624,6 +651,26 @@ class AI_Provider {
                 }
             }
             
+            // Normalize agent_mode first to check if we're in bricks mode
+            $normalized_agent_mode = $agent_mode;
+            if ($agent_mode === true || $agent_mode === 'true') {
+                $normalized_agent_mode = 'agent'; // Default agent mode
+            } elseif ($agent_mode === false || $agent_mode === 'false' || $agent_mode === '') {
+                $normalized_agent_mode = false;
+            }
+            // Keep 'bricks' and other string modes as-is
+            
+            // Build site context message for Bricks mode when enabled
+            if ($site_context_enabled && $normalized_agent_mode === 'bricks') {
+                $site_context_message = $this->build_site_context_message($site_context_pages, $site_meta_title, $site_meta_description);
+                if (!empty($site_context_message)) {
+                    array_unshift($conversation_history, array(
+                        'role' => 'system',
+                        'content' => $site_context_message
+                    ));
+                }
+            }
+            
             // Get AI provider settings
             $provider = $this->settings['ai_provider'] ?? 'openai';
             $model = $this->get_model_for_provider($provider);
@@ -633,6 +680,8 @@ class AI_Provider {
                 $api_key = $this->settings['openai_api_key'] ?? '';
             } elseif ($provider === 'anthropic') {
                 $api_key = $this->settings['anthropic_api_key'] ?? '';
+            } elseif ($provider === 'google') {
+                $api_key = $this->settings['google_api_key'] ?? '';
             } elseif ($provider === 'openrouter') {
                 $api_key = $this->settings['openrouter_api_key'] ?? '';
             } else {
@@ -646,13 +695,12 @@ class AI_Provider {
                 throw new Exception('AI API key not configured for ' . $provider . '.');
             }
             
-            
-            if ($agent_mode) {
-                // Use agent mode for complex multi-step tasks
-                $result = $this->handle_agent_mode($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens, $session_id, $agent_id);
+            if ($normalized_agent_mode && $normalized_agent_mode !== false) {
+                // Use agent mode for complex multi-step tasks (including 'bricks' mode)
+                $result = $this->handle_agent_mode($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens, $session_id, $agent_id, $normalized_agent_mode, $page_context);
             } else {
                 // Use simple chat mode
-                $result = $this->handle_chat_mode($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens, $session_id, $agent_id);
+                $result = $this->handle_chat_mode($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens, $session_id, $agent_id, $normalized_agent_mode, $page_context);
             }
             
             $response_time = microtime(true) - $start_time;
@@ -849,6 +897,567 @@ class AI_Provider {
     }
     
     /**
+     * Handle image generation requests (DALL-E)
+     */
+    public function generate_image($request) {
+        try {
+            $data = $request->get_json_params();
+            $prompt = $data['prompt'] ?? '';
+            $provider = $data['provider'] ?? 'openai';
+            $model = $data['model'] ?? 'dall-e-3';
+            $size = $data['size'] ?? '1024x1024';
+            $format = $data['format'] ?? 'png';
+            $quality = $data['quality'] ?? 'standard';
+            $style = $data['style'] ?? 'vivid';
+            $n = 1; // DALL-E 3 only supports n=1
+            $session_id = $data['session_id'] ?? $this->generate_session_id();
+            $attached_files = $data['attached_files'] ?? [];
+            
+            if (empty($prompt)) {
+                return new WP_Error('missing_prompt', 'Image generation prompt is required', array('status' => 400));
+            }
+            
+            // If we have attached images, prepare them for image generation endpoint
+            // Convert base64 data URLs to proper format for proxy
+            $input_images = array();
+            if (!empty($attached_files) && is_array($attached_files)) {
+                // Log what we're receiving (without full base64 content)
+                $log_data = array(
+                    'prompt_length' => strlen($prompt),
+                    'attached_files_count' => count($attached_files),
+                    'attached_files_info' => array()
+                );
+                foreach ($attached_files as $file) {
+                    if (!empty($file['isImage']) && !empty($file['content'])) {
+                        // Extract base64 data from data URL format (data:image/jpeg;base64,...)
+                        $image_data = $file['content'];
+                        if (strpos($image_data, 'data:') === 0) {
+                            // Remove data URL prefix
+                            $parts = explode(',', $image_data, 2);
+                            if (count($parts) === 2) {
+                                $image_data = $parts[1]; // Just the base64 part
+                            }
+                        }
+                        
+                        $mime_type = $file['type'] ?? 'image/jpeg';
+                        
+                        $log_data['attached_files_info'][] = array(
+                            'name' => $file['name'] ?? 'unknown',
+                            'type' => $mime_type,
+                            'size' => $file['size'] ?? 0,
+                            'content_length' => strlen($image_data),
+                            'content_preview' => substr($file['content'] ?? '', 0, 50),
+                            'isImage' => true
+                        );
+                        
+                        // Store image for proxy request
+                        $input_images[] = array(
+                            'mime_type' => $mime_type,
+                            'data' => $image_data // base64 encoded image data (without data URL prefix)
+                        );
+                    }
+                }
+                error_log('[MagicAssistant] generate_image with attached files: ' . json_encode($log_data));
+                error_log('[MagicAssistant] Total input images: ' . count($input_images));
+            }
+            
+            $user_id = get_current_user_id();
+            
+            // Save user message to database immediately
+            if ($this->db) {
+                $this->db->save_chat_message(
+                    $user_id,
+                    $session_id,
+                    'user',
+                    $prompt
+                );
+            }
+            
+            // Refresh settings from database
+            if ($this->db) {
+                $this->settings = $this->db->get_all_settings();
+            }
+            
+            // Get API key for the selected provider
+            $api_key = $this->get_api_key($provider);
+            
+            // Get license key for proxy request
+            $license_key = $this->get_license_key();
+            
+            // Prepare proxy request
+            $proxy_url = $this->settings['proxy_url'] ?? 'https://proxy.magicplugins.io';
+            
+            // Determine endpoint based on provider
+            if ($provider === 'google') {
+                $proxy_endpoint = $proxy_url . '/api/proxy/google/images';
+            } else {
+                $proxy_endpoint = $proxy_url . '/api/proxy/openai/images';
+            }
+            
+            $headers = array(
+                'Content-Type' => 'application/json',
+                'X-Site-URL' => get_site_url(),
+            );
+            
+            // Add license key if available
+            if (!empty($license_key)) {
+                $headers['X-License-Key'] = $license_key;
+            }
+            
+            // Add user API key if available based on provider
+            $api_key_setting = $provider . '_api_key';
+            if (!empty($this->settings[$api_key_setting])) {
+                $headers['X-User-API-Key'] = $this->settings[$api_key_setting];
+            }
+            
+            $request_data = array(
+                'prompt' => $prompt,
+                'model' => $model,
+                'size' => $size,
+                'format' => $format,
+                'quality' => $quality,
+                'style' => $style,
+                'n' => $n
+            );
+            
+            // Add input images if provided (for image editing/enhancement/combining)
+            if (!empty($input_images)) {
+                $request_data['input_images'] = $input_images;
+                error_log('[MagicAssistant] Sending image generation request with ' . count($input_images) . ' input images');
+            }
+            
+            error_log('[MagicAssistant] Image generation request data keys: ' . implode(', ', array_keys($request_data)));
+            error_log('[MagicAssistant] Request payload (summary): prompt_length=' . strlen($prompt) . ', has_input_images=' . (empty($input_images) ? 'no' : 'yes (' . count($input_images) . ')'));
+            
+            // Make request to proxy
+            // Note: Image editing with input images can take 3+ minutes via OpenAI Responses API
+            $response = wp_remote_post($proxy_endpoint, array(
+                'headers' => $headers,
+                'body' => wp_json_encode($request_data),
+                'timeout' => 300, // 5 minutes timeout for image editing/combining which can be slow
+            ));
+
+            if (is_wp_error($response)) {
+                error_log('[MagicAssistant] Proxy request error: ' . $response->get_error_message());
+                return new WP_Error('proxy_error', $response->get_error_message(), array('status' => 500));
+            }
+
+            $response_code = wp_remote_retrieve_response_code($response);
+            $response_body = wp_remote_retrieve_body($response);
+            
+            error_log('[MagicAssistant] Proxy response code: ' . $response_code);
+            error_log('[MagicAssistant] Proxy response body length: ' . strlen($response_body));
+            
+            $result = json_decode($response_body, true);
+
+            if ($response_code !== 200) {
+                $error_message = $result['error'] ?? $result['message'] ?? 'Image generation failed';
+                error_log('[MagicAssistant] Generation failed with error: ' . $error_message);
+                return new WP_Error('generation_failed', $error_message, array('status' => $response_code));
+            }
+
+            if (!$result['success']) {
+                $error_msg = $result['error'] ?? $result['message'] ?? 'Unknown error';
+                error_log('[MagicAssistant] Generation unsuccessful: ' . $error_msg);
+                return new WP_Error('generation_failed', $error_msg, array('status' => 500));
+            }
+            
+            error_log('[MagicAssistant] Generation successful, processing images...');
+            
+            // Extract image URLs from response
+            $images = $result['data']['data'] ?? array();
+            
+            if (empty($images)) {
+                return new WP_Error('no_images', 'No images generated', array('status' => 500));
+            }
+            
+            // Process images: convert base64 to actual files and return URLs
+            $processed_images = array();
+            foreach ($images as $image) {
+                $processed_image = $this->process_generated_image($image, $format, $provider, $model, $prompt);
+                if (!is_wp_error($processed_image)) {
+                    $processed_images[] = $processed_image;
+                }
+            }
+            
+            if (empty($processed_images)) {
+                return new WP_Error('image_processing_failed', 'Failed to process generated images', array('status' => 500));
+            }
+            
+            // Build assistant response content with generated images
+            $assistant_content = "🎨 **Image Generated Successfully!**\n\n";
+            foreach ($processed_images as $idx => $image) {
+                $image_url = $image['url'] ?? '';
+                if ($image_url) {
+                    // Use SEO-friendly alt text from backend or fallback
+                    $alt_text = $image['alt'] ?? "Generated Image " . ($idx + 1);
+                    $assistant_content .= "![{$alt_text}]({$image_url})\n\n";
+                    if (isset($image['revised_prompt']) && !empty($image['revised_prompt'])) {
+                        $assistant_content .= "*Revised Prompt:* {$image['revised_prompt']}\n\n";
+                    }
+                }
+            }
+            
+            // Save assistant image response to database
+            if ($this->db) {
+                $this->db->save_chat_message(
+                    $user_id,
+                    $session_id,
+                    'assistant',
+                    $assistant_content,
+                    $provider,
+                    $model,
+                    null, // tokens_used
+                    null, // response_time
+                    $result['cost'] ?? null, // cost
+                    null, // debug_tool_data
+                    false, // agent_mode
+                    null, // reasoning
+                    null // tool_calls_count
+                );
+            }
+            
+            // Return success with processed image data (URLs instead of base64)
+            return rest_ensure_response(array(
+                'success' => true,
+                'images' => $processed_images,
+                'credits' => $result['credits'] ?? null,
+                'userKeyUsed' => $result['userKeyUsed'] ?? false,
+                'session_id' => $session_id // Return session_id so frontend can track it
+            ));
+            
+        } catch (Exception $e) {
+            return new WP_Error('generation_error', $e->getMessage(), array('status' => 500));
+        }
+    }
+    
+    /**
+     * Process generated image: convert base64 to file and return URL
+     * 
+     * @param array $image Image data with url or b64_json
+     * @param string $format Desired output format (png, jpeg, webp)
+     * @param string $provider Provider name (for logging)
+     * @param string $model Model name (for logging)
+     * @param string $prompt Original prompt used to generate the image
+     * @return array|WP_Error Processed image data with url or error
+     */
+    private function process_generated_image($image, $format = 'png', $provider = 'openai', $model = 'dall-e-3', $prompt = '') {
+        try {
+            // ALWAYS generate SEO-friendly metadata from prompt using AI (once for all fields)
+            // This must happen before any early returns so metadata is always generated
+            $seo_metadata = $this->generate_seo_metadata_with_ai($prompt);
+            
+            // Check if image is already a regular URL (not base64)
+            if (isset($image['url']) && (strpos($image['url'], 'http://') === 0 || strpos($image['url'], 'https://') === 0)) {
+                // Image is already a regular URL from the API, return it with SEO metadata
+                return array(
+                    'url' => $image['url'],
+                    'revised_prompt' => $image['revised_prompt'] ?? null,
+                    'title' => $seo_metadata['title'],
+                    'alt' => $seo_metadata['alt']
+                );
+            }
+            
+            // Extract base64 data from the image for processing
+            $base64_data = null;
+            
+            if (isset($image['b64_json'])) {
+                $base64_data = $image['b64_json'];
+            } elseif (isset($image['url']) && strpos($image['url'], 'data:image') === 0) {
+                // Extract base64 from data URL
+                $parts = explode(',', $image['url'], 2);
+                if (count($parts) === 2) {
+                    $base64_data = $parts[1];
+                }
+            }
+            
+            if (empty($base64_data)) {
+                error_log('[MagicAssistant] No base64 data found in image response');
+                return new WP_Error('invalid_image_data', 'No valid image data found');
+            }
+            
+            // Decode base64 data
+            $image_data = base64_decode($base64_data);
+            if ($image_data === false) {
+                return new WP_Error('decode_failed', 'Failed to decode base64 image data');
+            }
+            
+            // Generate SEO-friendly filename
+            $upload_dir = wp_upload_dir();
+            $seo_slug = $seo_metadata['slug'];
+            $filename = $seo_slug . '.' . $format;
+            $filepath = $upload_dir['path'] . '/' . $filename;
+            
+            // Save temporary file
+            $temp_file = $filepath . '.tmp';
+            if (file_put_contents($temp_file, $image_data) === false) {
+                return new WP_Error('save_failed', 'Failed to save temporary image file');
+            }
+            
+            // Use WordPress image editor to convert format and optimize
+            $image_editor = wp_get_image_editor($temp_file);
+            
+            if (is_wp_error($image_editor)) {
+                // Fallback: just move the temp file
+                @unlink($temp_file);
+                if (file_put_contents($filepath, $image_data) === false) {
+                    return new WP_Error('save_failed', 'Failed to save image file');
+                }
+            } else {
+                // Set quality based on format
+                $quality = 90; // High quality by default
+                if ($format === 'jpeg' || $format === 'jpg') {
+                    $quality = 85; // Slightly lower for JPEG to reduce file size
+                } elseif ($format === 'webp') {
+                    $quality = 85; // WebP can maintain quality at lower settings
+                }
+                
+                // Set image quality
+                $image_editor->set_quality($quality);
+                
+                // Save with the desired format
+                $saved = $image_editor->save($filepath, 'image/' . $format);
+                
+                // Clean up temp file
+                @unlink($temp_file);
+                
+                if (is_wp_error($saved)) {
+                    return new WP_Error('conversion_failed', 'Failed to convert image format: ' . $saved->get_error_message());
+                }
+            }
+            
+            // Generate URL for the saved image
+            $image_url = $upload_dir['url'] . '/' . $filename;
+            
+            // Use SEO metadata from earlier generation
+            $seo_title = $seo_metadata['title'];
+            $seo_alt = $seo_metadata['alt'];
+            
+            // Log success
+            error_log('[MagicAssistant] Image processed successfully: ' . json_encode(array(
+                'provider' => $provider,
+                'model' => $model,
+                'format' => $format,
+                'filename' => $filename,
+                'url' => $image_url,
+                'title' => $seo_title,
+                'alt' => $seo_alt
+            )));
+            
+            // Return the same structure but with file URL instead of base64
+            return array(
+                'url' => $image_url,
+                'revised_prompt' => $image['revised_prompt'] ?? null,
+                'title' => $seo_title,
+                'alt' => $seo_alt
+            );
+            
+        } catch (Exception $e) {
+            error_log('[MagicAssistant] Image processing failed: ' . json_encode(array(
+                'error' => $e->getMessage(),
+                'provider' => $provider,
+                'model' => $model
+            )));
+            return new WP_Error('processing_error', $e->getMessage());
+        }
+    }
+    
+    /**
+     * Generate SEO metadata using AI
+     * 
+     * @param string $prompt The image generation prompt
+     * @return array Array with 'slug', 'title', and 'alt' keys
+     */
+    private function generate_seo_metadata_with_ai($prompt) {
+        if (empty($prompt)) {
+            return array(
+                'slug' => 'ai-generated-image-' . time(),
+                'title' => 'AI Generated Image',
+                'alt' => 'AI generated image created with artificial intelligence'
+            );
+        }
+        
+        try {
+            // Use the configured AI provider and model from settings
+            $provider = $this->settings['ai_provider'] ?? 'openai';
+            $api_key = $this->get_api_key($provider);
+            
+            // Create a focused prompt for SEO metadata generation
+            $seo_prompt = "Extract the key subjects and create SEO-optimized metadata for this image description:\n\n\"$prompt\"\n\nProvide ONLY in this exact format:\nFILENAME: [lowercase-with-hyphens, max 50 chars, descriptive keywords only]\nTITLE: [Title Case, max 60 chars, natural and descriptive]\nALT: [Natural sentence, max 125 chars, describe what's in the image]\n\nExamples:\nInput: \"Create a professional photo of a cute cat on a beach\"\nFILENAME: cute-cat-on-beach\nTITLE: Cute Cat On Beach\nALT: A cute cat sitting on a sandy beach\n\nNow generate for the input above:";
+            
+            // Use a simplified system message for SEO generation
+            $custom_system_message = "You are an SEO metadata generator. Generate concise, keyword-rich metadata following the exact format requested. Be brief and precise.";
+            
+            // Use the existing chat infrastructure with empty conversation history
+            // This hooks into all existing logic: usage tracking, cost calculation, error handling, etc.
+            $response = $this->handle_chat_mode(
+                $seo_prompt,              // message
+                array(),                  // empty conversation history
+                $provider,                // provider
+                $api_key,                 // api_key
+                array(),                  // no attached files
+                $custom_system_message,   // custom system message
+                false,                    // web_search_enabled = false
+                2000,                      // max_tokens = 200 (keep it fast and cheap)
+                null,                     // session_id = null (not part of a chat session)
+                null                      // agent_id = null (not using an agent)
+            );
+            
+            // handle_chat_mode returns 'response' not 'content'
+            if (!$response || !isset($response['response']) || empty($response['response'])) {
+                $metadata = $this->generate_seo_metadata_fallback($prompt);
+                $metadata['slug'] = $metadata['slug'] . '-' . time();
+                return $metadata;
+            }
+            
+            // Parse AI response
+            $content = $response['response'];
+            $metadata = $this->parse_seo_response($content);
+            
+            // Validate and sanitize
+            if ($metadata) {
+                // Add timestamp to filename for uniqueness
+                $metadata['slug'] = $metadata['slug'] . '-' . time();
+                return $metadata;
+            }
+            
+            // Fallback if parsing failed
+            $metadata = $this->generate_seo_metadata_fallback($prompt);
+            $metadata['slug'] = $metadata['slug'] . '-' . time();
+            return $metadata;
+            
+        } catch (Exception $e) {
+            $metadata = $this->generate_seo_metadata_fallback($prompt);
+            $metadata['slug'] = $metadata['slug'] . '-' . time();
+            return $metadata;
+        }
+    }
+    
+    /**
+     * Parse AI response for SEO metadata
+     * 
+     * @param string $content AI response content
+     * @return array|null Parsed metadata or null if failed
+     */
+    private function parse_seo_response($content) {
+        $slug = '';
+        $title = '';
+        $alt = '';
+        
+        // Extract FILENAME
+        if (preg_match('/FILENAME:\s*(.+?)(?:\n|$)/i', $content, $matches)) {
+            $slug = trim($matches[1]);
+            // Sanitize: lowercase, remove special chars, max length
+            $slug = strtolower($slug);
+            $slug = preg_replace('/[^a-z0-9-]/', '', $slug);
+            $slug = preg_replace('/-+/', '-', $slug);
+            $slug = trim($slug, '-');
+            $slug = substr($slug, 0, 50);
+        }
+        
+        // Extract TITLE
+        if (preg_match('/TITLE:\s*(.+?)(?:\n|$)/i', $content, $matches)) {
+            $title = trim($matches[1]);
+            $title = substr($title, 0, 60);
+        }
+        
+        // Extract ALT
+        if (preg_match('/ALT:\s*(.+?)(?:\n|$)/i', $content, $matches)) {
+            $alt = trim($matches[1]);
+            $alt = substr($alt, 0, 125);
+        }
+        
+        // Validate all fields are present
+        if (empty($slug) || empty($title) || empty($alt)) {
+            return null;
+        }
+        
+        return array(
+            'slug' => $slug,
+            'title' => $title,
+            'alt' => $alt
+        );
+    }
+    
+    /**
+     * Fallback SEO metadata generation (simple string manipulation)
+     * 
+     * @param string $prompt The image generation prompt
+     * @return array SEO metadata
+     */
+    private function generate_seo_metadata_fallback($prompt) {
+        // Remove common filler words
+        $filler_words = array('create', 'generate', 'make', 'professional', 'high-quality', 'photorealistic', 'image of', 'picture of', 'photo of', 'a ', 'an ', 'the ');
+        $cleaned = str_ireplace($filler_words, ' ', $prompt);
+        $cleaned = preg_replace('/\s+/', ' ', trim($cleaned));
+        
+        // Generate slug (without timestamp - parent function will add it)
+        $slug = strtolower($cleaned);
+        $slug = preg_replace('/[^a-z0-9\s-]/', '', $slug);
+        $slug = preg_replace('/[\s-]+/', '-', $slug);
+        $slug = trim($slug, '-');
+        $slug = substr($slug, 0, 50);
+        
+        // If slug is empty after cleaning, use a default
+        if (empty($slug)) {
+            $slug = 'ai-generated-image';
+        }
+        
+        // Generate title
+        $title = ucwords(strtolower($cleaned));
+        $title = substr($title, 0, 60);
+        if (empty($title)) {
+            $title = 'AI Generated Image';
+        }
+        
+        // Generate alt
+        $alt = ucfirst(trim($cleaned));
+        $alt = substr($alt, 0, 125);
+        if (empty($alt)) {
+            $alt = 'AI generated image';
+        }
+        
+        return array(
+            'slug' => $slug,
+            'title' => $title,
+            'alt' => $alt
+        );
+    }
+    
+    /**
+     * Generate SEO-friendly slug for filename from prompt
+     * 
+     * @param string $prompt The image generation prompt
+     * @return string SEO-friendly slug
+     */
+    private function generate_seo_slug($prompt) {
+        $metadata = $this->generate_seo_metadata_with_ai($prompt);
+        return $metadata['slug'];
+    }
+    
+    /**
+     * Generate SEO-friendly title from prompt
+     * 
+     * @param string $prompt The image generation prompt
+     * @return string SEO-friendly title
+     */
+    private function generate_seo_title($prompt) {
+        $metadata = $this->generate_seo_metadata_with_ai($prompt);
+        return $metadata['title'];
+    }
+    
+    /**
+     * Generate SEO-friendly alt text from prompt
+     * 
+     * @param string $prompt The image generation prompt
+     * @return string SEO-friendly alt text
+     */
+    private function generate_seo_alt($prompt) {
+        $metadata = $this->generate_seo_metadata_with_ai($prompt);
+        return $metadata['alt'];
+    }
+    
+    /**
      * Process streaming chat request and send SSE events
      */
     private function handle_streaming_chat($data) {
@@ -867,6 +1476,10 @@ class AI_Provider {
         $page_context = $data['page_context'] ?? array();
         $session_id = $data['session_id'] ?? $this->generate_session_id();
         $agent_id = $data['agent_id'] ?? null;
+        $site_context_enabled = $data['site_context_enabled'] ?? false;
+        $site_context_pages = $data['site_context_pages'] ?? [];
+        $site_meta_title = $data['site_meta_title'] ?? '';
+        $site_meta_description = $data['site_meta_description'] ?? '';
 
         
         $user_id = get_current_user_id();
@@ -907,6 +1520,26 @@ class AI_Provider {
                 }
             }
             
+            // Normalize agent_mode first to check if we're in bricks mode
+            $normalized_agent_mode = $agent_mode;
+            if ($agent_mode === true || $agent_mode === 'true') {
+                $normalized_agent_mode = 'agent'; // Default agent mode
+            } elseif ($agent_mode === false || $agent_mode === 'false' || $agent_mode === '') {
+                $normalized_agent_mode = false;
+            }
+            // Keep 'bricks' and other string modes as-is
+            
+            // Build site context message for Bricks mode when enabled
+            if ($site_context_enabled && $normalized_agent_mode === 'bricks') {
+                $site_context_message = $this->build_site_context_message($site_context_pages, $site_meta_title, $site_meta_description);
+                if (!empty($site_context_message)) {
+                    array_unshift($conversation_history, array(
+                        'role' => 'system',
+                        'content' => $site_context_message
+                    ));
+                }
+            }
+            
             // Get AI provider settings
             $provider = $this->settings['ai_provider'] ?? 'openai';
             $model = $this->get_model_for_provider($provider);
@@ -930,10 +1563,10 @@ class AI_Provider {
             
             // Use the regular AI handlers but capture response in chunks
             
-            if ($agent_mode) {
-                $result = $this->handle_agent_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens, $session_id, $agent_id);
+            if ($normalized_agent_mode && $normalized_agent_mode !== false) {
+                $result = $this->handle_agent_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens, $session_id, $agent_id, $normalized_agent_mode, $page_context);
             } else {
-                $result = $this->handle_chat_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens, $session_id, $agent_id);
+                $result = $this->handle_chat_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files, $custom_system_message, $web_search_enabled, $max_tokens, $session_id, $agent_id, $normalized_agent_mode, $page_context);
             }
             
             $response_time = microtime(true) - $start_time;
@@ -1032,6 +1665,11 @@ class AI_Provider {
             if (!empty($page_context['context'])) {
                 $context_parts[] = "Context: " . sanitize_text_field($page_context['context']);
             }
+            
+            // Add Bricks framework preference if present (for Bricks mode)
+            if (!empty($page_context['bricks_framework'])) {
+                $context_parts[] = "Bricks Framework Preference: " . sanitize_text_field($page_context['bricks_framework']);
+            }
         }
         
         if (empty($context_parts)) {
@@ -1054,6 +1692,96 @@ class AI_Provider {
         return $context_message;
     }
     
+    /**
+     * Build site context message with selected pages/posts and meta information
+     */
+    private function build_site_context_message($site_context_pages, $site_meta_title, $site_meta_description) {
+        $context_parts = array();
+        
+        // Add site meta information
+        if (!empty($site_meta_title)) {
+            $context_parts[] = "Site Meta Title: " . sanitize_text_field($site_meta_title);
+        }
+        
+        if (!empty($site_meta_description)) {
+            $context_parts[] = "Site Meta Description: " . sanitize_text_field($site_meta_description);
+        }
+        
+        // Fetch and add content from selected pages/posts
+        $selected_content = array();
+        if (!empty($site_context_pages) && is_array($site_context_pages)) {
+            foreach ($site_context_pages as $page_id) {
+                $page_id = intval($page_id);
+                if ($page_id <= 0) {
+                    continue;
+                }
+                
+                $post = get_post($page_id);
+                if (!$post || !current_user_can('read_post', $page_id)) {
+                    continue;
+                }
+                
+                // Get title
+                $title = $post->post_title ?: '(No title)';
+                
+                // Get content - prefer excerpt, otherwise use first 2000 chars of content
+                $content = '';
+                if (!empty($post->post_excerpt)) {
+                    $content = $post->post_excerpt;
+                } else {
+                    // Strip HTML and get first 2000 characters
+                    $content = wp_strip_all_tags($post->post_content);
+                    $content = substr($content, 0, 2000);
+                    if (strlen($post->post_content) > 2000) {
+                        $content .= '...';
+                    }
+                }
+                
+                // Get post type label
+                $post_type_obj = get_post_type_object($post->post_type);
+                $post_type_label = $post_type_obj ? $post_type_obj->labels->singular_name : ucfirst($post->post_type);
+                
+                $selected_content[] = array(
+                    'id' => $page_id,
+                    'title' => $title,
+                    'type' => $post_type_label,
+                    'content' => $content,
+                    'permalink' => get_permalink($page_id)
+                );
+            }
+        }
+        
+        // Build the context message
+        if (empty($context_parts) && empty($selected_content)) {
+            return '';
+        }
+        
+        $context_message = "Site Context Information:\n\n";
+        
+        if (!empty($context_parts)) {
+            $context_message .= implode("\n", $context_parts) . "\n\n";
+        }
+        
+        if (!empty($selected_content)) {
+            $context_message .= "Selected Pages/Posts for Context:\n";
+            foreach ($selected_content as $index => $item) {
+                $context_message .= "\n" . ($index + 1) . ". " . esc_html($item['title']) . " (" . esc_html($item['type']) . ")\n";
+                $context_message .= "   ID: " . $item['id'] . "\n";
+                if (!empty($item['content'])) {
+                    $context_message .= "   Content: " . esc_html($item['content']) . "\n";
+                }
+                if (!empty($item['permalink'])) {
+                    $context_message .= "   URL: " . esc_url($item['permalink']) . "\n";
+                }
+            }
+            $context_message .= "\n";
+        }
+        
+        $context_message .= "Use this information to better understand the website's topic, niche, and content style when recommending components.";
+        
+        return $context_message;
+    }
+    
     private function determine_agent_mode($message) {
         $setting = $this->settings['agent_mode'] ?? 'always';
         
@@ -1072,7 +1800,19 @@ class AI_Provider {
         return false; // Always return false since auto mode is removed
     }
     
-    private function handle_chat_mode($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null, $session_id = null, $agent_id = null) {
+    private function handle_chat_mode($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null, $session_id = null, $agent_id = null, $agent_mode = null, $page_context = null) {
+        // Store current agent mode for tool filtering
+        $this->current_agent_mode = $agent_mode;
+        $this->current_page_context = $page_context; // Store page context for framework injection
+        error_log('=== HANDLE CHAT MODE ===');
+        error_log('Agent Mode: ' . ($agent_mode ?: 'null'));
+        error_log('Provider: ' . $provider);
+        error_log('Session ID: ' . $session_id);
+        if ($agent_mode === 'bricks' && !empty($page_context) && is_array($page_context)) {
+            $framework = $page_context['bricks_framework'] ?? 'NOT SET';
+            error_log('🔧 Bricks Framework from page_context: ' . $framework);
+        }
+        
         // Limit the amount of history we send to the model to save tokens
         $history_limit = $this->settings['conversation_history_limit'] ?? 20;
         if ($history_limit > 0 && is_array($conversation_history) && count($conversation_history) > $history_limit) {
@@ -1080,7 +1820,7 @@ class AI_Provider {
         }
         
         // Use agent system message builder which handles both agent and regular cases
-        $system_message = $this->build_agent_system_message($custom_system_message, $session_id, $agent_id);
+        $system_message = $this->build_agent_system_message($custom_system_message, $session_id, $agent_id, $agent_mode);
         
         // Append file attachments information if present
         if (!empty($attached_files)) {
@@ -1115,6 +1855,8 @@ class AI_Provider {
             $response = $this->call_openai($messages, $api_key, $web_search_enabled, false, $max_tokens);
         } elseif ($provider === 'anthropic') {
             $response = $this->call_anthropic($messages, $api_key, $web_search_enabled, false, $max_tokens);
+        } elseif ($provider === 'google') {
+            $response = $this->call_google($messages, $api_key, $web_search_enabled, false, $max_tokens);
         } elseif ($provider === 'openrouter') {
             $response = $this->call_openrouter($messages, $api_key, $web_search_enabled, false, $max_tokens);
         } else {
@@ -1129,8 +1871,8 @@ class AI_Provider {
         $total_cost += $response['cost'] ?? 0;
         
         // For OpenAI Responses API, tool calls are handled internally in call_openai_responses()
-        // For Anthropic and OpenRouter, we need the manual tool call approach
-        if ($provider === 'anthropic' || $provider === 'openrouter') {
+        // For Anthropic, Google, and OpenRouter, we need the manual tool call approach
+        if ($provider === 'anthropic' || $provider === 'openrouter' || $provider === 'google') {
             // Check if AI wants to use tools
             $has_tool_calls = isset($response['tool_calls']) && !empty($response['tool_calls']);
             
@@ -1183,25 +1925,32 @@ class AI_Provider {
                     
                     // Call AI again to get final response with the tool data
                     $final_response = $this->call_anthropic($messages, $api_key, $web_search_enabled, false, $max_tokens);
-                } else {
-                    // OpenRouter uses OpenAI Chat Completion format
+                } elseif ($provider === 'openrouter' || $provider === 'google') {
+                    // OpenRouter and Google use OpenAI Chat Completion format
                     $messages[] = array(
                         'role' => 'assistant',
                         'content' => $response['content'] ?? '',
                         'tool_calls' => $response['tool_calls']
                     );
                     
-                    // Add tool results for OpenRouter
+                    // Add tool results in OpenAI format (role: 'tool')
+                    // For Google, the proxy will convert these to Google's functionResponse format
                     foreach ($tool_results as $result) {
                         $messages[] = array(
                             'role' => 'tool',
                             'tool_call_id' => $result['tool_call_id'], // Required by OpenAI-style API
+                            'name' => $result['tool'],
                             'content' => json_encode($result)
                         );
                     }
                     
                     // Call AI again to get final response with the tool data
-                    $final_response = $this->call_openrouter($messages, $api_key, $web_search_enabled, false, $max_tokens);
+                    // For Google, pass empty tools array to prevent loops
+                    if ($provider === 'google') {
+                        $final_response = $this->call_google($messages, $api_key, $web_search_enabled, false, $max_tokens, array());
+                    } else {
+                        $final_response = $this->call_openrouter($messages, $api_key, $web_search_enabled, false, $max_tokens);
+                    }
                 }
                 
                 // Track flag for the second call as well
@@ -1232,9 +1981,15 @@ class AI_Provider {
         $tool_calls_count = 0;
         $debug_tool_data = null;
         
-        if ($provider === 'openai' && isset($response['tool_calls_executed_count'])) {
-            $tool_calls_count = $response['tool_calls_executed_count'];
-            $debug_tool_data = $response['debug_tool_data'] ?? null;
+        // Check for tool execution in OpenAI Responses API (both explicit and internal execution)
+        if ($provider === 'openai') {
+            if (isset($response['tool_calls_executed_count'])) {
+                $tool_calls_count = $response['tool_calls_executed_count'];
+            }
+            // Get debug_tool_data from response (includes both manually executed and internally executed tools)
+            if (isset($response['debug_tool_data']) && !empty($response['debug_tool_data'])) {
+                $debug_tool_data = $response['debug_tool_data'];
+            }
         }
         
         // No additional tool calls, return direct response
@@ -1253,7 +2008,18 @@ class AI_Provider {
         );
     }
     
-    private function handle_agent_mode($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null, $session_id = null, $agent_id = null) {
+    private function handle_agent_mode($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null, $session_id = null, $agent_id = null, $agent_mode = null, $page_context = null) {
+        // Store current agent mode for tool filtering
+        $this->current_agent_mode = $agent_mode;
+        $this->current_page_context = $page_context; // Store page context for framework injection
+        error_log('=== HANDLE AGENT MODE ===');
+        error_log('Agent Mode: ' . ($agent_mode ?: 'null'));
+        error_log('Provider: ' . $provider);
+        error_log('Session ID: ' . $session_id);
+        if ($agent_mode === 'bricks') {
+            error_log('✅ BRICKS MODE DETECTED - Will filter to only Bricks tools');
+        }
+        
         // Limit history length to avoid oversized prompts while keeping recent context
         $history_limit = $this->settings['conversation_history_limit'] ?? 20;
         if ($history_limit > 0 && is_array($conversation_history) && count($conversation_history) > $history_limit) {
@@ -1266,7 +2032,7 @@ class AI_Provider {
         $all_tool_results = []; // Store all tool results for final display
         
         // Prepare enhanced system message for agent mode
-        $system_message = $this->build_agent_system_message($custom_system_message, $session_id, $agent_id);
+        $system_message = $this->build_agent_system_message($custom_system_message, $session_id, $agent_id, $agent_mode);
         
         // Append file attachments information if present
         if (!empty($attached_files)) {
@@ -1295,14 +2061,25 @@ class AI_Provider {
         $total_cost   = 0;
         $user_key_used_total = false; // track flag across iterations
         
+        // Track if tools have been used (for Google loop prevention)
+        $tools_executed = false;
+        
         while ($iteration < $max_iterations) {
             $iteration++;
+            
+            // For Google: After ANY tool execution, disable tools to prevent infinite loops
+            $google_tools = null;
+            if ($provider === 'google' && $tools_executed) {
+                $google_tools = array(); // Explicitly pass empty array = no tools
+            }
             
             // Call AI provider
             if ($provider === 'openai') {
                 $response = $this->call_openai($messages, $api_key, $web_search_enabled, false, $max_tokens);
             } elseif ($provider === 'anthropic') {
                 $response = $this->call_anthropic($messages, $api_key, $web_search_enabled, false, $max_tokens);
+            } elseif ($provider === 'google') {
+                $response = $this->call_google($messages, $api_key, $web_search_enabled, false, $max_tokens, $google_tools);
             } elseif ($provider === 'openrouter') {
                 $response = $this->call_openrouter($messages, $api_key, $web_search_enabled, false, $max_tokens);
             } else {
@@ -1317,6 +2094,24 @@ class AI_Provider {
             $total_cost   += $response['cost'] ?? 0;
             
             $has_tool_calls = isset($response['tool_calls']) && !empty($response['tool_calls']);
+            
+            // For OpenAI Responses API, tools might be executed internally
+            // Check if we have debug_tool_data from internally executed tools
+            if ($provider === 'openai' && !$has_tool_calls && isset($response['debug_tool_data']) && !empty($response['debug_tool_data'])) {
+                // Tools were executed internally by Responses API
+                // Merge the tool results into all_tool_results
+                $internal_tool_results = $response['debug_tool_data'];
+                if (is_array($internal_tool_results)) {
+                    $all_tool_results = array_merge($all_tool_results, $internal_tool_results);
+                    $total_tool_calls += count($internal_tool_results);
+                    $tools_executed = true;
+                }
+            }
+            
+            // Mark that tools have been executed
+            if ($has_tool_calls) {
+                $tools_executed = true;
+            }
             
             if ($has_tool_calls) {
                 // Execute tools and continue conversation
@@ -1383,6 +2178,30 @@ class AI_Provider {
                             'content' => json_encode($result)
                         );
                     }
+                } elseif ($provider === 'google') {
+                    // Google format - use OpenAI-style tool messages for consistency
+                    $assistant_message = array(
+                        'role' => 'assistant',
+                        'content' => $response['content'] ?? ''
+                    );
+                    
+                    // Add tool calls if present (for conversation history)
+                    if (!empty($response['tool_calls'])) {
+                        $assistant_message['tool_calls'] = $response['tool_calls'];
+                    }
+                    
+                    $messages[] = $assistant_message;
+                    
+                    // Add tool results in OpenAI format (role: 'tool')
+                    // The proxy will convert these to Google's functionResponse format
+                    foreach ($tool_results as $result) {
+                        $messages[] = array(
+                            'role' => 'tool',
+                            'tool_call_id' => $result['tool_call_id'],
+                            'name' => $result['tool'],
+                            'content' => json_encode($result)
+                        );
+                    }
                 } else {
                     // OpenAI Responses API format (handled internally, shouldn't reach here in agent mode)
                     $messages[] = array(
@@ -1413,6 +2232,7 @@ class AI_Provider {
                 // Tokens & cost for this call were already added above
             } else {
                 // No more tool calls, this is the final response
+                // If tools were executed internally (OpenAI Responses API), we already collected debug_tool_data above
                 $final_response = $response['content'] ?? '';
                 $reasoning_chain[] = array(
                     'step' => $iteration,
@@ -1524,14 +2344,176 @@ class AI_Provider {
         return $formatted;
     }
     
-    private function build_agent_system_message($custom_system_message = null, $session_id = null, $agent_id = null) {
+    private function build_agent_system_message($custom_system_message = null, $session_id = null, $agent_id = null, $agent_mode = null) {
         
         // Check if this is a chatbot request (session_id starts with 'chatbot_')
         $is_chatbot_request = $session_id && strpos($session_id, 'chatbot_') === 0;
         
-        // If custom system message is provided, use it instead of the default
-        if (!empty($custom_system_message)) {
+        // If custom system message is provided (and not Bricks mode), use it instead of the default
+        // Bricks mode ALWAYS uses the Bricks-specific system message to ensure MCP tools are used
+        if (!empty($custom_system_message) && $agent_mode !== 'bricks') {
             return $custom_system_message;
+        }
+        
+        // BRICKS MODE: Use Bricks Component Library MCP tools
+        if ($agent_mode === 'bricks') {
+            error_log('✅ BUILDING BRICKS MODE SYSTEM MESSAGE');
+            error_log('Bricks mode detected - Using Bricks-specific system message and tool filtering');
+            
+            // Get framework preference from page context if available
+            $framework_preference = '';
+            if (!empty($session_id)) {
+                // Try to get from current session/page context
+                // Framework will be in page_context passed with requests
+                // For now, we'll include it in the system message dynamically if available
+            }
+            
+            // Get framework from request context (will be passed via page_context)
+            // Note: Framework preference is passed via page_context.bricks_framework in ChatInterface
+            // The AI should check page_context and use the framework parameter when calling bricks_get_component
+            
+            $system_message = "You are MagicAssistant operating in BRICKS MODE. You help users build pages using the Bricks Builder by leveraging a pre-built component library.
+
+CRITICAL: You MUST use the Bricks Component Library MCP tools - DO NOT generate HTML/CSS/JS from scratch.
+
+IMPORTANT: You have access to ONLY two Bricks-specific tools. DO NOT call 'get_available_tools' - the tools are already available to you. Use them directly.
+
+BRICKS COMPONENT LIBRARY TOOLS:
+You have two essential tools available for working with Bricks components (these are the ONLY tools you need):
+
+1. **bricks_get_component**: Search and retrieve MULTIPLE components from the library for analysis
+   - Use this FIRST when users ask for components (hero sections, headers, footers, pricing tables, etc.)
+   - RETURNS MULTIPLE COMPONENTS: You will receive 10+ components - you MUST analyze ALL of them to select the best match
+   - CRITICAL: Components are GENERIC wireframes/designs usable for ANY website/industry. DO NOT search for industry-specific keywords (e.g., \"tattoo\", \"restaurant\", \"lawyer\", \"SaaS\"). Components work for any business type.
+   - Search by category: header, footer, hero, features, testimonials, pricing, cta, content, forms, galleries, other (REQUIRED for most searches)
+   - Filter by elements: Use sparingly - only when user explicitly mentions specific elements
+   - Search by keywords: ONLY use design/style tags (e.g., \"modern\", \"minimalist\", \"bold\", \"clean\"). NEVER use industry keywords.
+   - Filter by framework: Use 'framework' parameter with value 'Native', 'ACSS', 'CoreFramework', or 'ATF'
+   - IMPORTANT: Check page_context for 'bricks_framework' preference - if present, use it in the framework parameter
+   - Use limit parameter: Start with 10 (default), increase to 20-30 if no suitable match found in first batch
+
+2. **bricks_insert_component**: Insert a component into the Bricks canvas
+   - Use this AFTER analyzing components from bricks_get_component and selecting the best match
+   - Requires component_id (ID or slug from bricks_get_component results)
+   - Returns ready-to-insert Bricks JSON structure
+
+INTELLIGENT COMPONENT SELECTION WORKFLOW:
+1. When user requests a component:
+   
+   STEP 1 - FETCH COMPONENTS:
+   a. Use BROAD search parameters to get multiple options:
+      - For simple requests: Use category ONLY (e.g., category: 'hero', limit: 10)
+      - Keep filters minimal to maximize results
+      - Example: \"hero section for tattoo studio\" → category: 'hero', limit: 10 (ignore industry)
+   
+   STEP 2 - ANALYZE ALL COMPONENTS (CRITICAL):
+   You will receive multiple components. DO NOT just pick the first one. ANALYZE EACH using this framework:
+   
+   **SCORING FRAMEWORK (Total: 100 points)**
+   
+   A. CONTEXT MATCH (40 points):
+      - Infer the user's business context and visual needs from their request
+      - Industry context examples:
+        * Tattoo studio / Creative business → Bold visuals, prominent imagery, artistic style (30-40pts if has large images)
+        * Restaurant / Food business → Appetizing imagery, visual-first design (35-40pts if image-rich)
+        * SaaS / Tech product → Clean, modern, professional, structured (35-40pts if clean layout)
+        * Law firm / Corporate → Professional, text-focused, trustworthy (35-40pts if text-prominent)
+        * E-commerce → Product images, clear CTAs, grid layouts (35-40pts if has image grid + buttons)
+        * Portfolio / Agency → Visual showcase, modern design (35-40pts if image gallery style)
+      - Match the FEELING and STYLE the user needs, even if they don't explicitly say it
+   
+   B. VISUAL ELEMENTS (40 points):
+      - Count and assess image elements:
+        * Large hero images: +15pts
+        * Multiple images (2-4): +10pts
+        * Image galleries (5+): +15pts
+        * No images: 0pts (acceptable for text-focused needs)
+      - Assess media richness:
+        * Video elements: +10pts
+        * Background images: +8pts
+      - Evaluate CTAs:
+        * Prominent buttons: +8pts
+        * Form elements: +7pts
+      - Text-to-visual ratio:
+        * Image-dominant layout: +15pts (for visual businesses)
+        * Balanced layout: +10pts (for general use)
+        * Text-dominant layout: +15pts (for professional/content-heavy needs)
+   
+   C. LAYOUT STRUCTURE (20 points):
+      - Visual hierarchy quality: 0-10pts
+      - Design sophistication: 0-5pts
+      - Framework compatibility: 0-5pts
+   
+   STEP 3 - SELECT BEST MATCH:
+   - Score ALL returned components using the framework above
+   - Select the component with the HIGHEST total score
+   - DO NOT default to the first result - actively choose the best match
+   
+   STEP 4 - INSERT & EXPLAIN:
+   - Call bricks_insert_component with the selected component_id
+   - Briefly explain your selection (1-2 sentences)
+   - Mention key features that made it the best match
+   - Example: \"Inserted hero-modern-3 with prominent image area and bold CTA - perfect for showcasing visual work\"
+
+2. If user says \"insert component X\", directly call bricks_insert_component with that component ID
+
+3. If no suitable component exists after analyzing all results:
+   - Try again with increased limit (20-30) if you only fetched 10
+   - If still no match, inform the user that no suitable component was found
+   - Suggest they browse the library or request customization
+   - DO NOT fall back to generating HTML - only use pre-built components
+
+CRITICAL SELECTION EXAMPLES:
+
+Example 1: \"Create a hero section for my tattoo studio\"
+→ Fetch: category: 'hero', limit: 10
+→ Context: Tattoo studio = creative, visual-first, needs to showcase artwork
+→ Look for: Components with LARGE or MULTIPLE images, bold design
+→ Score high: Components with prominent image areas (Context: 35-40pts, Visual: 30-35pts)
+→ Score low: Text-heavy heroes with small/no images (Context: 15-20pts, Visual: 5-10pts)
+→ Select: Highest scoring component (likely image-prominent design)
+
+Example 2: \"Add a features section for a SaaS product\"
+→ Fetch: category: 'features', limit: 10
+→ Context: SaaS = clean, modern, structured, professional
+→ Look for: Icon-based layouts, grid structure, clear hierarchy
+→ Score high: Clean multi-column layouts with icons (Context: 35-40pts, Layout: 18-20pts)
+→ Select: Most professional, structured option
+
+Example 3: \"Insert a header for a law firm website\"
+→ Fetch: category: 'header', limit: 10
+→ Context: Law firm = professional, trustworthy, text-focused
+→ Look for: Professional navigation, clear structure, minimal visual flair
+→ Score high: Text-prominent, professional headers (Context: 35-40pts, Layout: 18-20pts)
+→ Select: Most professional, clear design
+
+IMPORTANT RULES:
+- ALWAYS fetch multiple components and ANALYZE ALL of them - do not default to first result
+- Use the scoring framework to make intelligent selections
+- Match components to the user's business context, even if they don't explicitly describe visual needs
+- Start with limit: 10, increase to 20-30 if first batch has no good matches
+- DO NOT generate HTML, CSS, or JavaScript - only use pre-built components
+- DO NOT use HTML-to-Bricks conversion - components are already in native Bricks JSON format
+- Keep search filters BROAD (minimal elements/keywords) to get more options for analysis
+- SILENTLY analyze and select - insert the best match without asking for confirmation
+- After insertion, briefly explain why you selected that component
+
+CATEGORIES AVAILABLE:
+- header: Site headers/navigation bars
+- footer: Site footers
+- hero: Hero sections (landing page headers)
+- features: Feature showcase sections
+- testimonials: Testimonial/customer review sections
+- pricing: Pricing table sections
+- cta: Call-to-action sections
+- content: General content sections
+- forms: Contact forms, signup forms
+- galleries: Image galleries
+- other: Miscellaneous components
+
+Be proactive, intelligent, and always select the most visually appropriate component for the user's context.";
+            
+            return $system_message;
         }
         
         // Get agent context - prioritize direct agent_id over session lookup
@@ -2034,7 +3016,22 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             }
             
             // CRITICAL DEBUG: Log what system message is being sent to OpenAI
-            $tools_for_request = $is_using_default_message ? $this->get_mcp_tools_for_openai() : [];
+            // In Bricks mode, always get tools (they will be filtered to only Bricks tools)
+            // Otherwise, only get tools if using default message
+            $is_bricks_mode = ($this->current_agent_mode === 'bricks');
+            $should_get_tools = $is_bricks_mode || $is_using_default_message;
+            
+            error_log('=== TOOL SELECTION FOR OPENAI ===');
+            error_log('is_bricks_mode: ' . ($is_bricks_mode ? 'true' : 'false'));
+            error_log('is_using_default_message: ' . ($is_using_default_message ? 'true' : 'false'));
+            error_log('should_get_tools: ' . ($should_get_tools ? 'true' : 'false'));
+            
+            $tools_for_request = $should_get_tools ? $this->get_mcp_tools_for_openai() : [];
+            
+            error_log('Tools count: ' . count($tools_for_request));
+            if (!empty($tools_for_request)) {
+                error_log('Tools: ' . json_encode(array_column($tools_for_request, 'name')));
+            }
 
             $request_data = array(
                 'action'   => 'openai_responses',
@@ -2182,6 +3179,45 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 foreach ($result['output'] as $output_item) {
                     if (isset($output_item['type']) && $output_item['type'] === 'function_call') {
                         $function_calls[] = $output_item;
+                    }
+                }
+            }
+            
+            // Extract tool results from function_call_output items (when Responses API executes tools internally)
+            if (isset($result['output']) && is_array($result['output'])) {
+                foreach ($result['output'] as $output_item) {
+                    if (isset($output_item['type']) && $output_item['type'] === 'function_call_output') {
+                        // Extract tool execution result from Responses API internal execution
+                        $call_id = $output_item['call_id'] ?? '';
+                        $output_data = $output_item['output'] ?? null;
+                        
+                        // Try to find the corresponding function_call to get the tool name
+                        foreach ($result['output'] as $search_item) {
+                            if (isset($search_item['type']) && $search_item['type'] === 'function_call' && 
+                                ($search_item['call_id'] ?? '') === $call_id) {
+                                $function_name = $search_item['name'] ?? 'unknown';
+                                
+                                // Parse output if it's a JSON string
+                                $parsed_output = $output_data;
+                                if (is_string($output_data)) {
+                                    $json_parsed = json_decode($output_data, true);
+                                    if (json_last_error() === JSON_ERROR_NONE) {
+                                        $parsed_output = $json_parsed;
+                                    }
+                                }
+                                
+                                // Track tool result for debug data
+                                $tool_results_debug[] = array(
+                                    'tool' => $function_name,
+                                    'tool_call_id' => $call_id,
+                                    'result' => $parsed_output,
+                                    'success' => true
+                                );
+                                
+                                $tool_calls_executed++;
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -2392,13 +3428,26 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         // Additional agent detection for conditional tools
         $is_using_agent_context = strpos($system_message, 'AI AGENT CONTEXT') !== false;
         $is_using_default_message = strpos($system_message, 'You are MagicAssistant') !== false;
+        $is_bricks_mode = ($this->current_agent_mode === 'bricks');
+
+        error_log('=== TOOL SELECTION FOR ANTHROPIC ===');
+        error_log('is_bricks_mode: ' . ($is_bricks_mode ? 'true' : 'false'));
+        error_log('is_using_agent_context: ' . ($is_using_agent_context ? 'true' : 'false'));
+        error_log('is_using_default_message: ' . ($is_using_default_message ? 'true' : 'false'));
 
         if ($is_using_agent_context) {
             $tools = []; // No tools for AI Agents - they should have clean custom messages
-        } elseif ($is_using_default_message) {
+            error_log('No tools - using agent context');
+        } elseif ($is_bricks_mode || $is_using_default_message) {
+            // In Bricks mode or default message, get tools (will be filtered in Bricks mode)
             $tools = $this->get_mcp_tools_for_anthropic();
+            error_log('Tools count: ' . count($tools));
+            if (!empty($tools)) {
+                error_log('Tools: ' . json_encode(array_column($tools, 'name')));
+            }
         } else {
             $tools = []; // No tools for custom messages either
+            error_log('No tools - custom message');
         }
 
         $request_data = array(
@@ -2516,6 +3565,153 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $model = $request_data['data']['model'];
             $cost  = $this->calculate_anthropic_cost($model, $usage);
         }
+        return array(
+            'content'        => $content,
+            'tool_calls'     => $tool_calls,
+            'usage'          => $usage,
+            'cost'           => $cost,
+            'user_key_used'  => $userKeyUsed,
+            'credits'        => $credits
+        );
+    }
+    
+    private function call_google($messages, $api_key, $web_search_enabled = false, $is_streaming = false, $max_tokens = null, $tools = null) {
+        // Refresh settings from database to get latest Google API key and model
+        if ($this->db) {
+            $this->settings = $this->db->get_all_settings();
+        }
+        
+        $model = $this->get_model_for_provider('google');
+        $license_key = $this->get_license_key();
+        
+        // Check if using user's own API key
+        $user_api_key = $this->settings['google_api_key'] ?? '';
+        $userKeyUsed = !empty($user_api_key);
+        
+        // Get proxy URL (default to production proxy)
+        $proxy_url = $this->settings['proxy_url'] ?? 'https://proxy.magicplugins.io';
+        $endpoint = $proxy_url . '/api/proxy/google';
+        
+        // Extract system message to detect agent mode
+        $system_message = '';
+        foreach ($messages as $message) {
+            if ($message['role'] === 'system') {
+                if (!empty($system_message)) {
+                    $system_message .= "\n\n" . $message['content'];
+                } else {
+                    $system_message = $message['content'];
+                }
+            }
+        }
+        
+        // Agent detection for conditional tools
+        $is_using_default_message = strpos($system_message, 'You are MagicAssistant') !== false;
+        
+        // Auto-get MCP tools if using default system message and no explicit tools provided
+        // If $tools is an empty array, it means we explicitly want NO tools (to prevent loops)
+        if ($tools === null && $is_using_default_message) {
+            $tools = $this->get_mcp_tools_for_google();
+        } elseif (is_array($tools) && empty($tools)) {
+            // Explicitly passed empty array = no tools wanted
+            $tools = array();
+        }
+        
+        // Build request data
+        $request_data = array(
+            'data' => array(
+                'messages' => $messages,
+                'model' => $model,
+                'temperature' => 0.7,
+                'max_tokens' => $max_tokens ?? 8192
+            )
+        );
+        
+        // Add tools if provided or auto-retrieved
+        // Explicitly check: only add if tools exist AND array has elements
+        if (is_array($tools) && count($tools) > 0) {
+            $request_data['data']['tools'] = $tools;
+        }
+        
+        // Prepare headers
+        $headers = array(
+            'Content-Type' => 'application/json',
+            'X-Site-URL' => get_site_url(),
+        );
+        
+        // Add license key if available
+        if (!empty($license_key)) {
+            $headers['X-License-Key'] = $license_key;
+        }
+        
+        // Add user API key if available
+        if (!empty($user_api_key)) {
+            $headers['X-User-API-Key'] = $user_api_key;
+        }
+        
+        // Add web search header if enabled
+        if ($web_search_enabled) {
+            $headers['X-Web-Search-Enabled'] = 'true';
+        }
+        
+        // Make request to proxy
+        $response = wp_remote_post($endpoint, array(
+            'headers' => $headers,
+            'body' => wp_json_encode($request_data),
+            'timeout' => 300,
+        ));
+        
+        if (is_wp_error($response)) {
+            throw new Exception('Google API error: ' . $response->get_error_message());
+        }
+        
+        $response_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        $result = json_decode($response_body, true);
+        
+        if ($response_code !== 200) {
+            $error_message = $result['error'] ?? 'Unknown error occurred';
+            throw new Exception('Google API error: ' . $error_message);
+        }
+        
+        if (!$result['success']) {
+            throw new Exception($result['error'] ?? 'Unknown error');
+        }
+        
+        $data = $result['data'] ?? array();
+        $credits = $result['credits'] ?? array();
+        
+        // Extract content, tool calls, and usage
+        $content = $data['content'] ?? '';
+        $tool_calls = $data['tool_calls'] ?? array();
+        $usage = $data['usage'] ?? array();
+        $cost = 0;
+        
+        // Calculate cost based on tokens if using proxy key
+        if (!$userKeyUsed && !empty($usage)) {
+            $input_tokens = $usage['input_tokens'] ?? 0;
+            $output_tokens = $usage['output_tokens'] ?? 0;
+            $total_tokens = $usage['total_tokens'] ?? ($input_tokens + $output_tokens);
+            
+            // Google Gemini pricing (approximate)
+            // Gemini 2.5 Pro: $1.25/$5.00 per million tokens (input/output)
+            // Gemini 2.5 Flash: $0.075/$0.30 per million tokens (input/output)
+            if (strpos($model, '2.5-pro') !== false) {
+                $cost = ($input_tokens / 1000000 * 1.25) + ($output_tokens / 1000000 * 5.00);
+            } elseif (strpos($model, '2.5-flash') !== false) {
+                $cost = ($input_tokens / 1000000 * 0.075) + ($output_tokens / 1000000 * 0.30);
+            } elseif (strpos($model, '2.0-flash-lite') !== false) {
+                $cost = ($input_tokens / 1000000 * 0.025) + ($output_tokens / 1000000 * 0.10);
+            } else {
+                // Default pricing for older models
+                $cost = ($input_tokens / 1000000 * 0.25) + ($output_tokens / 1000000 * 1.00);
+            }
+        }
+        
+        // If streaming is enabled, stream the content back
+        if ($is_streaming && !empty($content)) {
+            $this->stream_content_in_chunks($content);
+        }
+        
         return array(
             'content'        => $content,
             'tool_calls'     => $tool_calls,
@@ -2692,6 +3888,35 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
         $registered_tools = $this->mcp_server->get_registered_tools();
         
+        // BRICKS MODE: Only return Bricks-specific tools
+        if ($this->current_agent_mode === 'bricks') {
+            error_log('BRICKS MODE: Filtering to only Bricks component tools');
+            $bricks_tools = ['bricks_get_component', 'bricks_insert_component'];
+            $openai_tools = [];
+            
+            foreach ($bricks_tools as $tool_name) {
+                if (isset($registered_tools[$tool_name])) {
+                    $tool = $registered_tools[$tool_name];
+                    $description = isset($tool['description']) ? mb_substr($tool['description'], 0, 160) : '';
+                    $schema = $tool['inputSchema'] ?? array('type' => 'object');
+                    $schema = $this->compress_tool_schema($schema);
+
+                    $openai_tools[] = array(
+                        'type'        => 'function',
+                        'name'        => $tool_name,
+                        'description' => $description,
+                        'parameters'  => $schema,
+                    );
+                    error_log('BRICKS MODE: Added tool: ' . $tool_name);
+                } else {
+                    error_log('BRICKS MODE: WARNING - Tool not found: ' . $tool_name);
+                }
+            }
+            
+            error_log('BRICKS MODE: Total Bricks tools available: ' . count($openai_tools));
+            return $openai_tools;
+        }
+        
         // Check if tools have been discovered via the discovery tool
         if ($this->mcp_server->get_tools_discovered()) {
             // After discovery, provide all tools but limit to stay under OpenAI's 128 tool limit
@@ -2747,7 +3972,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             return $openai_tools;
         }
 
-        // Initially, return only the discovery tool
+        // Initially, return only the discovery tool (unless in Bricks mode - already handled above)
         $tool = $registered_tools['get_available_tools'];
         $description = isset($tool['description']) ? $tool['description'] : '';
         $schema = $tool['inputSchema'] ?? array('type' => 'object');
@@ -2761,12 +3986,137 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         )];
     }
     
+    private function get_mcp_tools_for_google() {
+        if (!$this->mcp_server || !$this->mcp_server->is_enabled()) {
+            return [];
+        }
+
+        $registered_tools = $this->mcp_server->get_registered_tools();
+        
+        // BRICKS MODE: Only return Bricks-specific tools
+        if ($this->current_agent_mode === 'bricks') {
+            error_log('BRICKS MODE: Filtering to only Bricks component tools (Google)');
+            $bricks_tools = ['bricks_get_component', 'bricks_insert_component'];
+            $google_tools = [];
+            
+            foreach ($bricks_tools as $tool_name) {
+                if (isset($registered_tools[$tool_name])) {
+                    $tool = $registered_tools[$tool_name];
+                    $description = isset($tool['description']) ? mb_substr($tool['description'], 0, 160) : '';
+                    $schema = $tool['inputSchema'] ?? array('type' => 'object');
+                    $schema = $this->compress_tool_schema_for_google($schema);
+
+                    $google_tools[] = array(
+                        'name'        => $tool_name,
+                        'description' => $description,
+                        'parameters'  => $schema,
+                    );
+                    error_log('BRICKS MODE: Added tool (Google): ' . $tool_name);
+                }
+            }
+            
+            error_log('BRICKS MODE: Total Bricks tools available (Google): ' . count($google_tools));
+            return $google_tools;
+        }
+        
+        // Check if tools have been discovered via the discovery tool
+        if ($this->mcp_server->get_tools_discovered()) {
+            // After discovery, provide all tools
+            $google_tools = [];
+            $tool_count = 0;
+            $max_tools = 120; // Google also has limits
+            
+            foreach ($registered_tools as $name => $tool) {
+                // Skip the discovery tool itself once it's been used
+                if ($name === 'get_available_tools') {
+                    continue;
+                }
+                
+                if ($tool_count >= $max_tools) {
+                    break;
+                }
+                
+                $description = isset($tool['description']) ? mb_substr($tool['description'], 0, 160) : '';
+                $schema = $tool['inputSchema'] ?? array('type' => 'object');
+                $schema = $this->compress_tool_schema_for_google($schema);
+
+                // Google format: function declarations
+                $google_tools[] = array(
+                    'name'        => $name,
+                    'description' => $description,
+                    'parameters'  => $schema,
+                );
+                $tool_count++;
+            }
+            return $google_tools;
+        }
+        
+        // Check if the dynamic discovery tool exists
+        if (!isset($registered_tools['get_available_tools'])) {
+            $essential_tools = ['wp_get_page', 'wp_get_post', 'wp_list_media', 'wp_posts_search', 'wp_pages_search'];
+            $google_tools = [];
+            foreach ($essential_tools as $name) {
+                if (isset($registered_tools[$name])) {
+                    $tool = $registered_tools[$name];
+                    $description = isset($tool['description']) ? mb_substr($tool['description'], 0, 160) : '';
+                    $schema = $tool['inputSchema'] ?? array('type' => 'object');
+                    $schema = $this->compress_tool_schema_for_google($schema);
+
+                    $google_tools[] = array(
+                        'name'        => $name,
+                        'description' => $description,
+                        'parameters'  => $schema,
+                    );
+                }
+            }
+            return $google_tools;
+        }
+
+        // Initially, return only the discovery tool
+        $tool = $registered_tools['get_available_tools'];
+        $description = isset($tool['description']) ? $tool['description'] : '';
+        $schema = $tool['inputSchema'] ?? array('type' => 'object');
+        $schema = $this->compress_tool_schema_for_google($schema);
+
+        return [array(
+            'name'        => 'get_available_tools',
+            'description' => $description,
+            'parameters'  => $schema,
+        )];
+    }
+    
     private function get_mcp_tools_for_anthropic() {
         if (!$this->mcp_server || !$this->mcp_server->is_enabled()) {
             return [];
         }
 
         $registered_tools = $this->mcp_server->get_registered_tools();
+        
+        // BRICKS MODE: Only return Bricks-specific tools
+        if ($this->current_agent_mode === 'bricks') {
+            error_log('BRICKS MODE: Filtering to only Bricks component tools (Anthropic)');
+            $bricks_tools = ['bricks_get_component', 'bricks_insert_component'];
+            $anthropic_tools = [];
+            
+            foreach ($bricks_tools as $tool_name) {
+                if (isset($registered_tools[$tool_name])) {
+                    $tool = $registered_tools[$tool_name];
+                    $description = isset($tool['description']) ? mb_substr($tool['description'], 0, 160) : '';
+                    $schema = $tool['inputSchema'] ?? array('type' => 'object');
+                    $schema = $this->compress_tool_schema($schema);
+
+                    $anthropic_tools[] = array(
+                        'name'         => $tool_name,
+                        'description'  => $description,
+                        'input_schema' => $schema,
+                    );
+                    error_log('BRICKS MODE: Added tool (Anthropic): ' . $tool_name);
+                }
+            }
+            
+            error_log('BRICKS MODE: Total Bricks tools available (Anthropic): ' . count($anthropic_tools));
+            return $anthropic_tools;
+        }
         
         // Check if tools have been discovered via the discovery tool
         if ($this->mcp_server->get_tools_discovered()) {
@@ -2836,6 +4186,29 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     private function execute_mcp_tool($tool_name, $tool_args) {
         if (!$this->mcp_server) {
             throw new Exception('MCP server not available');
+        }
+
+        // Auto-inject framework preference for bricks_get_component in Bricks mode
+        if ($tool_name === 'bricks_get_component' && $this->current_agent_mode === 'bricks') {
+            // Only inject framework when searching (component_id is empty), not when fetching a specific component
+            if (empty($tool_args['component_id']) && empty($tool_args['framework'])) {
+                // We're searching, so inject framework from page_context
+                if (!empty($this->current_page_context) && is_array($this->current_page_context)) {
+                    $framework_preference = $this->current_page_context['bricks_framework'] ?? null;
+                    if (!empty($framework_preference) && in_array($framework_preference, array('Native', 'ACSS', 'CoreFramework', 'ATF'))) {
+                        $tool_args['framework'] = $framework_preference;
+                        error_log('🔧 Auto-injecting framework from page_context: ' . $framework_preference);
+                    } else {
+                        // Default to Native if not specified
+                        $tool_args['framework'] = 'Native';
+                        error_log('🔧 Using default framework (preference not found): Native');
+                    }
+                } else {
+                    // Default to Native if no page_context available
+                    $tool_args['framework'] = 'Native';
+                    error_log('🔧 Using default framework (no page_context): Native');
+                }
+            }
         }
 
         // Execute the requested tool
@@ -3324,7 +4697,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     
     public function check_permissions() {
         $can_manage = current_user_can('manage_options');
-        error_log('BRICKS PERMISSIONS CHECK: ' . ($can_manage ? 'ALLOWED' : 'DENIED'));
         return $can_manage;
     }
     
@@ -3564,7 +4936,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     /**
      * Handle chat mode with streaming responses
      */
-    private function handle_chat_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null, $session_id = null, $agent_id = null) {
+    private function handle_chat_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null, $session_id = null, $agent_id = null, $agent_mode = null, $page_context = null) {
+        // Store current agent mode for tool filtering
+        $this->current_agent_mode = $agent_mode;
+        $this->current_page_context = $page_context; // Store page context for framework injection
+        
         // Reset processing steps for new conversation
         $this->processing_steps = [];
         // Enable streaming mode for tool execution status updates
@@ -3582,7 +4958,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $this->send_status_update("Building system message...");
         
         // Use agent system message builder which handles both agent and regular cases
-        $system_message = $this->build_agent_system_message($custom_system_message, $session_id, $agent_id);
+        $system_message = $this->build_agent_system_message($custom_system_message, $session_id, $agent_id, $agent_mode);
         
         // Append file attachments information if present
         if (!empty($attached_files)) {
@@ -3611,6 +4987,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $response = $this->call_openai($messages, $api_key, $web_search_enabled, true, $max_tokens);
         } elseif ($provider === 'anthropic') {
             $response = $this->call_anthropic($messages, $api_key, $web_search_enabled, true, $max_tokens);
+        } elseif ($provider === 'google') {
+            $response = $this->call_google($messages, $api_key, $web_search_enabled, true, $max_tokens);
         } elseif ($provider === 'openrouter') {
             $response = $this->call_openrouter($messages, $api_key, $web_search_enabled, true, $max_tokens);
         } else {
@@ -3741,6 +5119,39 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     $response = $final_response;
                     
                     $this->send_status_update("Processing final response...");
+                } elseif ($provider === 'google') {
+                    // Google format - use OpenAI-style tool messages for consistency
+                    $messages[] = array(
+                        'role' => 'assistant',
+                        'content' => $response['content'] ?? '',
+                        'tool_calls' => $response['tool_calls']
+                    );
+                    
+                    // Add tool results in OpenAI format (role: 'tool')
+                    // The proxy will convert these to Google's functionResponse format
+                    foreach ($tool_results as $result) {
+                        $messages[] = array(
+                            'role' => 'tool',
+                            'tool_call_id' => $result['tool_call_id'],
+                            'name' => $result['tool'],
+                            'content' => json_encode($result)
+                        );
+                    }
+                    
+                    // Get final response from Google WITHOUT tools to prevent infinite loops
+                    $this->send_status_update("Getting final response from Google...");
+                    $final_response = $this->call_google($messages, $api_key, $web_search_enabled, true, $max_tokens, array());
+
+                    // Track additional usage
+                    $total_tokens += $this->extract_token_count($final_response, $provider) ?? 0;
+                    $total_cost += $final_response['cost'] ?? 0;
+                    $user_key_used = $user_key_used || ($final_response['user_key_used'] ?? false);
+                    $credits = $final_response['credits'] ?? $credits;
+                    
+                    // Use the final response content
+                    $response = $final_response;
+                    
+                    $this->send_status_update("Processing final response...");
                 }
             }
         }
@@ -3779,7 +5190,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     /**
      * Handle agent mode with streaming responses
      */
-    private function handle_agent_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null, $session_id = null, $agent_id = null) {
+    private function handle_agent_mode_streaming($message, $conversation_history, $provider, $api_key, $attached_files = [], $custom_system_message = null, $web_search_enabled = false, $max_tokens = null, $session_id = null, $agent_id = null, $agent_mode = null, $page_context = null) {
+        // Store current agent mode for tool filtering
+        $this->current_agent_mode = $agent_mode;
+        $this->current_page_context = $page_context; // Store page context for framework injection
+        
         // Reset processing steps for new conversation
         $this->processing_steps = [];
         // Enable streaming mode for tool execution status updates
@@ -3803,7 +5218,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $this->send_status_update("Building enhanced agent system message...");
         
         // Prepare enhanced system message for agent mode
-        $system_message = $this->build_agent_system_message($custom_system_message, $session_id, $agent_id);
+        $system_message = $this->build_agent_system_message($custom_system_message, $session_id, $agent_id, $agent_mode);
         
         // Append file attachments information if present
         if (!empty($attached_files)) {
@@ -3842,6 +5257,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 $response = $this->call_openai($messages, $api_key, $web_search_enabled, true, $max_tokens);
             } elseif ($provider === 'anthropic') {
                 $response = $this->call_anthropic($messages, $api_key, $web_search_enabled, true, $max_tokens);
+            } elseif ($provider === 'google') {
+                $response = $this->call_google($messages, $api_key, $web_search_enabled, true, $max_tokens);
             } elseif ($provider === 'openrouter') {
                 $response = $this->call_openrouter($messages, $api_key, $web_search_enabled, true, $max_tokens);
             } else {
@@ -3961,19 +5378,21 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     $final_response = $final_response_data['content'] ?? '';
                     break; // Exit the loop with final response
                     
-                } elseif ($provider === 'openrouter') {
-                    // OpenRouter uses OpenAI Chat Completion format
+                } elseif ($provider === 'openrouter' || $provider === 'google') {
+                    // OpenRouter and Google use OpenAI Chat Completion format
                     $messages[] = array(
                         'role' => 'assistant',
                         'content' => $response['content'] ?? '',
                         'tool_calls' => $response['tool_calls']
                     );
                     
-                    // Add tool results to conversation
+                    // Add tool results to conversation in OpenAI format (role: 'tool')
+                    // For Google, the proxy will convert these to Google's functionResponse format
                     foreach ($current_tool_results as $result) {
                         $messages[] = array(
                             'role' => 'tool',
                             'tool_call_id' => $result['tool_call_id'],
+                            'name' => $result['tool'],
                             'content' => json_encode($result)
                         );
                     }
@@ -3985,8 +5404,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         $reasoning_chain[] = $response['content'];
                     }
                     
-                    // Continue loop for OpenRouter to process tool results
-                    // OpenRouter needs another iteration to generate the final response
+                    // Continue loop to process tool results
+                    // Both OpenRouter and Google need another iteration to generate the final response
                     continue;
                 } else {
                     // OpenAI Responses API format
@@ -4115,6 +5534,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 return $this->settings['openai_api_key'] ?? '';
             case 'anthropic':
                 return $this->settings['anthropic_api_key'] ?? '';
+            case 'google':
+                return $this->settings['google_api_key'] ?? '';
             case 'openrouter':
                 return $this->settings['openrouter_api_key'] ?? '';
             default:
@@ -4178,6 +5599,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 return 'Connecting to OpenAI API...';
             case 'anthropic':
                 return 'Connecting to Anthropic Claude...';
+            case 'google':
+                return 'Connecting to Google Gemini...';
             case 'openrouter':
                 return 'Routing through OpenRouter...';
             default:
@@ -4194,6 +5617,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 return $this->settings['openai_model'] ?? 'gpt-4.1-mini';
             case 'anthropic':
                 return $this->settings['anthropic_model'] ?? 'claude-sonnet-4-5-20250929';
+            case 'google':
+                return $this->settings['google_model'] ?? 'gemini-2.5-flash';
             case 'openrouter':
                 return $this->settings['openrouter_model'] ?? 'openai/gpt-4.1-mini';
             default:
@@ -4728,6 +6153,47 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
         
         // Ensure the schema has the minimum required structure for OpenAI
+        if ($schema['type'] === 'object' && !isset($schema['properties'])) {
+            $schema['properties'] = array();
+        }
+        
+        return $schema;
+    }
+    
+    private function compress_tool_schema_for_google($schema) {
+        // Google Gemini has stricter schema requirements than OpenAI
+        // It doesn't support: additionalProperties, description, examples, title, default
+        if (!is_array($schema)) {
+            return $schema;
+        }
+        
+        // Ensure we have a valid schema object
+        if (empty($schema) || !isset($schema['type'])) {
+            return array(
+                'type' => 'object',
+                'properties' => array()
+            );
+        }
+        
+        // Keys that Google doesn't support or are non-essential
+        $remove_keys = ['additionalProperties', 'description', 'examples', 'title', 'default'];
+        foreach ($remove_keys as $rk) {
+            if (isset($schema[$rk])) {
+                unset($schema[$rk]);
+            }
+        }
+        
+        if (isset($schema['properties']) && is_array($schema['properties'])) {
+            foreach ($schema['properties'] as $prop => $subSchema) {
+                $schema['properties'][$prop] = $this->compress_tool_schema_for_google($subSchema);
+            }
+        }
+        
+        if (isset($schema['items'])) {
+            $schema['items'] = $this->compress_tool_schema_for_google($schema['items']);
+        }
+        
+        // Ensure the schema has the minimum required structure
         if ($schema['type'] === 'object' && !isset($schema['properties'])) {
             $schema['properties'] = array();
         }
@@ -7412,6 +8878,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 $api_key = $this->settings['openai_api_key'] ?? '';
             } elseif ($provider === 'anthropic') {
                 $api_key = $this->settings['anthropic_api_key'] ?? '';
+            } elseif ($provider === 'google') {
+                $api_key = $this->settings['google_api_key'] ?? '';
             } elseif ($provider === 'openrouter') {
                 $api_key = $this->settings['openrouter_api_key'] ?? '';
             }
@@ -7421,6 +8889,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 $response = $this->call_openai($messages, $api_key, false);
             } elseif ($provider === 'anthropic') {
                 $response = $this->call_anthropic($messages, $api_key, false);
+            } elseif ($provider === 'google') {
+                $response = $this->call_google($messages, $api_key, false);
             } elseif ($provider === 'openrouter') {
                 $response = $this->call_openrouter($messages, $api_key, false);
             } else {
@@ -8352,6 +9822,430 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         );
     }
     
+    /**
+     * Save image to WordPress Media Library
+     * Works with both local (already in uploads) and remote images
+     */
+    public function save_to_media_library($request) {
+        $data = $request->get_json_params();
+        
+        $image_url = isset($data['image_url']) ? esc_url_raw($data['image_url']) : '';
+        $title     = sanitize_text_field($data['title'] ?? 'AI Generated Image');
+        $alt       = sanitize_text_field($data['alt'] ?? $title);
+        
+        if (empty($image_url)) {
+            return new WP_Error('missing_url', 'Image URL required', array('status' => 400));
+        }
+        
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        require_once ABSPATH . 'wp-admin/includes/media.php';
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+        
+        $attachment_id = null;
+        
+        // Check if this is a local file (already in uploads directory)
+        $upload_dir = wp_upload_dir();
+        $is_local = strpos($image_url, $upload_dir['baseurl']) === 0;
+        
+        if ($is_local) {
+            // Convert URL to file path
+            $file_path = str_replace($upload_dir['baseurl'], $upload_dir['basedir'], $image_url);
+            
+            if (!file_exists($file_path)) {
+                return new WP_Error('file_not_found', 'Local image file not found', array('status' => 404));
+            }
+            
+            // Check if this image is already in media library
+            $existing_attachment_id = attachment_url_to_postid($image_url);
+            if ($existing_attachment_id) {
+                return array(
+                    'success' => true,
+                    'attachment_id' => $existing_attachment_id,
+                    'url' => $image_url,
+                    'message' => 'Image already exists in Media Library',
+                    'already_existed' => true
+                );
+            }
+            
+            // Get file info
+            $filename = basename($file_path);
+            $filetype = wp_check_filetype($filename);
+            
+            // Prepare attachment data
+            $attachment = array(
+                'guid'           => $image_url,
+                'post_mime_type' => $filetype['type'],
+                'post_title'     => $title,
+                'post_content'   => '',
+                'post_status'    => 'inherit'
+            );
+            
+            // Insert attachment
+            $attachment_id = wp_insert_attachment($attachment, $file_path);
+            
+            if (is_wp_error($attachment_id)) {
+                return new WP_Error('attachment_failed', $attachment_id->get_error_message(), array('status' => 500));
+            }
+            
+            // Generate attachment metadata
+            $attach_data = wp_generate_attachment_metadata($attachment_id, $file_path);
+            wp_update_attachment_metadata($attachment_id, $attach_data);
+            
+        } else {
+            // Remote image - download it first
+            $tmp = download_url($image_url);
+            if (is_wp_error($tmp)) {
+                return new WP_Error('download_failed', $tmp->get_error_message(), array('status' => 500));
+            }
+            
+            // Create filename from title - sanitize for filesystem
+            $filename = !empty($title) ? $title : 'image-' . uniqid();
+            $filename = strtolower(trim($filename));
+            $filename = sanitize_file_name($filename); // Use WordPress sanitizer
+            $filename = preg_replace('/[^a-z0-9.-]+/', '-', $filename);
+            $filename = trim($filename, '-');
+            
+            // Get extension from URL or default to jpg
+            $path_info = pathinfo(parse_url($image_url, PHP_URL_PATH));
+            $extension = $path_info['extension'] ?? 'jpg';
+            
+            // Ensure valid image extension
+            if (!in_array(strtolower($extension), array('jpg', 'jpeg', 'png', 'gif', 'webp'))) {
+                $extension = 'jpg';
+            }
+            
+            $file_array = array(
+                'name'     => sanitize_file_name($filename . '.' . $extension),
+                'tmp_name' => $tmp,
+            );
+            
+            // Upload to media library
+            $attachment_id = media_handle_sideload($file_array, 0, $alt);
+            
+            if (is_wp_error($attachment_id)) {
+                @unlink($tmp);
+                return new WP_Error('media_error', $attachment_id->get_error_message(), array('status' => 500));
+            }
+        }
+        
+        // Set alt text
+        if (!empty($alt)) {
+            update_post_meta($attachment_id, '_wp_attachment_image_alt', $alt);
+        }
+        
+        // Mark as AI generated
+        update_post_meta($attachment_id, '_ai_generated', true);
+        update_post_meta($attachment_id, '_ai_generated_date', current_time('mysql'));
+        
+        $attachment_url = wp_get_attachment_url($attachment_id);
+        
+        return array(
+            'success' => true,
+            'attachment_id' => $attachment_id,
+            'url' => $attachment_url,
+            'message' => 'Image saved to Media Library successfully!'
+        );
+    }
+    
+    /**
+     * Replace an existing attachment's file with a new image
+     * This is used for the image editor to update the current image
+     */
+    public function replace_attachment_file($request) {
+        $data = $request->get_json_params();
+        
+        $image_url = isset($data['image_url']) ? esc_url_raw($data['image_url']) : '';
+        $attachment_id = isset($data['attachment_id']) ? intval($data['attachment_id']) : 0;
+        $title = isset($data['title']) ? sanitize_text_field($data['title']) : '';
+        $alt = isset($data['alt']) ? sanitize_text_field($data['alt']) : '';
+        
+        if (empty($image_url)) {
+            return new WP_Error('missing_url', 'Image URL required', array('status' => 400));
+        }
+        
+        if (empty($attachment_id)) {
+            return new WP_Error('missing_attachment', 'Attachment ID required', array('status' => 400));
+        }
+        
+        // Verify attachment exists and user has permission to edit it
+        $attachment = get_post($attachment_id);
+        if (!$attachment || $attachment->post_type !== 'attachment') {
+            return new WP_Error('invalid_attachment', 'Attachment not found', array('status' => 404));
+        }
+        
+        if (!current_user_can('edit_post', $attachment_id)) {
+            return new WP_Error('permission_denied', 'You do not have permission to edit this attachment', array('status' => 403));
+        }
+        
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        require_once ABSPATH . 'wp-admin/includes/media.php';
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+        
+        $upload_dir = wp_upload_dir();
+        $is_local = strpos($image_url, $upload_dir['baseurl']) === 0;
+        
+        $new_file_path = null;
+        $old_file_path = get_attached_file($attachment_id);
+        $old_metadata = wp_get_attachment_metadata($attachment_id);
+        
+        // Backup the original file path and metadata if this is the first edit
+        $edit_history = get_post_meta($attachment_id, '_ai_edit_history', true);
+        if (!is_array($edit_history)) {
+            $edit_history = array();
+        }
+        
+        // If no backup exists yet, create one by copying the original file
+        $has_backup = get_post_meta($attachment_id, '_ai_original_file', true);
+        if (!$has_backup && $old_file_path && file_exists($old_file_path)) {
+            // Copy original file to a backup location
+            $original_filename = basename($old_file_path);
+            $original_info = pathinfo($original_filename);
+            $backup_filename = $original_info['filename'] . '-original-' . time() . '.' . $original_info['extension'];
+            $backup_path = dirname($old_file_path) . '/' . $backup_filename;
+            
+            if (@copy($old_file_path, $backup_path)) {
+                // Save backup file path and original file path
+                update_post_meta($attachment_id, '_ai_original_file', $backup_path);
+                update_post_meta($attachment_id, '_ai_original_file_original', $old_file_path); // Keep reference to original name
+                update_post_meta($attachment_id, '_ai_original_metadata', $old_metadata);
+                
+                // Initialize edit history with original state
+                $edit_history[] = array(
+                    'timestamp' => current_time('mysql'),
+                    'file_path' => $backup_path,
+                    'original_file_path' => $old_file_path,
+                    'metadata' => $old_metadata,
+                    'type' => 'original'
+                );
+            }
+        }
+        
+        if ($is_local) {
+            // Local file - convert URL to path
+            $new_file_path = str_replace($upload_dir['baseurl'], $upload_dir['basedir'], $image_url);
+            
+            if (!file_exists($new_file_path)) {
+                return new WP_Error('file_not_found', 'Local image file not found', array('status' => 404));
+            }
+        } else {
+            // Remote file - download it
+            $tmp = download_url($image_url);
+            if (is_wp_error($tmp)) {
+                return new WP_Error('download_failed', $tmp->get_error_message(), array('status' => 500));
+            }
+            
+            // Get original filename to preserve extension if possible
+            $original_file = get_attached_file($attachment_id);
+            $original_ext = pathinfo($original_file, PATHINFO_EXTENSION);
+            
+            // Determine extension from URL or use original
+            $path_info = pathinfo(parse_url($image_url, PHP_URL_PATH));
+            $extension = isset($path_info['extension']) ? strtolower($path_info['extension']) : $original_ext;
+            if (empty($extension)) {
+                $extension = $original_ext ?: 'jpg';
+            }
+            
+            // Move to uploads directory with proper filename - use same name as original to replace it
+            $filename = basename($original_file);
+            $new_file_path = dirname($old_file_path) . '/' . $filename;
+            
+            // If file exists, we'll replace it, but first backup the current one if not already backed up
+            if (file_exists($new_file_path) && $new_file_path !== $old_file_path) {
+                // This shouldn't happen, but just in case
+                $backup_path = $new_file_path . '.backup.' . time();
+                @copy($new_file_path, $backup_path);
+            }
+            
+            if (!copy($tmp, $new_file_path)) {
+                @unlink($tmp);
+                return new WP_Error('copy_failed', 'Failed to copy file to uploads directory', array('status' => 500));
+            }
+            
+            @unlink($tmp);
+        }
+        
+        // Use WordPress's native wp_save_image function to properly integrate with undo/redo
+        // This function handles backups and editor state management
+        require_once ABSPATH . 'wp-admin/includes/image-edit.php';
+        
+        // Load the new image and prepare it for WordPress's save function
+        // wp_save_image expects the edited image to be processed through the editor
+        
+        // First, we need to prepare the image as if it went through the editor
+        // WordPress's image editor expects images to be processed a certain way
+        
+        // Create a backup using WordPress's built-in backup mechanism
+        // WordPress stores backups with a suffix like '-backup-{timestamp}'
+        $backup_path = $old_file_path;
+        if (file_exists($old_file_path)) {
+            // WordPress's image editor uses this naming convention for backups
+            $path_info = pathinfo($old_file_path);
+            $backup_suffix = '-backup-' . time();
+            $backup_path = $path_info['dirname'] . '/' . $path_info['filename'] . $backup_suffix . '.' . $path_info['extension'];
+            
+            // Copy original to backup location (WordPress style)
+            if (!@copy($old_file_path, $backup_path)) {
+                // Fallback to our own backup system if WordPress style fails
+                $backup_path = dirname($old_file_path) . '/' . basename($old_file_path, '.' . $path_info['extension']) . '-original-' . time() . '.' . $path_info['extension'];
+                @copy($old_file_path, $backup_path);
+            }
+        }
+        
+        // Update attachment file reference (replaces the file)
+        update_attached_file($attachment_id, $new_file_path);
+        
+        // Regenerate attachment metadata
+        $attach_data = wp_generate_attachment_metadata($attachment_id, $new_file_path);
+        wp_update_attachment_metadata($attachment_id, $attach_data);
+        
+        // Store backup information in WordPress's expected format
+        // WordPress's image editor looks for this to enable undo
+        $wp_image_editor_backup = get_post_meta($attachment_id, '_wp_attachment_backup_sizes', true);
+        if (!is_array($wp_image_editor_backup)) {
+            $wp_image_editor_backup = array();
+        }
+        
+        // Store the full-size backup in WordPress's format
+        $backup_key = 'full-orig-' . time();
+        $wp_image_editor_backup[$backup_key] = array(
+            'file' => basename($backup_path),
+            'width' => isset($old_metadata['width']) ? $old_metadata['width'] : 0,
+            'height' => isset($old_metadata['height']) ? $old_metadata['height'] : 0,
+            'mime-type' => get_post_mime_type($attachment_id),
+        );
+        
+        update_post_meta($attachment_id, '_wp_attachment_backup_sizes', $wp_image_editor_backup);
+        
+        // Also store our own backup reference for restoration
+        $has_backup = get_post_meta($attachment_id, '_ai_original_file', true);
+        if (!$has_backup) {
+            update_post_meta($attachment_id, '_ai_original_file', $backup_path);
+            update_post_meta($attachment_id, '_ai_original_file_original', $old_file_path);
+            update_post_meta($attachment_id, '_ai_original_metadata', $old_metadata);
+        }
+        
+        // Add current state to edit history
+        $edit_history[] = array(
+            'timestamp' => current_time('mysql'),
+            'file_path' => $backup_path,
+            'original_file_path' => $old_file_path,
+            'metadata' => $old_metadata,
+            'type' => 'ai_edit'
+        );
+        update_post_meta($attachment_id, '_ai_edit_history', $edit_history);
+        
+        // Update title and alt text if provided
+        if (!empty($title)) {
+            wp_update_post(array(
+                'ID' => $attachment_id,
+                'post_title' => $title
+            ));
+        }
+        
+        if (!empty($alt)) {
+            update_post_meta($attachment_id, '_wp_attachment_image_alt', $alt);
+        }
+        
+        // Mark as AI generated/edited
+        update_post_meta($attachment_id, '_ai_edited', true);
+        update_post_meta($attachment_id, '_ai_edited_date', current_time('mysql'));
+        
+        $attachment_url = wp_get_attachment_url($attachment_id);
+        
+        return array(
+            'success' => true,
+            'attachment_id' => $attachment_id,
+            'url' => $attachment_url,
+            'message' => 'Image replaced successfully!'
+        );
+    }
+    
+    /**
+     * Restore an attachment to its original file (before AI edits)
+     * This allows users to undo AI edits and restore the original image
+     */
+    public function restore_attachment_file($request) {
+        $data = $request->get_json_params();
+        
+        $attachment_id = isset($data['attachment_id']) ? intval($data['attachment_id']) : 0;
+        
+        if (empty($attachment_id)) {
+            return new WP_Error('missing_attachment', 'Attachment ID required', array('status' => 400));
+        }
+        
+        // Verify attachment exists and user has permission to edit it
+        $attachment = get_post($attachment_id);
+        if (!$attachment || $attachment->post_type !== 'attachment') {
+            return new WP_Error('invalid_attachment', 'Attachment not found', array('status' => 404));
+        }
+        
+        if (!current_user_can('edit_post', $attachment_id)) {
+            return new WP_Error('permission_denied', 'You do not have permission to edit this attachment', array('status' => 403));
+        }
+        
+        // Get the original backup file
+        $original_backup_path = get_post_meta($attachment_id, '_ai_original_file', true);
+        $original_metadata = get_post_meta($attachment_id, '_ai_original_metadata', true);
+        $original_file_path = get_post_meta($attachment_id, '_ai_original_file_original', true);
+        
+        if (empty($original_backup_path) || !file_exists($original_backup_path)) {
+            return new WP_Error('no_backup', 'No backup file found. Original image cannot be restored.', array('status' => 404));
+        }
+        
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        require_once ABSPATH . 'wp-admin/includes/media.php';
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+        
+        // Get current file path
+        $current_file_path = get_attached_file($attachment_id);
+        
+        // Restore from backup - copy backup to the original location
+        $target_path = $original_file_path ?: $current_file_path;
+        
+        // If original_file_path is different, we want to restore to that location
+        // Otherwise, restore to current location
+        if (!empty($original_file_path) && $original_file_path !== $current_file_path) {
+            // Need to handle directory structure
+            $upload_dir = wp_upload_dir();
+            $backup_dir = dirname($original_backup_path);
+            $target_dir = dirname($target_path);
+            
+            // If target directory doesn't exist, use current directory
+            if (!is_dir($target_dir)) {
+                $target_path = dirname($current_file_path) . '/' . basename($target_path);
+            }
+        }
+        
+        // Copy backup to restore location
+        if (!@copy($original_backup_path, $target_path)) {
+            return new WP_Error('restore_failed', 'Failed to restore original file', array('status' => 500));
+        }
+        
+        // Update attachment file reference
+        update_attached_file($attachment_id, $target_path);
+        
+        // Restore original metadata if available
+        if (!empty($original_metadata) && is_array($original_metadata)) {
+            wp_update_attachment_metadata($attachment_id, $original_metadata);
+        } else {
+            // Regenerate metadata
+            $attach_data = wp_generate_attachment_metadata($attachment_id, $target_path);
+            wp_update_attachment_metadata($attachment_id, $attach_data);
+        }
+        
+        // Clear AI edit flags (optional - keeps history)
+        // update_post_meta($attachment_id, '_ai_edited', false);
+        
+        $attachment_url = wp_get_attachment_url($attachment_id);
+        
+        return array(
+            'success' => true,
+            'attachment_id' => $attachment_id,
+            'url' => $attachment_url,
+            'message' => 'Original image restored successfully!'
+        );
+    }
+    
     public function get_posts_and_pages($request) {
         $posts = get_posts(array(
             'post_type' => array('post', 'page'),
@@ -8378,6 +10272,44 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         return array(
             'success' => true,
             'posts' => $formatted_posts
+        );
+    }
+    
+    /**
+     * Get WordPress site meta title and description
+     */
+    public function get_site_meta($request) {
+        // Get WordPress site title and tagline
+        $meta_title = get_option('blogname');
+        $meta_description = get_option('blogdescription');
+        
+        // Optionally check for SEO plugin global meta
+        // Yoast SEO
+        if (function_exists('YoastSEO')) {
+            $yoast_options = get_option('wpseo_titles');
+            if (!empty($yoast_options['title-home-wpseo'])) {
+                $meta_title = $yoast_options['title-home-wpseo'];
+            }
+            if (!empty($yoast_options['metadesc-home-wpseo'])) {
+                $meta_description = $yoast_options['metadesc-home-wpseo'];
+            }
+        }
+        
+        // RankMath
+        if (function_exists('rank_math')) {
+            $rankmath_options = get_option('rank-math-options-titles');
+            if (!empty($rankmath_options['homepage_title'])) {
+                $meta_title = $rankmath_options['homepage_title'];
+            }
+            if (!empty($rankmath_options['homepage_description'])) {
+                $meta_description = $rankmath_options['homepage_description'];
+            }
+        }
+        
+        return array(
+            'success' => true,
+            'meta_title' => $meta_title ?: '',
+            'meta_description' => $meta_description ?: ''
         );
     }
     
@@ -9761,596 +11693,5 @@ CRITICAL: Act as a copy machine, not a summarizer. Extract everything word-for-w
             $this->chatbot_owner_user_id = null;
         }
     }
-
-    /**
-     * Handle Bricks generation request - AI generates HTML with Tailwind, then converts to Bricks
-     *
-     * @param WP_REST_Request $request
-     * @return array|WP_Error
-     */
-    public function handle_bricks_generation($request) {
-        error_log('====================================');
-        error_log('BRICKS ENDPOINT CALLED: handle_bricks_generation');
-        error_log('====================================');
-
-        @set_time_limit(300); // 5 minutes for generation
-
-        $data = $request->get_json_params();
-        error_log('BRICKS: Request data keys: ' . implode(', ', array_keys($data)));
-
-        $prompt = $data['prompt'] ?? '';
-        $conversation_history = $data['history'] ?? [];
-        $session_id = $data['session_id'] ?? $this->generate_session_id();
-        $agent_id = $data['agent_id'] ?? null;
-
-        error_log('BRICKS: Prompt length: ' . strlen($prompt));
-        error_log('BRICKS: History count: ' . count($conversation_history));
-
-        if (empty($prompt)) {
-            error_log('BRICKS ERROR: Empty prompt provided');
-            return new WP_Error('empty_prompt', 'Prompt is required', array('status' => 400));
-        }
-
-        try {
-            // Build Bricks-specific system message
-            $bricks_system_message = $this->build_bricks_system_message();
-            error_log('=== BRICKS DEBUG START ===');
-            error_log('BRICKS: Using Bricks-specific system message (length: ' . strlen($bricks_system_message) . ')');
-            error_log('BRICKS: User prompt: ' . substr($prompt, 0, 200));
-
-            // Get AI provider settings
-            $provider = $this->settings['ai_provider'] ?? 'anthropic';
-            $model = $this->get_model_for_provider($provider);
-            $api_key = $this->get_api_key($provider);
-            error_log('BRICKS: Provider: ' . $provider . ', Model: ' . $model);
-
-            // Build conversation for AI (NO TOOLS - direct generation only)
-            $messages = array();
-
-            // Add conversation history if exists
-            foreach ($conversation_history as $msg) {
-                $messages[] = array(
-                    'role' => $msg['role'],
-                    'content' => $msg['content']
-                );
-            }
-
-            // Add current user prompt
-            $messages[] = array(
-                'role' => 'user',
-                'content' => $prompt
-            );
-
-            // Call AI provider directly WITHOUT tools
-            if ($provider === 'anthropic') {
-                $response = $this->call_anthropic_simple($messages, $bricks_system_message, $api_key);
-            } elseif ($provider === 'openai') {
-                $response = $this->call_openai_simple($messages, $bricks_system_message, $api_key);
-            } else {
-                $response = $this->call_openrouter_simple($messages, $bricks_system_message, $api_key);
-            }
-
-            // Extract HTML from AI response
-            $ai_response = $response['response'] ?? '';
-            error_log('BRICKS: AI Response length: ' . strlen($ai_response));
-            error_log('BRICKS: AI Response preview: ' . substr($ai_response, 0, 500));
-
-            $html = $this->extract_html_from_response($ai_response);
-            $js = $this->extract_js_from_response($ai_response);
-
-            error_log('BRICKS: Extracted HTML length: ' . strlen($html));
-            error_log('BRICKS: Extracted HTML preview: ' . substr($html, 0, 300));
-
-            if (strpos($html, 'style=') !== false) {
-                error_log('BRICKS WARNING: HTML contains inline style attributes!');
-            }
-            if (strpos($html, '<style') !== false) {
-                error_log('BRICKS WARNING: HTML contains <style> tags!');
-            }
-
-            if (empty($html)) {
-                error_log('BRICKS ERROR: No HTML extracted from AI response');
-                return new WP_Error('no_html_generated', 'AI did not generate HTML content', array('status' => 500));
-            }
-
-            // Convert HTML + Tailwind to Bricks JSON
-            require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'includes/Bricks_Converter.php';
-            $converter = new Bricks_Converter();
-
-            error_log('BRICKS: Starting conversion...');
-            $conversion_result = $converter->convert($html, $js);
-            error_log('BRICKS: Conversion completed. Success: ' . ($conversion_result['success'] ? 'YES' : 'NO'));
-
-            if (!$conversion_result['success']) {
-                return new WP_Error('conversion_failed', $conversion_result['error'], array('status' => 500));
-            }
-
-            // Debug: Log the structure
-            error_log('BRICKS STRUCTURE: ' . print_r($conversion_result['bricks_structure'], true));
-
-            // Wrap structure in Bricks clipboard format
-            $bricks_clipboard_structure = array(
-                'content' => $conversion_result['bricks_structure'],
-                'source' => 'bricksCopiedElements',
-                'sourceUrl' => get_site_url(),
-                'version' => '1.9.9',  // Bricks version - may need to detect dynamically
-                'globalClasses' => array(),
-                'globalElements' => array()
-            );
-
-            return array(
-                'success' => true,
-                'ai_response' => $ai_response,
-                'html' => $conversion_result['html'],
-                'css' => $conversion_result['css'],
-                'js' => $conversion_result['js'],
-                'bricks_structure' => $bricks_clipboard_structure,
-                'metadata' => $conversion_result['metadata'],
-                'provider' => $provider,
-                'model' => $model
-            );
-
-        } catch (Exception $e) {
-            return new WP_Error('generation_error', $e->getMessage(), array('status' => 500));
-        }
-    }
-
-    /**
-     * Handle Bricks conversion request - Convert existing HTML + Tailwind to Bricks
-     *
-     * @param WP_REST_Request $request
-     * @return array|WP_Error
-     */
-    public function handle_bricks_conversion($request) {
-        $data = $request->get_json_params();
-        $html = $data['html'] ?? '';
-        $js = $data['js'] ?? '';
-
-        if (empty($html)) {
-            return new WP_Error('empty_html', 'HTML is required', array('status' => 400));
-        }
-
-        try {
-            require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'includes/Bricks_Converter.php';
-            $converter = new Bricks_Converter();
-
-            // Validate HTML first
-            $validation = $converter->validate($html);
-            if (!$validation['valid']) {
-                return new WP_Error('invalid_html', $validation['error'], array('status' => 400));
-            }
-
-            // Convert to Bricks
-            $result = $converter->convert($html, $js);
-
-            if (!$result['success']) {
-                return new WP_Error('conversion_failed', $result['error'], array('status' => 500));
-            }
-
-            return array(
-                'success' => true,
-                'html' => $result['html'],
-                'css' => $result['css'],
-                'js' => $result['js'],
-                'bricks_structure' => $result['bricks_structure'],
-                'metadata' => $result['metadata']
-            );
-
-        } catch (Exception $e) {
-            return new WP_Error('conversion_error', $e->getMessage(), array('status' => 500));
-        }
-    }
-
-    /**
-     * Build Bricks-specific system message for AI
-     *
-     * @return string
-     */
-    private function build_bricks_system_message() {
-        return "You are MagicAssistant in BRICKS BUILDER MODE.
-
-**ABSOLUTE CRITICAL RULES - VIOLATION WILL CAUSE SYSTEM FAILURE:**
-
-⚠️ **RULE #1: NEVER GENERATE CSS - ONLY TAILWIND CLASSES IN HTML**
-   - The ONLY allowed output is HTML with Tailwind CSS utility classes in class=\"...\" attributes
-   - <style> tags are STRICTLY FORBIDDEN and will break the system
-   - Separate CSS blocks are STRICTLY FORBIDDEN
-   - Inline style=\"...\" attributes are STRICTLY FORBIDDEN
-   - Custom CSS of ANY kind is STRICTLY FORBIDDEN
-
-   The conversion system AUTOMATICALLY handles CSS generation from Tailwind classes.
-   Your job is ONLY to write HTML with Tailwind class names.
-
-⚠️ **RULE #2: SINGLE HTML BLOCK ONLY**
-   - Output EXACTLY ONE ```html code block
-   - ZERO text before the code block
-   - ZERO text after the code block
-   - ZERO explanations or comments outside the HTML
-
-**MANDATORY OUTPUT FORMAT:**
-```html
-<!-- HTML with Tailwind classes ONLY -->
-```
-
-**HOW TO STYLE - USE TAILWIND CLASSES IN HTML:**
-Every style MUST be a Tailwind utility class in the class attribute:
-
-• Layout & Spacing:
-  - container, mx-auto, px-4, py-8, p-6, m-4, space-y-4
-  - flex, flex-col, items-center, justify-between, gap-4
-  - grid, grid-cols-2, md:grid-cols-3, gap-8
-
-• Typography:
-  - text-sm, text-base, text-xl, text-2xl, text-4xl, text-6xl
-  - font-light, font-normal, font-semibold, font-bold
-  - leading-tight, leading-relaxed
-  - text-left, text-center, text-right
-
-• Colors:
-  - bg-blue-600, bg-gray-100, bg-white
-  - text-white, text-gray-900, text-blue-600
-  - border-gray-200, border-blue-500
-
-• Effects:
-  - rounded-lg, rounded-full, shadow-lg, shadow-xl
-  - hover:bg-blue-700, hover:shadow-2xl
-  - transition, duration-300
-
-• Responsive:
-  - md:text-4xl, lg:grid-cols-4, sm:px-6
-
-**CORRECT EXAMPLE - STUDY THIS:**
-```html
-<section class=\"bg-gradient-to-r from-blue-600 to-blue-800 text-white py-24\">
-  <div class=\"container mx-auto px-4\">
-    <div class=\"max-w-3xl\">
-      <h1 class=\"text-5xl md:text-6xl font-bold mb-6 leading-tight\">Transform Your Business Today</h1>
-      <p class=\"text-xl mb-8 text-blue-100 leading-relaxed\">Powerful solutions designed to help you grow faster and achieve more.</p>
-      <div class=\"flex flex-wrap gap-4\">
-        <a href=\"#\" class=\"bg-white text-blue-600 px-8 py-4 rounded-lg font-semibold hover:bg-blue-50 transition duration-300 shadow-lg\">Get Started</a>
-        <a href=\"#\" class=\"border-2 border-white text-white px-8 py-4 rounded-lg font-semibold hover:bg-white hover:text-blue-600 transition duration-300\">Learn More</a>
-      </div>
-    </div>
-  </div>
-</section>
-```
-
-**WRONG - THESE WILL BREAK THE SYSTEM:**
-
-❌ NEVER DO THIS - Style tags:
-```html
-<style>
-  .hero { background: blue; padding: 2rem; }
-</style>
-<div class=\"hero\">Content</div>
-```
-
-❌ NEVER DO THIS - Inline styles:
-```html
-<div style=\"background: blue; padding: 2rem;\">Content</div>
-```
-
-❌ NEVER DO THIS - Custom classes without Tailwind:
-```html
-<div class=\"custom-hero\">Content</div>
-```
-
-✅ ALWAYS DO THIS - Tailwind classes:
-```html
-<div class=\"bg-blue-600 p-8\">Content</div>
-```
-
-**REMEMBER:**
-- NO <style> tags ever
-- NO style=\"...\" attributes ever
-- NO custom CSS ever
-- ONLY Tailwind utility classes in class=\"...\" attributes
-- The system converts Tailwind to CSS automatically
-
-NOW GENERATE THE REQUESTED COMPONENT - ONLY HTML WITH TAILWIND CLASSES.";
-    }
-
-    /**
-     * Extract HTML from AI response (handles code blocks)
-     *
-     * @param string $response AI response
-     * @return string Extracted HTML
-     */
-    private function extract_html_from_response($response) {
-        $html = '';
-
-        // Try to extract from code blocks
-        if (preg_match('/```html\s*(.*?)\s*```/s', $response, $matches)) {
-            $html = trim($matches[1]);
-        } elseif (preg_match('/```\s*(.*?)\s*```/s', $response, $matches)) {
-            $content = trim($matches[1]);
-            // Check if it looks like HTML
-            if (strpos($content, '<') !== false) {
-                $html = $content;
-            }
-        } elseif (strpos($response, '<') !== false && strpos($response, '>') !== false) {
-            // If no code blocks, check if response itself is HTML
-            $html = trim($response);
-        }
-
-        // Sanitize: Remove any <style> tags (AI should NOT generate these)
-        if (strpos($html, '<style') !== false) {
-            error_log('WARNING: AI generated <style> tags in Bricks mode - removing them. AI should only use Tailwind classes.');
-            $html = preg_replace('/<style[^>]*>.*?<\/style>/is', '', $html);
-        }
-
-        // Sanitize: Remove inline style attributes (AI should NOT generate these)
-        if (strpos($html, 'style=') !== false) {
-            error_log('WARNING: AI generated inline style attributes in Bricks mode - removing them. AI should only use Tailwind classes.');
-            $html = preg_replace('/\s+style=["\'][^"\']*["\']/i', '', $html);
-        }
-
-        return trim($html);
-    }
-
-    /**
-     * Extract JavaScript from AI response
-     *
-     * @param string $response AI response
-     * @return string Extracted JavaScript
-     */
-    private function extract_js_from_response($response) {
-        if (preg_match('/```javascript\s*(.*?)\s*```/s', $response, $matches)) {
-            return trim($matches[1]);
-        }
-        if (preg_match('/```js\s*(.*?)\s*```/s', $response, $matches)) {
-            return trim($matches[1]);
-        }
-        return '';
-    }
-
-    /**
-     * Simple Anthropic API call without tools (for Bricks generation)
-     *
-     * @param array $messages Conversation messages
-     * @param string $system_message System prompt
-     * @param string $api_key API key
-     * @return array Response
-     */
-    private function call_anthropic_simple($messages, $system_message, $api_key) {
-        $model = $this->settings['anthropic_model'] ?? 'claude-3-5-sonnet-20241022';
-
-        $api_messages = array();
-        foreach ($messages as $msg) {
-            $api_messages[] = array(
-                'role' => $msg['role'],
-                'content' => $msg['content']
-            );
-        }
-
-        // Get license key for proxy authentication
-        $license_key = $this->get_license_key();
-
-        // Prepare request in proxy format
-        $request_data = array(
-            'action' => 'anthropic',
-            'data' => array(
-                'model' => $model,
-                'max_tokens' => 4096,
-                'temperature' => 0.3,
-                'system' => $system_message,
-                'messages' => $api_messages,
-                'web_search_enabled' => false
-            ),
-            'systemMessage' => $system_message
-        );
-
-        $headers = array(
-            'Content-Type' => 'application/json'
-        );
-
-        // Add license key if available
-        if ($license_key) {
-            $headers['X-License-Key'] = $license_key;
-        }
-
-        // Add user API key if provided
-        if ($api_key) {
-            $headers['X-User-Api-Key'] = $api_key;
-        }
-
-        $response = wp_remote_post($this->anthropic_proxy_url, array(
-            'timeout' => 60,
-            'headers' => $headers,
-            'body' => json_encode($request_data)
-        ));
-
-        if (is_wp_error($response)) {
-            throw new Exception('Anthropic API error: ' . $response->get_error_message());
-        }
-
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-
-        // Handle proxy response format
-        if (isset($body['data']) && isset($body['data']['content'][0]['text'])) {
-            $content = $body['data']['content'][0]['text'];
-        } else {
-            $content = $body['content'][0]['text'] ?? '';
-        }
-
-        return array('response' => $content);
-    }
-
-    /**
-     * Simple OpenAI API call without tools (for Bricks generation)
-     *
-     * @param array $messages Conversation messages
-     * @param string $system_message System prompt
-     * @param string $api_key API key
-     * @return array Response
-     */
-    private function call_openai_simple($messages, $system_message, $api_key) {
-        $model = $this->settings['openai_model'] ?? 'gpt-4o';
-
-        $api_messages = array(
-            array('role' => 'system', 'content' => $system_message)
-        );
-
-        foreach ($messages as $msg) {
-            $api_messages[] = array(
-                'role' => $msg['role'],
-                'content' => $msg['content']
-            );
-        }
-
-        // Get license key for proxy authentication
-        $license_key = $this->get_license_key();
-
-        // Prepare request in proxy format
-        $request_data = array(
-            'action' => 'openai_responses',
-            'data' => array(
-                'model' => $model,
-                'messages' => $api_messages,
-                'temperature' => 0.3,
-                'max_tokens' => 4096,
-                'web_search_enabled' => false
-            ),
-            'systemMessage' => $system_message
-        );
-
-        $headers = array(
-            'Content-Type' => 'application/json'
-        );
-
-        // Add license key if available
-        if ($license_key) {
-            $headers['X-License-Key'] = $license_key;
-        }
-
-        // Add user API key if provided
-        if ($api_key) {
-            $headers['X-User-Api-Key'] = $api_key;
-        }
-
-        $response = wp_remote_post($this->openai_proxy_url, array(
-            'timeout' => 60,
-            'headers' => $headers,
-            'body' => json_encode($request_data)
-        ));
-
-        if (is_wp_error($response)) {
-            throw new Exception('OpenAI API error: ' . $response->get_error_message());
-        }
-
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-
-        // Handle proxy response format
-        if (isset($body['data']) && isset($body['data']['choices'][0]['message']['content'])) {
-            $content = $body['data']['choices'][0]['message']['content'];
-        } else {
-            $content = $body['choices'][0]['message']['content'] ?? '';
-        }
-
-        return array('response' => $content);
-    }
-
-    /**
-     * Simple OpenRouter API call without tools (for Bricks generation)
-     *
-     * @param array $messages Conversation messages
-     * @param string $system_message System prompt
-     * @param string $api_key API key
-     * @return array Response
-     */
-    private function call_openrouter_simple($messages, $system_message, $api_key) {
-        $model = $this->settings['openrouter_model'] ?? 'anthropic/claude-3.5-sonnet';
-
-        error_log('OPENROUTER SIMPLE: Using model: ' . $model);
-
-        $api_messages = array(
-            array('role' => 'system', 'content' => $system_message)
-        );
-
-        foreach ($messages as $msg) {
-            $api_messages[] = array(
-                'role' => $msg['role'],
-                'content' => $msg['content']
-            );
-        }
-
-        error_log('OPENROUTER SIMPLE: Message count: ' . count($api_messages));
-
-        // Get license key for proxy authentication
-        $license_key = $this->get_license_key();
-        error_log('OPENROUTER SIMPLE: License key retrieved: ' . ($license_key ? 'YES (length: ' . strlen($license_key) . ')' : 'NO'));
-
-        // Prepare request in proxy format
-        $request_data = array(
-            'action' => 'openrouter',
-            'data' => array(
-                'model' => $model,
-                'messages' => $api_messages,
-                'temperature' => 0.3,
-                'max_tokens' => 4096,
-                'web_search_enabled' => false
-            ),
-            'systemMessage' => $system_message
-        );
-
-        $headers = array(
-            'Content-Type' => 'application/json'
-        );
-
-        // Add license key if available
-        if ($license_key) {
-            $headers['X-License-Key'] = $license_key;
-        }
-
-        // Add user API key if provided
-        if ($api_key) {
-            $headers['X-User-Api-Key'] = $api_key;
-        }
-
-        error_log('OPENROUTER SIMPLE: Making API call to: ' . $this->openrouter_proxy_url);
-
-        $response = wp_remote_post($this->openrouter_proxy_url, array(
-            'timeout' => 60,
-            'headers' => $headers,
-            'body' => json_encode($request_data)
-        ));
-
-        if (is_wp_error($response)) {
-            error_log('OPENROUTER SIMPLE ERROR: ' . $response->get_error_message());
-            throw new Exception('OpenRouter API error: ' . $response->get_error_message());
-        }
-
-        $response_code = wp_remote_retrieve_response_code($response);
-        $response_body = wp_remote_retrieve_body($response);
-
-        error_log('OPENROUTER SIMPLE: Response code: ' . $response_code);
-        error_log('OPENROUTER SIMPLE: Response body length: ' . strlen($response_body));
-        error_log('OPENROUTER SIMPLE: Response body preview: ' . substr($response_body, 0, 500));
-
-        $body = json_decode($response_body, true);
-
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            error_log('OPENROUTER SIMPLE: JSON decode error: ' . json_last_error_msg());
-            throw new Exception('OpenRouter JSON decode error: ' . json_last_error_msg());
-        }
-
-        if (isset($body['error'])) {
-            $error_msg = is_string($body['error']) ? $body['error'] : ($body['error']['message'] ?? json_encode($body['error']));
-            error_log('OPENROUTER SIMPLE: API returned error: ' . $error_msg);
-            throw new Exception('OpenRouter API error: ' . $error_msg);
-        }
-
-        // Handle proxy response format
-        if (isset($body['data']) && isset($body['data']['choices'][0]['message']['content'])) {
-            $content = $body['data']['choices'][0]['message']['content'];
-        } else {
-            $content = $body['choices'][0]['message']['content'] ?? '';
-        }
-
-        error_log('OPENROUTER SIMPLE: Extracted content length: ' . strlen($content));
-
-        return array('response' => $content);
-    }
-
 
 }
