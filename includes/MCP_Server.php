@@ -29,6 +29,10 @@ class MCP_Server {
     private $found_vulnerabilities = [];
     private $json_buffer = '';
     private $max_vulnerabilities = 10;
+
+    // Text replacement context for Bricks components
+    private $text_replacement_enabled = false;
+    private $text_replacement_context = array();
     
     public function __construct($db = null) {
         $this->db = $db;
@@ -86,7 +90,33 @@ class MCP_Server {
     public function set_db($db) {
         $this->db = $db;
     }
-    
+
+    /**
+     * Set text replacement context for Bricks components
+     * @param bool $enabled Whether text replacement is enabled
+     * @param array $context Context data (site info, user prompt, etc.)
+     */
+    public function set_text_replacement_context($enabled, $context = array()) {
+        $this->text_replacement_enabled = $enabled;
+        $this->text_replacement_context = $context;
+    }
+
+    /**
+     * Get text replacement enabled status
+     * @return bool
+     */
+    public function is_text_replacement_enabled() {
+        return $this->text_replacement_enabled;
+    }
+
+    /**
+     * Get text replacement context
+     * @return array
+     */
+    public function get_text_replacement_context() {
+        return $this->text_replacement_context;
+    }
+
     private function init_jwt_secret() {
         if (!$this->db) {
             return;
@@ -416,13 +446,27 @@ class MCP_Server {
         // bricks_insert_component - Insert Bricks component into canvas
         $this->register_tool(array(
             'name' => 'bricks_insert_component',
-            'description' => 'Insert a pre-built Bricks component into the Bricks builder canvas. Must be called within Bricks builder context.',
+            'description' => 'Insert a pre-built Bricks component into the Bricks builder canvas. Must be called within Bricks builder context. When text replacement is enabled by the user, you should provide text_replacements to replace placeholder/lorem ipsum text with site-relevant content.',
             'inputSchema' => array(
                 'type' => 'object',
                 'properties' => array(
                     'component_id' => array(
                         'type' => 'string',
                         'description' => 'Component ID or slug to insert'
+                    ),
+                    'text_replacements' => array(
+                        'type' => 'array',
+                        'description' => 'Array of text replacements IN ORDER. First item replaces first text element, second replaces second, etc. Use when page_context has text_replacement_enabled: true.',
+                        'items' => array(
+                            'type' => 'object',
+                            'properties' => array(
+                                'new_text' => array(
+                                    'type' => 'string',
+                                    'description' => 'Replacement text. MUST have similar word count as the original text to maintain layout.'
+                                )
+                            ),
+                            'required' => array('new_text')
+                        )
                     )
                 ),
                 'required' => array('component_id')
@@ -12507,10 +12551,13 @@ class MCP_Server {
             
             // Return component data
             if (!empty($args['component_id'])) {
-                // Single component
+                // Single component - include text elements summary for AI
+                $text_elements_summary = $this->get_text_elements_summary($data['data']);
+
                 return array(
                     'component' => $data['data'],
-                    'message' => 'Component retrieved successfully. Use bricks_insert_component to insert it into the canvas.'
+                    'text_elements_for_replacement' => $text_elements_summary,
+                    'message' => 'Component retrieved. TEXT REPLACEMENT: If enabled, provide text_replacements array with new_text for EACH element listed in text_elements_for_replacement, IN THE SAME ORDER. Match word counts!'
                 );
             } else {
                 // Search results
@@ -12528,24 +12575,57 @@ class MCP_Server {
     
     /**
      * Insert Bricks component into canvas
+     * @param array $args {
+     *   component_id: string (required) - Component ID or slug
+     *   text_replacements: array (optional) - Array of text replacements to apply
+     *     Each replacement: { element_id: string, new_text: string }
+     *     OR: { element_type: string, new_text: string } to replace by element type
+     * }
      */
     public function bricks_insert_component($args) {
         try {
             $component_id = $args['component_id'] ?? '';
-            
+            $text_replacements = $args['text_replacements'] ?? null;
+
             if (empty($component_id)) {
                 throw new Exception('component_id is required');
             }
-            
+
             // First, get the component
             $component_data = $this->bricks_get_component(array('component_id' => $component_id));
-            
+
             if (empty($component_data['component'])) {
                 throw new Exception('Component not found');
             }
-            
+
             $component = $component_data['component'];
-            
+
+            // Get text elements summary
+            $text_elements = $this->get_text_elements_summary($component);
+            $text_element_count = count($text_elements);
+
+            // Check if text replacement is enabled but replacements don't match element count
+            if ($this->text_replacement_enabled && $text_element_count > 0) {
+                $replacement_count = !empty($text_replacements) ? count($text_replacements) : 0;
+
+                // If no replacements or wrong count, return info so AI can call again correctly
+                if ($replacement_count !== $text_element_count) {
+                    return array(
+                        'success' => false,
+                        'error' => 'TEXT_REPLACEMENT_MISMATCH',
+                        'message' => 'Text replacement is enabled. You provided ' . $replacement_count . ' replacements but this component has ' . $text_element_count . ' text elements. Call bricks_insert_component again with EXACTLY ' . $text_element_count . ' replacements.',
+                        'text_elements_for_replacement' => $text_elements,
+                        'required_replacement_count' => $text_element_count,
+                        'instructions' => 'Provide text_replacements array with exactly ' . $text_element_count . ' items, one for each text element listed above. Match the word_count for each element!'
+                    );
+                }
+            }
+
+            // Apply text replacements if provided
+            if (!empty($text_replacements) && is_array($text_replacements)) {
+                $component = $this->apply_text_replacements($component, $text_replacements);
+            }
+
             // Return data for JavaScript bridge to handle insertion
             return array(
                 'success' => true,
@@ -12557,12 +12637,212 @@ class MCP_Server {
                     'thumbnail' => $component['thumbnail'] ?? null
                 ),
                 'message' => 'Component data ready for insertion',
-                'instructions' => 'The JavaScript bridge will handle inserting this component into the Bricks canvas using bricksInserter.js'
+                'instructions' => 'The JavaScript bridge will handle inserting this component into the Bricks canvas using bricksInserter.js',
+                'text_replacements_applied' => !empty($text_replacements) ? count($text_replacements) : 0
             );
-            
+
         } catch (Exception $e) {
             throw new Exception('Error inserting Bricks component: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Apply text replacements to component bricksJson
+     * @param array $component The component data
+     * @param array $replacements Array of replacements
+     * @return array Modified component
+     */
+    private function apply_text_replacements($component, $replacements) {
+        if (empty($component['bricksJson']) || !is_array($component['bricksJson'])) {
+            return $component;
+        }
+
+        // Flatten the bricksJson to get all elements (handles nested structures)
+        $all_elements = $this->flatten_bricks_elements($component['bricksJson']);
+
+        // Collect all text elements with their paths
+        $text_elements = array();
+        foreach ($all_elements as $path => $element) {
+            $text_prop = $this->get_bricks_text_property($element['name'] ?? '');
+            if ($text_prop && !empty($element['settings'][$text_prop])) {
+                $text_elements[] = array(
+                    'path' => $path,
+                    'text_prop' => $text_prop,
+                    'current_text' => $element['settings'][$text_prop],
+                    'element_name' => $element['name']
+                );
+            }
+        }
+
+        // Apply replacements sequentially to text elements
+        $replacement_index = 0;
+        foreach ($text_elements as $text_elem) {
+            if ($replacement_index >= count($replacements)) {
+                break;
+            }
+
+            $replacement = $replacements[$replacement_index];
+            $new_text = $replacement['new_text'] ?? '';
+
+            if (empty($new_text)) {
+                $replacement_index++;
+                continue;
+            }
+
+            // Apply the replacement using the path
+            $this->set_element_by_path($component['bricksJson'], $text_elem['path'], $text_elem['text_prop'], $new_text);
+            $replacement_index++;
+        }
+
+        return $component;
+    }
+
+    /**
+     * Flatten bricksJson to get all elements with their paths
+     */
+    private function flatten_bricks_elements($elements, $path_prefix = '') {
+        $result = array();
+
+        foreach ($elements as $index => $element) {
+            $current_path = $path_prefix . $index;
+            $result[$current_path] = $element;
+
+            // Check for nested content
+            if (!empty($element['content']) && is_array($element['content'])) {
+                $nested = $this->flatten_bricks_elements($element['content'], $current_path . '.content.');
+                $result = array_merge($result, $nested);
+            }
+            // Check for children
+            if (!empty($element['children']) && is_array($element['children'])) {
+                $nested = $this->flatten_bricks_elements($element['children'], $current_path . '.children.');
+                $result = array_merge($result, $nested);
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Set element property by path
+     */
+    private function set_element_by_path(&$elements, $path, $property, $value) {
+        $parts = explode('.', $path);
+        $current = &$elements;
+
+        foreach ($parts as $part) {
+            if (is_numeric($part)) {
+                $current = &$current[(int)$part];
+            } else {
+                $current = &$current[$part];
+            }
+        }
+
+        if (isset($current['settings'])) {
+            $current['settings'][$property] = $value;
+        }
+    }
+
+    /**
+     * Get the text property name for a Bricks element type
+     * @param string $element_name The element type name
+     * @return string|null The property name ('text' or 'content') or null if not a text element
+     */
+    private function get_bricks_text_property($element_name) {
+        $mapping = array(
+            'heading' => 'text',
+            'text-basic' => 'text',
+            'text' => 'text',
+            'text-rich' => 'text',
+            'button' => 'text',
+            'text-link' => 'text',
+            'dropdown' => 'text',
+            'icon-box' => 'content',
+            'alert' => 'content'
+        );
+        return isset($mapping[$element_name]) ? $mapping[$element_name] : null;
+    }
+
+    /**
+     * Get a summary of text elements for AI to understand what needs replacement
+     * @param array $component The component data
+     * @return array Summary of text elements with index, type, label, text preview, and word count
+     */
+    private function get_text_elements_summary($component) {
+        if (empty($component['bricksJson']) || !is_array($component['bricksJson'])) {
+            return array();
+        }
+
+        // Flatten elements
+        $all_elements = $this->flatten_bricks_elements($component['bricksJson']);
+
+        $summary = array();
+        $index = 0;
+
+        foreach ($all_elements as $element) {
+            $text_prop = $this->get_bricks_text_property($element['name'] ?? '');
+            if (!$text_prop || empty($element['settings'][$text_prop])) {
+                continue;
+            }
+
+            $text = $element['settings'][$text_prop];
+            $plain_text = strip_tags($text);
+            $word_count = str_word_count($plain_text);
+
+            $summary[] = array(
+                'index' => $index,
+                'element_type' => $element['name'],
+                'label' => $element['label'] ?? $element['name'],
+                'current_text' => mb_strlen($plain_text) > 80 ? mb_substr($plain_text, 0, 80) . '...' : $plain_text,
+                'word_count' => $word_count
+            );
+
+            $index++;
+        }
+
+        return $summary;
+    }
+
+    /**
+     * Check if text contains placeholder/lorem ipsum content
+     * @param string $text Text to check
+     * @return bool True if text appears to be placeholder content
+     */
+    private function is_placeholder_text($text) {
+        if (empty($text)) {
+            return false;
+        }
+
+        // Strip HTML tags for analysis
+        $plain_text = strtolower(strip_tags($text));
+
+        // Common placeholder patterns
+        $placeholder_patterns = array(
+            'lorem ipsum',
+            'dolor sit amet',
+            'consectetur adipiscing',
+            'elit sed do',
+            'eiusmod tempor',
+            'click here',
+            'read more',
+            'learn more',
+            'your text here',
+            'headline here',
+            'title here',
+            'subtitle here',
+            'description here',
+            'button text',
+            'add your',
+            'placeholder',
+            'sample text'
+        );
+
+        foreach ($placeholder_patterns as $pattern) {
+            if (strpos($plain_text, $pattern) !== false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
 

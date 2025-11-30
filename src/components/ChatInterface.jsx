@@ -108,6 +108,15 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
     }
     return false;
   })
+
+  // Bricks text replacement state - auto-replace placeholder text with site-relevant content
+  const [textReplacementEnabled, setTextReplacementEnabled] = useState(() => {
+    if (typeof window !== 'undefined' && isBricksMode) {
+      const saved = localStorage.getItem('magicassistant_bricks_text_replacement_enabled');
+      return saved === 'true';
+    }
+    return false;
+  })
   const [selectedSiteContextPages, setSelectedSiteContextPages] = useState(() => {
     if (typeof window !== 'undefined' && isBricksMode) {
       const saved = localStorage.getItem('magicassistant_bricks_site_context_pages');
@@ -480,7 +489,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
     if (typeof window !== 'undefined') {
       localStorage.setItem('magicassistant_bricks_site_context_enabled', siteContextEnabled.toString())
       localStorage.setItem('magicassistant_bricks_site_context_pages', JSON.stringify(selectedSiteContextPages))
-      showSuccess('Site context settings saved!')
+      localStorage.setItem('magicassistant_bricks_text_replacement_enabled', textReplacementEnabled.toString())
+      showSuccess('Bricks settings saved!')
     }
   }
 
@@ -639,6 +649,61 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
               Save site context
             </Button>
           </div>
+        </div>
+      )}
+    </div>
+  )
+
+  const renderTextReplacementSettings = () => (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <svg className="w-5 h-5 text-purple-600 dark:text-purple-400" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" />
+          <path fillRule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clipRule="evenodd" />
+        </svg>
+        <div>
+          <h3 className="text-sm font-medium text-purple-900 dark:text-purple-100 leading-tight">Auto-replace Placeholder Text</h3>
+          <p className="text-xs text-purple-700 dark:text-purple-300 leading-tight">Replace lorem ipsum and generic content with site-relevant copy when inserting components.</p>
+        </div>
+      </div>
+
+      <label className="flex items-center cursor-pointer select-none">
+        <input
+          type="checkbox"
+          id="textReplacementEnabled"
+          checked={textReplacementEnabled}
+          onChange={(e) => {
+            setTextReplacementEnabled(e.target.checked)
+            // Auto-save on change
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('magicassistant_bricks_text_replacement_enabled', e.target.checked.toString())
+            }
+          }}
+          className="peer sr-only"
+        />
+        <span
+          className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+            textReplacementEnabled
+              ? 'bg-purple-600 border-purple-600'
+              : 'bg-white border-purple-500 dark:bg-gray-800 dark:border-purple-400'
+          }`}
+        >
+          {textReplacementEnabled && (
+            <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </span>
+        <span className="ml-2 text-sm font-medium text-purple-900 dark:text-purple-100">
+          Enable text replacement
+        </span>
+      </label>
+
+      {textReplacementEnabled && (
+        <div className="bg-purple-100/80 dark:bg-purple-800/30 rounded p-3">
+          <p className="text-xs text-purple-800 dark:text-purple-200">
+            <span className="font-semibold">Tip:</span> For best results, include context in your prompt (e.g., "Insert a hero section for a dental clinic") so the AI knows what content to generate.
+          </p>
         </div>
       )}
     </div>
@@ -857,6 +922,9 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
           site_context_pages: selectedSiteContextPages,
           site_meta_title: siteMetaTitle,
           site_meta_description: siteMetaDescription
+        } : {}),
+        ...(isBricksMode ? {
+          text_replacement_enabled: textReplacementEnabled
         } : {})
       }
       
@@ -1301,7 +1369,10 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
         post_type: currentPost.type || null,
         post_title: currentPost.title || '',
         context: currentPost.context || 'unknown',
-        ...(isBricksMode ? { bricks_framework: selectedFramework } : {})
+        ...(isBricksMode ? {
+          bricks_framework: selectedFramework,
+          text_replacement_enabled: textReplacementEnabled
+        } : {})
       }
 
       // Check if streaming is enabled
@@ -1348,6 +1419,9 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
             site_context_pages: selectedSiteContextPages,
             site_meta_title: siteMetaTitle,
             site_meta_description: siteMetaDescription
+          } : {}),
+          ...(isBricksMode ? {
+            text_replacement_enabled: textReplacementEnabled
           } : {})
         };
 
@@ -2135,7 +2209,10 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
         post_type: currentPost.type || null,
         post_title: currentPost.title || '',
         context: currentPost.context || 'unknown',
-        ...(isBricksMode ? { bricks_framework: selectedFramework } : {})
+        ...(isBricksMode ? {
+          bricks_framework: selectedFramework,
+          text_replacement_enabled: textReplacementEnabled
+        } : {})
       }
 
       const response = await fetch(`${adminData.restUrl}chat`, {
@@ -2161,6 +2238,9 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
             site_context_pages: selectedSiteContextPages,
             site_meta_title: siteMetaTitle,
             site_meta_description: siteMetaDescription
+          } : {}),
+          ...(isBricksMode ? {
+            text_replacement_enabled: textReplacementEnabled
           } : {})
         })
       })
@@ -3557,7 +3637,33 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
                       </button>
                     </Tooltip>
                   )}
-                  
+
+                  {/* Bricks Text Replacement Toggle */}
+                  {isBricksMode && (
+                    <Tooltip content={textReplacementEnabled ? "Text replacement: ON - Click to disable" : "Text replacement: OFF - Click to enable"} className="z-50">
+                      <button
+                        onClick={() => {
+                          const newValue = !textReplacementEnabled;
+                          setTextReplacementEnabled(newValue);
+                          if (typeof window !== 'undefined') {
+                            localStorage.setItem('magicassistant_bricks_text_replacement_enabled', newValue.toString());
+                          }
+                        }}
+                        disabled={isLoading || isStreaming}
+                        className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors ${
+                          textReplacementEnabled
+                            ? 'bg-purple-500 hover:bg-purple-600 dark:bg-purple-600 dark:hover:bg-purple-500'
+                            : 'bg-purple-100 hover:bg-purple-200 dark:bg-purple-900 dark:hover:bg-purple-800'
+                        }`}
+                      >
+                        <svg className={`w-4 h-4 ${textReplacementEnabled ? 'text-white' : 'text-purple-600 dark:text-purple-300'}`} fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" />
+                          <path fillRule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clipRule="evenodd" />
+                        </svg>
+                      </button>
+                    </Tooltip>
+                  )}
+
                   {/* Bricks Framework Selector (only in Bricks mode) */}
                   {isBricksMode && (
                     <Tooltip content="Select framework for component filtering" className="z-50">
@@ -3857,7 +3963,14 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
               </div>
             )}
 
-            
+            {/* Bricks Text Replacement Settings - Only show in Bricks Mode */}
+            {isBricksMode && (
+              <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4 border border-purple-200 dark:border-purple-800">
+                {renderTextReplacementSettings()}
+              </div>
+            )}
+
+
           </div>
         </ConfirmationModal>
       )}

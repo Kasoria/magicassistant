@@ -586,7 +586,8 @@ class AI_Provider {
         $site_context_pages = $data['site_context_pages'] ?? [];
         $site_meta_title = $data['site_meta_title'] ?? '';
         $site_meta_description = $data['site_meta_description'] ?? '';
-        
+        $text_replacement_enabled = $data['text_replacement_enabled'] ?? false;
+
         // Reset tool discovery flag for new sessions
         if ($this->current_session_id !== $session_id) {
             $this->current_session_id = $session_id;
@@ -659,7 +660,7 @@ class AI_Provider {
                 $normalized_agent_mode = false;
             }
             // Keep 'bricks' and other string modes as-is
-            
+
             // Build site context message for Bricks mode when enabled
             if ($site_context_enabled && $normalized_agent_mode === 'bricks') {
                 $site_context_message = $this->build_site_context_message($site_context_pages, $site_meta_title, $site_meta_description);
@@ -670,7 +671,19 @@ class AI_Provider {
                     ));
                 }
             }
-            
+
+            // Set text replacement context for Bricks mode
+            if ($normalized_agent_mode === 'bricks' && $this->mcp_server) {
+                // Build context for text replacement (site info, user prompt)
+                $text_replacement_context = array(
+                    'user_prompt' => $message,
+                    'site_title' => $site_meta_title ?: get_bloginfo('name'),
+                    'site_description' => $site_meta_description ?: get_bloginfo('description'),
+                    'site_context_enabled' => $site_context_enabled,
+                );
+                $this->mcp_server->set_text_replacement_context($text_replacement_enabled, $text_replacement_context);
+            }
+
             // Get AI provider settings
             $provider = $this->settings['ai_provider'] ?? 'openai';
             $model = $this->get_model_for_provider($provider);
@@ -1480,8 +1493,9 @@ class AI_Provider {
         $site_context_pages = $data['site_context_pages'] ?? [];
         $site_meta_title = $data['site_meta_title'] ?? '';
         $site_meta_description = $data['site_meta_description'] ?? '';
+        $text_replacement_enabled = $data['text_replacement_enabled'] ?? false;
 
-        
+
         $user_id = get_current_user_id();
         $start_time = microtime(true);
         
@@ -1528,7 +1542,7 @@ class AI_Provider {
                 $normalized_agent_mode = false;
             }
             // Keep 'bricks' and other string modes as-is
-            
+
             // Build site context message for Bricks mode when enabled
             if ($site_context_enabled && $normalized_agent_mode === 'bricks') {
                 $site_context_message = $this->build_site_context_message($site_context_pages, $site_meta_title, $site_meta_description);
@@ -1539,7 +1553,19 @@ class AI_Provider {
                     ));
                 }
             }
-            
+
+            // Set text replacement context for Bricks mode
+            if ($normalized_agent_mode === 'bricks' && $this->mcp_server) {
+                // Build context for text replacement (site info, user prompt)
+                $text_replacement_context = array(
+                    'user_prompt' => $message,
+                    'site_title' => $site_meta_title ?: get_bloginfo('name'),
+                    'site_description' => $site_meta_description ?: get_bloginfo('description'),
+                    'site_context_enabled' => $site_context_enabled,
+                );
+                $this->mcp_server->set_text_replacement_context($text_replacement_enabled, $text_replacement_context);
+            }
+
             // Get AI provider settings
             $provider = $this->settings['ai_provider'] ?? 'openai';
             $model = $this->get_model_for_provider($provider);
@@ -2396,6 +2422,7 @@ You have two essential tools available for working with Bricks components (these
    - Use this AFTER analyzing components from bricks_get_component and selecting the best match
    - Requires component_id (ID or slug from bricks_get_component results)
    - Returns ready-to-insert Bricks JSON structure
+   - **TEXT REPLACEMENT**: When 'text_replacement_enabled: true' appears in page_context, provide the 'text_replacements' parameter to replace placeholder/lorem ipsum text with site-relevant content
 
 INTELLIGENT COMPONENT SELECTION WORKFLOW:
 1. When user requests a component:
@@ -2497,6 +2524,67 @@ IMPORTANT RULES:
 - Keep search filters BROAD (minimal elements/keywords) to get more options for analysis
 - SILENTLY analyze and select - insert the best match without asking for confirmation
 - After insertion, briefly explain why you selected that component
+
+TEXT REPLACEMENT FEATURE:
+When page_context contains 'text_replacement_enabled: true', you MUST provide meaningful text replacements when calling bricks_insert_component.
+
+**How to use text_replacements:**
+1. After fetching a component with bricks_get_component, analyze the bricksJson array
+2. Look for text elements (heading, text-basic, text, button, text-link, icon-box, alert)
+3. Identify placeholder text (lorem ipsum, generic text like 'Click Here', 'Learn More', etc.)
+4. Generate replacement text based on:
+   - User's prompt context (e.g., 'hero for a dental clinic')
+   - Site context from page_context (site_title, site_description)
+   - The element type (headings should be short, text elements can be longer)
+
+**text_replacements format:**
+Provide replacements IN ORDER - first replacement applies to first text element, second to second, etc.
+
+```json
+[
+  { \"new_text\": \"Your Smile Matters\" },
+  { \"new_text\": \"Experience exceptional dental care with our dedicated team.\" },
+  { \"new_text\": \"Book Now\" }
+]
+```
+
+**CRITICAL - How text replacement works:**
+1. When you call bricks_insert_component with text_replacement enabled, if your replacements don't match the component's text elements, you'll get back `text_elements_for_replacement` showing EXACTLY what needs replacing
+2. Look at EACH element's `word_count` and create a replacement with THE SAME word count
+3. Call bricks_insert_component AGAIN with the correct number of replacements
+4. You MUST provide a replacement for EVERY text element - no more, no less
+
+**CRITICAL - Length Matching:**
+Your `new_text` MUST match the approximate word count of the original text:
+- 2-3 word original → 2-3 word replacement
+- 5-8 word original → 5-8 word replacement
+- 10-15 word original → 10-15 word replacement
+- 20+ word original → 20+ word replacement
+
+**Example:** If bricks_get_component returns:
+```json
+\"text_elements_for_replacement\": [
+  {\"index\": 0, \"element_type\": \"heading\", \"label\": \"heading\", \"word_count\": 8},
+  {\"index\": 1, \"element_type\": \"text-basic\", \"label\": \"Accent\", \"word_count\": 5},
+  {\"index\": 2, \"element_type\": \"text\", \"label\": \"Content\", \"word_count\": 37},
+  {\"index\": 3, \"element_type\": \"button\", \"label\": \"button\", \"word_count\": 2}
+]
+```
+
+Then provide EXACTLY 4 replacements matching those word counts:
+```json
+[
+  { \"new_text\": \"Transform Your Vision Into Stunning Body Art\" },
+  { \"new_text\": \"Award Winning Tattoo Studio\" },
+  { \"new_text\": \"Our talented artists bring decades of experience to every piece. From delicate fine line work to bold traditional designs, we specialize in creating custom tattoos that tell your unique story. Every session begins with a personal consultation to ensure your vision comes to life exactly as you imagine it.\" },
+  { \"new_text\": \"Book Now\" }
+]
+```
+
+**Other rules:**
+- Preserve HTML tags if present in original (e.g., <br>, <strong>)
+- Write compelling, natural-sounding copy
+- Make text relevant to user's business context
 
 CATEGORIES AVAILABLE:
 - header: Site headers/navigation bars
@@ -2960,7 +3048,108 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         return null;
     }
-    
+
+    /**
+     * Make a simple AI call without streaming or tool handling
+     * Used for quick text generation tasks like text replacement
+     * @param array $messages The messages to send
+     * @param string $provider The AI provider to use (openai, anthropic, google, openrouter)
+     * @param int $max_tokens Maximum tokens for response
+     * @return string|null The AI response text or null on failure
+     */
+    public function make_simple_ai_call($messages, $provider = 'openai', $max_tokens = 1024) {
+        try {
+            // Use MagicProxy endpoint directly for simplicity
+            $proxy_url = 'https://proxy.magicplugins.io';
+
+            // Map provider to model
+            $model_map = array(
+                'openai' => 'gpt-4o-mini',
+                'anthropic' => 'claude-3-5-haiku-latest',
+                'google' => 'gemini-2.0-flash',
+                'openrouter' => 'openai/gpt-4o-mini'
+            );
+
+            $model = isset($model_map[$provider]) ? $model_map[$provider] : 'gpt-4o-mini';
+
+            // Build request body based on provider
+            if ($provider === 'anthropic') {
+                $endpoint = $proxy_url . '/api/proxy/anthropic';
+                $body = array(
+                    'model' => $model,
+                    'max_tokens' => $max_tokens,
+                    'messages' => $messages
+                );
+            } else {
+                // OpenAI-compatible format for openai, google, openrouter
+                if ($provider === 'google') {
+                    $endpoint = $proxy_url . '/api/proxy/google';
+                } elseif ($provider === 'openrouter') {
+                    $endpoint = $proxy_url . '/api/proxy/openrouter';
+                } else {
+                    $endpoint = $proxy_url . '/api/proxy/openai';
+                }
+                $body = array(
+                    'model' => $model,
+                    'max_tokens' => $max_tokens,
+                    'messages' => $messages
+                );
+            }
+
+            // Get license headers
+            $license_headers = $this->get_license_headers();
+            $headers = array(
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json'
+            );
+            foreach ($license_headers as $key => $value) {
+                $headers[strtolower($key)] = $value;
+            }
+
+            // Make the request
+            $response = wp_remote_post($endpoint, array(
+                'timeout' => 30,
+                'headers' => $headers,
+                'body' => json_encode($body)
+            ));
+
+            if (is_wp_error($response)) {
+                error_log('[AI_Provider] Simple AI call error: ' . $response->get_error_message());
+                return null;
+            }
+
+            $status_code = wp_remote_retrieve_response_code($response);
+            $response_body = wp_remote_retrieve_body($response);
+
+            if ($status_code !== 200) {
+                error_log('[AI_Provider] Simple AI call failed with status ' . $status_code . ': ' . $response_body);
+                return null;
+            }
+
+            $data = json_decode($response_body, true);
+
+            // Extract text from response based on provider format
+            if ($provider === 'anthropic') {
+                // Anthropic format
+                if (isset($data['content'][0]['text'])) {
+                    return $data['content'][0]['text'];
+                }
+            } else {
+                // OpenAI-compatible format
+                if (isset($data['choices'][0]['message']['content'])) {
+                    return $data['choices'][0]['message']['content'];
+                }
+            }
+
+            error_log('[AI_Provider] Simple AI call: Unable to extract text from response');
+            return null;
+
+        } catch (Exception $e) {
+            error_log('[AI_Provider] Simple AI call exception: ' . $e->getMessage());
+            return null;
+        }
+    }
+
     private function call_openai($messages, $api_key, $web_search_enabled = false, $is_streaming = false, $max_tokens = null) {
         // For Responses API, we need to handle tool calls differently
         return $this->call_openai_responses($messages, $api_key, $web_search_enabled, $is_streaming, $max_tokens);

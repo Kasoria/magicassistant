@@ -24,7 +24,8 @@ export default defineConfig({
         admin: './src/admin.jsx',
         debug: path.resolve(__dirname, 'src/debug.jsx'),
         mediaLibrary: './src/media-library.jsx',
-        imageEditor: './src/image-editor.jsx'
+        imageEditor: './src/image-editor.jsx',
+        bricksTextEnhancer: './src/bricks-text-enhancer.jsx'
       },
       output: {
         entryFileNames: (chunkInfo) => {
@@ -35,6 +36,10 @@ export default defineConfig({
           // Handle special case for image-editor (keep it as image-editor.js instead of camelCase)
           if (chunkInfo.name === 'imageEditor') {
             return 'image-editor.js';
+          }
+          // Handle special case for bricks-text-enhancer
+          if (chunkInfo.name === 'bricksTextEnhancer') {
+            return 'bricks-text-enhancer.js';
           }
           return '[name].js';
         },
