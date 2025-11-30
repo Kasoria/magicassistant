@@ -12621,9 +12621,11 @@ class MCP_Server {
                 }
             }
 
-            // Apply text replacements if provided
-            if (!empty($text_replacements) && is_array($text_replacements)) {
+            // Apply text replacements only if the setting is enabled AND replacements are provided
+            $replacements_applied = 0;
+            if ($this->text_replacement_enabled && !empty($text_replacements) && is_array($text_replacements)) {
                 $component = $this->apply_text_replacements($component, $text_replacements);
+                $replacements_applied = count($text_replacements);
             }
 
             // Return data for JavaScript bridge to handle insertion
@@ -12638,7 +12640,7 @@ class MCP_Server {
                 ),
                 'message' => 'Component data ready for insertion',
                 'instructions' => 'The JavaScript bridge will handle inserting this component into the Bricks canvas using bricksInserter.js',
-                'text_replacements_applied' => !empty($text_replacements) ? count($text_replacements) : 0
+                'text_replacements_applied' => $replacements_applied
             );
 
         } catch (Exception $e) {
