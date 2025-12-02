@@ -117,6 +117,15 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
     }
     return false;
   })
+
+  // Bricks image replacement state - auto-replace placeholder images with Unsplash images
+  const [imageReplacementEnabled, setImageReplacementEnabled] = useState(() => {
+    if (typeof window !== 'undefined' && isBricksMode) {
+      const saved = localStorage.getItem('magicassistant_bricks_image_replacement_enabled');
+      return saved === 'true';
+    }
+    return false;
+  })
   const [selectedSiteContextPages, setSelectedSiteContextPages] = useState(() => {
     if (typeof window !== 'undefined' && isBricksMode) {
       const saved = localStorage.getItem('magicassistant_bricks_site_context_pages');
@@ -133,6 +142,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
   const [siteMetaTitle, setSiteMetaTitle] = useState('')
   const [siteMetaDescription, setSiteMetaDescription] = useState('')
   const [isSiteContextModalOpen, setIsSiteContextModalOpen] = useState(false)
+  const [isBricksSettingsOpen, setIsBricksSettingsOpen] = useState(false)
   
   // Helper: Sanitize message history to prevent large base64 images from being sent
   const sanitizeMessageHistory = (messages) => {
@@ -490,6 +500,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
       localStorage.setItem('magicassistant_bricks_site_context_enabled', siteContextEnabled.toString())
       localStorage.setItem('magicassistant_bricks_site_context_pages', JSON.stringify(selectedSiteContextPages))
       localStorage.setItem('magicassistant_bricks_text_replacement_enabled', textReplacementEnabled.toString())
+      localStorage.setItem('magicassistant_bricks_image_replacement_enabled', imageReplacementEnabled.toString())
       showSuccess('Bricks settings saved!')
     }
   }
@@ -703,6 +714,46 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
         <div className="bg-purple-100/80 dark:bg-purple-800/30 rounded p-3">
           <p className="text-xs text-purple-800 dark:text-purple-200">
             <span className="font-semibold">Tip:</span> For best results, include context in your prompt (e.g., "Insert a hero section for a dental clinic") so the AI knows what content to generate.
+          </p>
+        </div>
+      )}
+
+      <label className="flex items-center cursor-pointer select-none">
+        <input
+          type="checkbox"
+          id="imageReplacementEnabled"
+          checked={imageReplacementEnabled}
+          onChange={(e) => {
+            setImageReplacementEnabled(e.target.checked)
+            // Auto-save on change
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('magicassistant_bricks_image_replacement_enabled', e.target.checked.toString())
+            }
+          }}
+          className="peer sr-only"
+        />
+        <span
+          className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+            imageReplacementEnabled
+              ? 'bg-emerald-600 border-emerald-600'
+              : 'bg-white border-emerald-500 dark:bg-gray-800 dark:border-emerald-400'
+          }`}
+        >
+          {imageReplacementEnabled && (
+            <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </span>
+        <span className="ml-2 text-sm font-medium text-emerald-900 dark:text-emerald-100">
+          Enable image replacement
+        </span>
+      </label>
+
+      {imageReplacementEnabled && (
+        <div className="bg-emerald-100/80 dark:bg-emerald-800/30 rounded p-3">
+          <p className="text-xs text-emerald-800 dark:text-emerald-200">
+            <span className="font-semibold">Tip:</span> Placeholder images (placehold.co, picsum, etc.) will be automatically replaced with relevant Unsplash images based on context.
           </p>
         </div>
       )}
@@ -924,10 +975,11 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
           site_meta_description: siteMetaDescription
         } : {}),
         ...(isBricksMode ? {
-          text_replacement_enabled: textReplacementEnabled
+          text_replacement_enabled: textReplacementEnabled,
+          image_replacement_enabled: imageReplacementEnabled
         } : {})
       }
-      
+
       // Use fetch for streaming with proper POST data since EventSource doesn't support POST
       const response = await fetch(`${adminData.restUrl}chat-stream`, {
         method: 'POST',
@@ -1371,7 +1423,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
         context: currentPost.context || 'unknown',
         ...(isBricksMode ? {
           bricks_framework: selectedFramework,
-          text_replacement_enabled: textReplacementEnabled
+          text_replacement_enabled: textReplacementEnabled,
+          image_replacement_enabled: imageReplacementEnabled
         } : {})
       }
 
@@ -1421,7 +1474,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
             site_meta_description: siteMetaDescription
           } : {}),
           ...(isBricksMode ? {
-            text_replacement_enabled: textReplacementEnabled
+            text_replacement_enabled: textReplacementEnabled,
+            image_replacement_enabled: imageReplacementEnabled
           } : {})
         };
 
@@ -2211,7 +2265,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
         context: currentPost.context || 'unknown',
         ...(isBricksMode ? {
           bricks_framework: selectedFramework,
-          text_replacement_enabled: textReplacementEnabled
+          text_replacement_enabled: textReplacementEnabled,
+          image_replacement_enabled: imageReplacementEnabled
         } : {})
       }
 
@@ -2240,7 +2295,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
             site_meta_description: siteMetaDescription
           } : {}),
           ...(isBricksMode ? {
-            text_replacement_enabled: textReplacementEnabled
+            text_replacement_enabled: textReplacementEnabled,
+            image_replacement_enabled: imageReplacementEnabled
           } : {})
         })
       })
@@ -3623,69 +3679,148 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
                     </button>
                   </Tooltip>
 
-                  {/* Bricks Site Context Button */}
+                  {/* Bricks Settings Dropdown (only in Bricks mode) */}
                   {isBricksMode && (
-                    <Tooltip content="Site context settings" className="z-50">
-                      <button
-                        onClick={() => setIsSiteContextModalOpen(true)}
-                        disabled={isLoading || isStreaming}
-                        className="flex items-center justify-center w-8 h-8 bg-green-100 hover:bg-green-200 dark:bg-green-700 dark:hover:bg-green-600 rounded-lg transition-colors"
-                      >
-                        <svg className="w-4 h-4 text-green-600 dark:text-green-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-3-3v6m9-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                      </button>
-                    </Tooltip>
-                  )}
+                    <div className="relative">
+                      <Tooltip content="Bricks settings" className="z-50">
+                        <button
+                          onClick={() => setIsBricksSettingsOpen(!isBricksSettingsOpen)}
+                          disabled={isLoading || isStreaming}
+                          className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors ${
+                            (siteContextEnabled || textReplacementEnabled || imageReplacementEnabled)
+                              ? 'bg-orange-500 hover:bg-orange-600 dark:bg-orange-600 dark:hover:bg-orange-500'
+                              : 'bg-orange-100 hover:bg-orange-200 dark:bg-orange-900 dark:hover:bg-orange-800'
+                          }`}
+                        >
+                          <svg className={`w-4 h-4 ${(siteContextEnabled || textReplacementEnabled || imageReplacementEnabled) ? 'text-white' : 'text-orange-600 dark:text-orange-300'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                          </svg>
+                        </button>
+                      </Tooltip>
 
-                  {/* Bricks Text Replacement Toggle */}
-                  {isBricksMode && (
-                    <Tooltip content={textReplacementEnabled ? "Text replacement: ON - Click to disable" : "Text replacement: OFF - Click to enable"} className="z-50">
-                      <button
-                        onClick={() => {
-                          const newValue = !textReplacementEnabled;
-                          setTextReplacementEnabled(newValue);
-                          if (typeof window !== 'undefined') {
-                            localStorage.setItem('magicassistant_bricks_text_replacement_enabled', newValue.toString());
-                          }
-                        }}
-                        disabled={isLoading || isStreaming}
-                        className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors ${
-                          textReplacementEnabled
-                            ? 'bg-purple-500 hover:bg-purple-600 dark:bg-purple-600 dark:hover:bg-purple-500'
-                            : 'bg-purple-100 hover:bg-purple-200 dark:bg-purple-900 dark:hover:bg-purple-800'
-                        }`}
-                      >
-                        <svg className={`w-4 h-4 ${textReplacementEnabled ? 'text-white' : 'text-purple-600 dark:text-purple-300'}`} fill="currentColor" viewBox="0 0 20 20">
-                          <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" />
-                          <path fillRule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clipRule="evenodd" />
-                        </svg>
-                      </button>
-                    </Tooltip>
-                  )}
+                      {/* Dropdown Menu */}
+                      {isBricksSettingsOpen && (
+                        <>
+                          {/* Backdrop to close dropdown */}
+                          <div
+                            className="fixed inset-0 z-40"
+                            onClick={() => setIsBricksSettingsOpen(false)}
+                          />
+                          <div className="absolute bottom-full left-0 mb-2 w-72 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-50">
+                            <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+                              <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Bricks Settings</h4>
+                            </div>
+                            <div className="p-3 space-y-2">
+                              {/* Site Context */}
+                              <button
+                                onClick={() => {
+                                  setIsSiteContextModalOpen(true);
+                                  setIsBricksSettingsOpen(false);
+                                }}
+                                className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-left rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                              >
+                                <div className={`w-8 h-8 flex items-center justify-center rounded-md ${siteContextEnabled ? 'bg-green-500' : 'bg-green-100 dark:bg-green-900'}`}>
+                                  <svg className={`w-4 h-4 ${siteContextEnabled ? 'text-white' : 'text-green-600 dark:text-green-300'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                  </svg>
+                                </div>
+                                <div className="flex flex-col flex-1 gap-2">
+                                  <div className="font-medium text-gray-900 dark:text-white">Site Context</div>
+                                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                                    {siteContextEnabled ? 'Enabled' : 'Configure site info for AI'}
+                                  </div>
+                                </div>
+                              </button>
 
-                  {/* Bricks Framework Selector (only in Bricks mode) */}
-                  {isBricksMode && (
-                    <Tooltip content="Select framework for component filtering" className="z-50">
-                      <select
-                        value={selectedFramework}
-                        onChange={(e) => {
-                          const newFramework = e.target.value;
-                          setSelectedFramework(newFramework);
-                          // Save to localStorage for persistence
-                          if (typeof window !== 'undefined') {
-                            localStorage.setItem('magicassistant_bricks_framework', newFramework);
-                          }
-                        }}
-                        className="text-xs px-2 py-1 h-8 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        title="Select framework for component filtering"
-                      >
-                        <option value="Native">Native</option>
-                        <option value="ACSS">ACSS</option>
-                        <option value="CoreFramework">CoreFramework</option>
-                        <option value="ATF">ATF</option>
-                      </select>
-                    </Tooltip>
+                              {/* Text Replacement Toggle */}
+                              <button
+                                onClick={() => {
+                                  const newValue = !textReplacementEnabled;
+                                  setTextReplacementEnabled(newValue);
+                                  if (typeof window !== 'undefined') {
+                                    localStorage.setItem('magicassistant_bricks_text_replacement_enabled', newValue.toString());
+                                  }
+                                }}
+                                className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-left rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                              >
+                                <div className={`w-8 h-8 flex items-center justify-center rounded-md ${textReplacementEnabled ? 'bg-purple-500' : 'bg-purple-100 dark:bg-purple-900'}`}>
+                                  <svg className={`w-4 h-4 ${textReplacementEnabled ? 'text-white' : 'text-purple-600 dark:text-purple-300'}`} fill="currentColor" viewBox="0 0 20 20">
+                                    <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" />
+                                    <path fillRule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clipRule="evenodd" />
+                                  </svg>
+                                </div>
+                                <div className="flex flex-col flex-1 gap-2">
+                                  <div className="font-medium text-gray-900 dark:text-white">Text Replacement</div>
+                                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                                    {textReplacementEnabled ? 'ON - Auto-replace placeholder text' : 'OFF - Keep original text'}
+                                  </div>
+                                </div>
+                                <div className={`w-10 h-5 rounded-full transition-colors ${textReplacementEnabled ? 'bg-purple-500' : 'bg-gray-300 dark:bg-gray-600'}`}>
+                                  <div className={`w-4 h-4 mt-0.5 rounded-full bg-white shadow transition-transform ${textReplacementEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                                </div>
+                              </button>
+
+                              {/* Image Replacement Toggle */}
+                              <button
+                                onClick={() => {
+                                  const newValue = !imageReplacementEnabled;
+                                  setImageReplacementEnabled(newValue);
+                                  if (typeof window !== 'undefined') {
+                                    localStorage.setItem('magicassistant_bricks_image_replacement_enabled', newValue.toString());
+                                  }
+                                }}
+                                className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-left rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                              >
+                                <div className={`w-8 h-8 flex items-center justify-center rounded-md ${imageReplacementEnabled ? 'bg-teal-500' : 'bg-teal-100 dark:bg-teal-900'}`}>
+                                  <svg className={`w-4 h-4 ${imageReplacementEnabled ? 'text-white' : 'text-teal-600 dark:text-teal-300'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                  </svg>
+                                </div>
+                                <div className="flex flex-col flex-1 gap-2">
+                                  <div className="font-medium text-gray-900 dark:text-white">Image Replacement</div>
+                                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                                    {imageReplacementEnabled ? 'ON - Auto-replace placeholder images' : 'OFF - Keep original images'}
+                                  </div>
+                                </div>
+                                <div className={`w-10 h-5 rounded-full transition-colors ${imageReplacementEnabled ? 'bg-teal-500' : 'bg-gray-300 dark:bg-gray-600'}`}>
+                                  <div className={`w-4 h-4 mt-0.5 rounded-full bg-white shadow transition-transform ${imageReplacementEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                                </div>
+                              </button>
+
+                              {/* Framework Selector */}
+                              <div className="px-3 py-2.5">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-8 h-8 flex items-center justify-center rounded-md bg-blue-100 dark:bg-blue-900">
+                                    <svg className="w-4 h-4 text-blue-600 dark:text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                                    </svg>
+                                  </div>
+                                  <div className="flex flex-col flex-1 gap-2">
+                                    <div className="font-medium text-gray-900 dark:text-white text-sm mb-1">Framework</div>
+                                    <select
+                                      value={selectedFramework}
+                                      onChange={(e) => {
+                                        const newFramework = e.target.value;
+                                        setSelectedFramework(newFramework);
+                                        if (typeof window !== 'undefined') {
+                                          localStorage.setItem('magicassistant_bricks_framework', newFramework);
+                                        }
+                                      }}
+                                      className="w-full text-xs px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    >
+                                      <option value="Native">Native</option>
+                                      <option value="ACSS">ACSS</option>
+                                      <option value="CoreFramework">CoreFramework</option>
+                                      <option value="ATF">ATF</option>
+                                    </select>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
                   )}
                 </div>
                 

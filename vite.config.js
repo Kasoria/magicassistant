@@ -25,7 +25,8 @@ export default defineConfig({
         debug: path.resolve(__dirname, 'src/debug.jsx'),
         mediaLibrary: './src/media-library.jsx',
         imageEditor: './src/image-editor.jsx',
-        bricksTextEnhancer: './src/bricks-text-enhancer.jsx'
+        bricksTextEnhancer: './src/bricks-text-enhancer.jsx',
+        bricksImageEnhancer: './src/bricks-image-enhancer.jsx'
       },
       output: {
         entryFileNames: (chunkInfo) => {
@@ -40,6 +41,10 @@ export default defineConfig({
           // Handle special case for bricks-text-enhancer
           if (chunkInfo.name === 'bricksTextEnhancer') {
             return 'bricks-text-enhancer.js';
+          }
+          // Handle special case for bricks-image-enhancer
+          if (chunkInfo.name === 'bricksImageEnhancer') {
+            return 'bricks-image-enhancer.js';
           }
           return '[name].js';
         },

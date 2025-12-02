@@ -144,6 +144,7 @@ class React_Dev {
             // Load Bricks text enhancer when in Bricks builder
             if ( $this->is_bricks_builder() ) {
                 $this->enqueue_bricks_text_enhancer_scripts( $hook );
+                $this->enqueue_bricks_image_enhancer_scripts( $hook );
             }
         }
     }
@@ -459,6 +460,95 @@ class React_Dev {
      */
     private function localize_bricks_text_enhancer_data() {
         $handle = $this->is_dev_mode ? 'mat-react-bricks-text-enhancer-dev' : 'mat-react-bricks-text-enhancer';
+
+        wp_localize_script( $handle, 'magicAssistantAdmin', array(
+            'ajaxurl' => admin_url( 'admin-ajax.php' ),
+            'restUrl' => rest_url( 'magicassistant/v1/' ),
+            'nonces' => array(
+                'wp_rest' => wp_create_nonce( 'wp_rest' ),
+                'mat_admin' => wp_create_nonce( 'mat_admin_nonce' ),
+                'mat_ajax' => wp_create_nonce( 'mat_ajax_nonce' ),
+            ),
+            'currentUser' => wp_get_current_user()->ID,
+            'isAdmin' => is_admin(),
+            'isDev' => $this->is_dev_mode,
+            'pluginUrl' => MAGIC_ASSISTANT_PLUGIN_URL,
+        ));
+    }
+
+    /**
+     * Enqueue Bricks image enhancer React scripts
+     */
+    private function enqueue_bricks_image_enhancer_scripts( $hook ) {
+        if ( $this->is_dev_mode ) {
+            $this->enqueue_bricks_image_enhancer_dev_scripts( $hook );
+        } else {
+            $this->enqueue_bricks_image_enhancer_prod_scripts( $hook );
+        }
+        $this->localize_bricks_image_enhancer_data();
+    }
+
+    /**
+     * Enqueue Bricks image enhancer development scripts from Vite dev server
+     */
+    private function enqueue_bricks_image_enhancer_dev_scripts( $hook ) {
+        // Vite client for HMR - only enqueue if not already enqueued
+        if ( ! wp_script_is( 'vite-client', 'enqueued' ) ) {
+            wp_enqueue_script(
+                'vite-client',
+                $this->vite_dev_server . '/@vite/client',
+                array(),
+                null,
+                false
+            );
+
+            add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
+        }
+
+        // Bricks image enhancer React app from Vite dev server
+        wp_enqueue_script(
+            'mat-react-bricks-image-enhancer-dev',
+            $this->vite_dev_server . '/src/bricks-image-enhancer.jsx',
+            array( 'vite-client' ),
+            null,
+            true
+        );
+
+        add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
+    }
+
+    /**
+     * Enqueue Bricks image enhancer production built scripts
+     */
+    private function enqueue_bricks_image_enhancer_prod_scripts( $hook ) {
+        $dist_path = MAGIC_ASSISTANT_PLUGIN_PATH . 'dist/';
+        $dist_url = MAGIC_ASSISTANT_PLUGIN_URL . 'dist/';
+
+        // Load vendor chunks first
+        $vendor_handles = $this->enqueue_vendor_chunks( $dist_path, $dist_url );
+
+        // Load the main CSS file
+        $this->enqueue_main_css( $dist_path, $dist_url );
+
+        // Bricks image enhancer React app
+        if ( file_exists( $dist_path . 'bricks-image-enhancer.js' ) ) {
+            wp_enqueue_script(
+                'mat-react-bricks-image-enhancer',
+                $dist_url . 'bricks-image-enhancer.js',
+                $vendor_handles,
+                MAGIC_ASSISTANT_VERSION,
+                true
+            );
+
+            add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
+        }
+    }
+
+    /**
+     * Localize data for Bricks image enhancer React app
+     */
+    private function localize_bricks_image_enhancer_data() {
+        $handle = $this->is_dev_mode ? 'mat-react-bricks-image-enhancer-dev' : 'mat-react-bricks-image-enhancer';
 
         wp_localize_script( $handle, 'magicAssistantAdmin', array(
             'ajaxurl' => admin_url( 'admin-ajax.php' ),
@@ -1560,12 +1650,14 @@ class React_Dev {
             'mat-react-media-library-dev',
             'mat-react-image-editor-dev',
             'mat-react-bricks-text-enhancer-dev',
+            'mat-react-bricks-image-enhancer-dev',
             'mat-react-admin',
             'mat-react-public',
             'mat-react-public-floating',
             'mat-react-media-library',
             'mat-react-image-editor',
             'mat-react-bricks-text-enhancer',
+            'mat-react-bricks-image-enhancer',
             'mat-vendor-chunk',
             'mat-flowbite-chunk',
             'mat-utils-chunk',

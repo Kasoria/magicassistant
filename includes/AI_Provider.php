@@ -587,6 +587,7 @@ class AI_Provider {
         $site_meta_title = $data['site_meta_title'] ?? '';
         $site_meta_description = $data['site_meta_description'] ?? '';
         $text_replacement_enabled = $data['text_replacement_enabled'] ?? false;
+        $image_replacement_enabled = $data['image_replacement_enabled'] ?? false;
 
         // Reset tool discovery flag for new sessions
         if ($this->current_session_id !== $session_id) {
@@ -595,7 +596,7 @@ class AI_Provider {
                 $this->mcp_server->reset_tools_discovered();
             }
         }
-        
+
         // Optional debug logging of user request
         $debug_request = array(
             'user_id' => get_current_user_id(),
@@ -682,12 +683,20 @@ class AI_Provider {
                     'site_context_enabled' => $site_context_enabled,
                 );
                 $this->mcp_server->set_text_replacement_context($text_replacement_enabled, $text_replacement_context);
+
+                // Build context for image replacement
+                $image_replacement_context = array(
+                    'user_prompt' => $message,
+                    'site_title' => $site_meta_title ?: get_bloginfo('name'),
+                    'site_description' => $site_meta_description ?: get_bloginfo('description'),
+                );
+                $this->mcp_server->set_image_replacement_context($image_replacement_enabled, $image_replacement_context);
             }
 
             // Get AI provider settings
             $provider = $this->settings['ai_provider'] ?? 'openai';
             $model = $this->get_model_for_provider($provider);
-            
+
             // Get the appropriate API key based on provider (already decrypted in settings)
             if ($provider === 'openai') {
                 $api_key = $this->settings['openai_api_key'] ?? '';
@@ -1494,7 +1503,7 @@ class AI_Provider {
         $site_meta_title = $data['site_meta_title'] ?? '';
         $site_meta_description = $data['site_meta_description'] ?? '';
         $text_replacement_enabled = $data['text_replacement_enabled'] ?? false;
-
+        $image_replacement_enabled = $data['image_replacement_enabled'] ?? false;
 
         $user_id = get_current_user_id();
         $start_time = microtime(true);
@@ -1564,13 +1573,21 @@ class AI_Provider {
                     'site_context_enabled' => $site_context_enabled,
                 );
                 $this->mcp_server->set_text_replacement_context($text_replacement_enabled, $text_replacement_context);
+
+                // Build context for image replacement
+                $image_replacement_context = array(
+                    'user_prompt' => $message,
+                    'site_title' => $site_meta_title ?: get_bloginfo('name'),
+                    'site_description' => $site_meta_description ?: get_bloginfo('description'),
+                );
+                $this->mcp_server->set_image_replacement_context($image_replacement_enabled, $image_replacement_context);
             }
 
             // Get AI provider settings
             $provider = $this->settings['ai_provider'] ?? 'openai';
             $model = $this->get_model_for_provider($provider);
             $api_key = $this->get_api_key($provider);
-            
+
             // Send metadata info
             echo "data: " . json_encode(array(
                 'type' => 'metadata',
@@ -2423,6 +2440,7 @@ You have two essential tools available for working with Bricks components (these
    - Requires component_id (ID or slug from bricks_get_component results)
    - Returns ready-to-insert Bricks JSON structure
    - **TEXT REPLACEMENT**: When 'text_replacement_enabled: true' appears in page_context, provide the 'text_replacements' parameter to replace placeholder/lorem ipsum text with site-relevant content
+   - **IMAGE REPLACEMENT**: When 'image_replacement_enabled: true' appears in page_context, provide the 'image_replacements' parameter to replace placeholder images with relevant Unsplash images
 
 INTELLIGENT COMPONENT SELECTION WORKFLOW:
 1. When user requests a component:
@@ -2585,6 +2603,62 @@ Then provide EXACTLY 4 replacements matching those word counts:
 - Preserve HTML tags if present in original (e.g., <br>, <strong>)
 - Write compelling, natural-sounding copy
 - Make text relevant to user's business context
+
+IMAGE REPLACEMENT FEATURE:
+When page_context contains 'image_replacement_enabled: true', you MUST provide image replacements for placeholder images when calling bricks_insert_component.
+
+**How to use image_replacements:**
+1. After fetching a component with bricks_get_component, the system identifies placeholder images
+2. Placeholder images are detected by URL patterns (placehold.co, placeholder.com, picsum.photos, etc.)
+3. You will receive `image_elements_for_replacement` showing which images need replacing
+
+**image_replacements format:**
+Provide replacements IN ORDER - first replacement applies to first placeholder image, second to second, etc.
+
+```json
+[
+  { \"search_query\": \"modern dental office interior\", \"alt_text\": \"State-of-the-art dental clinic\" },
+  { \"search_query\": \"happy patient smiling dentist\", \"alt_text\": \"Patient receiving dental care\" }
+]
+```
+
+**CRITICAL - How image replacement works:**
+1. When you call bricks_insert_component with image_replacement enabled, if your replacements don't match the component's placeholder image count, you'll get back `image_elements_for_replacement` showing EXACTLY what needs replacing
+2. Look at the `context_hint` for each image to understand what type of image is needed
+3. Call bricks_insert_component AGAIN with the correct number of image replacements
+4. You MUST provide a replacement for EVERY placeholder image - no more, no less
+
+**Creating good search queries:**
+- Use 2-4 words that describe the desired image
+- Match the business context (e.g., \"professional lawyer office\" for law firm)
+- Be specific but not overly narrow
+- Examples:
+  * Hero background: \"modern office building exterior\"
+  * Team photo: \"diverse business team meeting\"
+  * Service image: \"dentist examining patient\"
+
+**Example:** If bricks_get_component returns:
+```json
+\"image_elements_for_replacement\": [
+  {\"index\": 0, \"element_type\": \"section\", \"image_type\": \"background\", \"label\": \"Hero Background\", \"context_hint\": \"hero section background\"},
+  {\"index\": 1, \"element_type\": \"image\", \"image_type\": \"image\", \"label\": \"Feature Image\", \"context_hint\": \"service photo\"}
+]
+```
+
+Note: `image_type` indicates whether it's an 'image' element or a 'background' image on a container/section.
+
+Then provide EXACTLY 2 image replacements:
+```json
+[
+  { \"search_query\": \"tattoo artist working studio\", \"alt_text\": \"Professional tattoo artist at work\" },
+  { \"search_query\": \"tattoo design portfolio artwork\", \"alt_text\": \"Custom tattoo designs\" }
+]
+```
+
+**Other rules:**
+- Generate search queries relevant to the user's business context
+- Write descriptive alt text for accessibility
+- Images are sourced from Unsplash and will be inserted as external URLs
 
 CATEGORIES AVAILABLE:
 - header: Site headers/navigation bars
@@ -8421,11 +8495,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         // Basic site information – always useful for MagicProxy analytics
         $headers['X-Site-Url'] = esc_url_raw( get_site_url() );
 
-        // Debugging output (only if explicitly requested or WP_DEBUG true)
-        if ( $debug || ( defined( 'WP_DEBUG' ) && WP_DEBUG ) ) {
-            error_log( '[MagicAssistant] License headers: ' . wp_json_encode( $headers ) );
-        }
-
         return $headers;
     }
 
@@ -9670,10 +9739,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
     public function save_unsplash_image($request) {
         $data = $request->get_json_params();
-        
-        // Debug log the incoming request data
-        error_log('[MagicAssistant] Unsplash Image Save Request: ' . json_encode($data));
-        
         $image_url        = isset($data['image_url']) ? esc_url_raw($data['image_url']) : '';
         $download_location = isset($data['download_location']) ? esc_url_raw($data['download_location']) : '';
         $title            = sanitize_text_field($data['title'] ?? $data['alt'] ?? 'Unsplash Image');
@@ -9688,13 +9753,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         // Validate download_location for Unsplash images
         if (strpos($image_url, 'images.unsplash.com') !== false) {
             if (empty($download_location)) {
-                error_log('[MagicAssistant] Warning: Unsplash image save attempted without download_location - this may violate Unsplash API terms');
                 return new WP_Error('missing_download_location', 'Download location is required for Unsplash images to comply with API terms', array('status' => 400));
             }
-            
+
             // Validate download_location format
             if (!filter_var($download_location, FILTER_VALIDATE_URL)) {
-                error_log('[MagicAssistant] Invalid download_location format: ' . $download_location);
                 return new WP_Error('invalid_download_location', 'Invalid download location URL format', array('status' => 400));
             }
         }
@@ -9756,26 +9819,15 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
         // Notify MagicProxy about the download for tracking (MagicProxy will handle Unsplash API auth)
         if (!empty($download_location)) {
-            // Log the download notification attempt
-            error_log('[MagicAssistant] Unsplash Download Notification: ' . json_encode(array(
-                'download_location' => $download_location,
-                'unsplash_id' => $unsplash_id,
-                'photographer' => $photographer,
-                'attachment_id' => $attachment_id,
-                'image_url' => $image_url,
-                'timestamp' => current_time('mysql')
-            )));
-            
-            // Send to MagicProxy instead of directly to Unsplash API with retry mechanism
             $magicproxy_url = 'https://proxy.magicplugins.io/api/proxy/unsplash/download';
             $max_retries = 3;
             $retry_count = 0;
             $notification_success = false;
-            
+
             while ($retry_count < $max_retries && !$notification_success) {
                 $response = wp_remote_post($magicproxy_url, array(
                     'timeout' => 10,
-                    'blocking' => true, // Make blocking for retry logic
+                    'blocking' => true,
                     'headers' => array(
                         'Content-Type' => 'application/json',
                     ),
@@ -9788,33 +9840,24 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         'retry_attempt' => $retry_count + 1
                     ))
                 ));
-                
+
                 if (is_wp_error($response)) {
                     $retry_count++;
-                    error_log('[MagicAssistant] MagicProxy Download Notification Error (Attempt ' . $retry_count . '/' . $max_retries . '): ' . $response->get_error_message());
                     if ($retry_count < $max_retries) {
-                        sleep(1); // Wait 1 second before retry
+                        sleep(1);
                     }
                 } else {
                     $response_code = wp_remote_retrieve_response_code($response);
                     if ($response_code >= 200 && $response_code < 300) {
                         $notification_success = true;
-                        error_log('[MagicAssistant] MagicProxy Download Notification Sent Successfully to: ' . $magicproxy_url . ' (Attempt ' . ($retry_count + 1) . ')');
                     } else {
                         $retry_count++;
-                        error_log('[MagicAssistant] MagicProxy Download Notification Failed with HTTP ' . $response_code . ' (Attempt ' . $retry_count . '/' . $max_retries . ')');
                         if ($retry_count < $max_retries) {
-                            sleep(1); // Wait 1 second before retry
+                            sleep(1);
                         }
                     }
                 }
             }
-            
-            if (!$notification_success) {
-                error_log('[MagicAssistant] Failed to notify MagicProxy after ' . $max_retries . ' attempts - download tracking may be incomplete');
-            }
-        } else {
-            error_log('[MagicAssistant] Warning: No download_location provided for Unsplash image save - download not tracked');
         }
 
         $url = wp_get_attachment_url($attachment_id);
@@ -9828,10 +9871,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
     public function save_as_featured_image($request) {
         $data = $request->get_json_params();
-        
-        // Debug log the incoming request data
-        error_log('[MagicAssistant] Save as Featured Image Request: ' . json_encode($data));
-        
         $image_url        = isset($data['image_url']) ? esc_url_raw($data['image_url']) : '';
         $download_location = isset($data['download_location']) ? esc_url_raw($data['download_location']) : '';
         $title            = sanitize_text_field($data['title'] ?? $data['alt'] ?? 'AI Generated Image');
@@ -9851,13 +9890,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         // Validate download_location for Unsplash images
         if (strpos($image_url, 'images.unsplash.com') !== false) {
             if (empty($download_location)) {
-                error_log('[MagicAssistant] Warning: Unsplash featured image save attempted without download_location - this may violate Unsplash API terms');
                 return new WP_Error('missing_download_location', 'Download location is required for Unsplash images to comply with API terms', array('status' => 400));
             }
-            
+
             // Validate download_location format
             if (!filter_var($download_location, FILTER_VALIDATE_URL)) {
-                error_log('[MagicAssistant] Invalid download_location format for featured image: ' . $download_location);
                 return new WP_Error('invalid_download_location', 'Invalid download location URL format', array('status' => 400));
             }
         }
@@ -9936,28 +9973,15 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
         // Notify MagicProxy about the download for tracking (for Unsplash images)
         if (!empty($download_location)) {
-            // Log the featured image download notification attempt
-            error_log('[MagicAssistant] Unsplash Featured Image Download Notification: ' . json_encode(array(
-                'download_location' => $download_location,
-                'unsplash_id' => $unsplash_id,
-                'photographer' => $photographer,
-                'attachment_id' => $attachment_id,
-                'post_id' => $post_id,
-                'post_title' => $post->post_title,
-                'image_url' => $image_url,
-                'timestamp' => current_time('mysql')
-            )));
-            
-            // Send to MagicProxy with retry mechanism (same as save_unsplash_image)
             $magicproxy_url = 'https://proxy.magicplugins.io/api/proxy/unsplash/download';
             $max_retries = 3;
             $retry_count = 0;
             $notification_success = false;
-            
+
             while ($retry_count < $max_retries && !$notification_success) {
                 $response = wp_remote_post($magicproxy_url, array(
                     'timeout' => 10,
-                    'blocking' => true, // Make blocking for retry logic
+                    'blocking' => true,
                     'headers' => array(
                         'Content-Type' => 'application/json',
                     ),
@@ -9972,30 +9996,23 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         'retry_attempt' => $retry_count + 1
                     ))
                 ));
-                
+
                 if (is_wp_error($response)) {
                     $retry_count++;
-                    error_log('[MagicAssistant] MagicProxy Featured Image Download Notification Error (Attempt ' . $retry_count . '/' . $max_retries . '): ' . $response->get_error_message());
                     if ($retry_count < $max_retries) {
-                        sleep(1); // Wait 1 second before retry
+                        sleep(1);
                     }
                 } else {
                     $response_code = wp_remote_retrieve_response_code($response);
                     if ($response_code >= 200 && $response_code < 300) {
                         $notification_success = true;
-                        error_log('[MagicAssistant] MagicProxy Featured Image Download Notification Sent Successfully to: ' . $magicproxy_url . ' (Attempt ' . ($retry_count + 1) . ')');
                     } else {
                         $retry_count++;
-                        error_log('[MagicAssistant] MagicProxy Featured Image Download Notification Failed with HTTP ' . $response_code . ' (Attempt ' . $retry_count . '/' . $max_retries . ')');
                         if ($retry_count < $max_retries) {
-                            sleep(1); // Wait 1 second before retry
+                            sleep(1);
                         }
                     }
                 }
-            }
-            
-            if (!$notification_success) {
-                error_log('[MagicAssistant] Failed to notify MagicProxy for featured image after ' . $max_retries . ' attempts - download tracking may be incomplete');
             }
         }
 

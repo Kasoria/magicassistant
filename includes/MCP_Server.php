@@ -33,6 +33,10 @@ class MCP_Server {
     // Text replacement context for Bricks components
     private $text_replacement_enabled = false;
     private $text_replacement_context = array();
+
+    // Image replacement context for Bricks components
+    private $image_replacement_enabled = false;
+    private $image_replacement_context = array();
     
     public function __construct($db = null) {
         $this->db = $db;
@@ -117,6 +121,32 @@ class MCP_Server {
         return $this->text_replacement_context;
     }
 
+    /**
+     * Set image replacement context for Bricks components
+     * @param bool $enabled Whether image replacement is enabled
+     * @param array $context Context data (site info, user prompt, etc.)
+     */
+    public function set_image_replacement_context($enabled, $context = array()) {
+        $this->image_replacement_enabled = $enabled;
+        $this->image_replacement_context = $context;
+    }
+
+    /**
+     * Get image replacement enabled status
+     * @return bool
+     */
+    public function is_image_replacement_enabled() {
+        return $this->image_replacement_enabled;
+    }
+
+    /**
+     * Get image replacement context
+     * @return array
+     */
+    public function get_image_replacement_context() {
+        return $this->image_replacement_context;
+    }
+
     private function init_jwt_secret() {
         if (!$this->db) {
             return;
@@ -134,19 +164,39 @@ class MCP_Server {
         if (!$this->enabled) {
             return;
         }
-        
+
         // Main MCP endpoint - JSON-RPC 2.0 compliant
         register_rest_route('magicassistant/v1', '/mcp', array(
             'methods' => 'POST',
             'callback' => array($this, 'handle_mcp_request'),
             'permission_callback' => array($this, 'check_mcp_permissions'),
         ));
-        
+
         // JWT token generation endpoint
         register_rest_route('magicassistant/v1', '/mcp/auth', array(
             'methods' => 'POST',
             'callback' => array($this, 'generate_jwt_token'),
             'permission_callback' => array($this, 'check_auth_permissions'),
+        ));
+
+        // Unsplash API endpoints for frontend image enhancement
+        // Uses WordPress nonce auth (not JWT) for frontend calls
+        register_rest_route('magicassistant/v1', '/unsplash/search', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'handle_unsplash_search'),
+            'permission_callback' => array($this, 'check_user_permissions'),
+        ));
+
+        register_rest_route('magicassistant/v1', '/unsplash/random', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'handle_unsplash_random'),
+            'permission_callback' => array($this, 'check_user_permissions'),
+        ));
+
+        register_rest_route('magicassistant/v1', '/unsplash/track-download', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'handle_unsplash_track_download'),
+            'permission_callback' => array($this, 'check_user_permissions'),
         ));
     }
     
@@ -270,7 +320,15 @@ class MCP_Server {
     public function check_auth_permissions() {
         return current_user_can('manage_options');
     }
-    
+
+    /**
+     * Check user permissions for frontend REST API calls
+     * Uses WordPress nonce authentication (not JWT)
+     */
+    public function check_user_permissions() {
+        return current_user_can('manage_options');
+    }
+
     public function generate_jwt_token($request) {
         $params = $request->get_json_params();
         $expires_in = isset($params['expires_in']) ? intval($params['expires_in']) : 3600; // 1 hour default
@@ -446,7 +504,7 @@ class MCP_Server {
         // bricks_insert_component - Insert Bricks component into canvas
         $this->register_tool(array(
             'name' => 'bricks_insert_component',
-            'description' => 'Insert a pre-built Bricks component into the Bricks builder canvas. Must be called within Bricks builder context. When text replacement is enabled by the user, you should provide text_replacements to replace placeholder/lorem ipsum text with site-relevant content.',
+            'description' => 'Insert a pre-built Bricks component into the Bricks builder canvas. Must be called within Bricks builder context. When text replacement is enabled by the user, you should provide text_replacements to replace placeholder/lorem ipsum text with site-relevant content. When image replacement is enabled, the system will automatically replace placeholder images with relevant Unsplash images.',
             'inputSchema' => array(
                 'type' => 'object',
                 'properties' => array(
@@ -466,6 +524,24 @@ class MCP_Server {
                                 )
                             ),
                             'required' => array('new_text')
+                        )
+                    ),
+                    'image_replacements' => array(
+                        'type' => 'array',
+                        'description' => 'Array of image replacements IN ORDER. First item replaces first placeholder image element, second replaces second, etc. Use when page_context has image_replacement_enabled: true. Each item should contain a search_query for Unsplash search.',
+                        'items' => array(
+                            'type' => 'object',
+                            'properties' => array(
+                                'search_query' => array(
+                                    'type' => 'string',
+                                    'description' => '2-4 word search query for finding a relevant Unsplash image (e.g., "professional dentist office", "happy family outdoors")'
+                                ),
+                                'alt_text' => array(
+                                    'type' => 'string',
+                                    'description' => 'Alt text for the image for accessibility'
+                                )
+                            ),
+                            'required' => array('search_query')
                         )
                     )
                 ),
@@ -12551,14 +12627,23 @@ class MCP_Server {
             
             // Return component data
             if (!empty($args['component_id'])) {
-                // Single component - include text elements summary for AI
+                // Single component - include text and image elements summary for AI
                 $text_elements_summary = $this->get_text_elements_summary($data['data']);
+                $image_elements_summary = $this->get_image_elements_summary($data['data']);
 
-                return array(
+                $response = array(
                     'component' => $data['data'],
                     'text_elements_for_replacement' => $text_elements_summary,
                     'message' => 'Component retrieved. TEXT REPLACEMENT: If enabled, provide text_replacements array with new_text for EACH element listed in text_elements_for_replacement, IN THE SAME ORDER. Match word counts!'
                 );
+
+                // Add image elements info if there are placeholder images
+                if (!empty($image_elements_summary)) {
+                    $response['image_elements_for_replacement'] = $image_elements_summary;
+                    $response['message'] .= ' IMAGE REPLACEMENT: If enabled, provide image_replacements array with search_query (2-4 word Unsplash search) for EACH placeholder image listed in image_elements_for_replacement, IN THE SAME ORDER.';
+                }
+
+                return $response;
             } else {
                 // Search results
                 return array(
@@ -12580,12 +12665,15 @@ class MCP_Server {
      *   text_replacements: array (optional) - Array of text replacements to apply
      *     Each replacement: { element_id: string, new_text: string }
      *     OR: { element_type: string, new_text: string } to replace by element type
+     *   image_replacements: array (optional) - Array of image replacements to apply
+     *     Each replacement: { search_query: string, alt_text: string }
      * }
      */
     public function bricks_insert_component($args) {
         try {
             $component_id = $args['component_id'] ?? '';
             $text_replacements = $args['text_replacements'] ?? null;
+            $image_replacements = $args['image_replacements'] ?? null;
 
             if (empty($component_id)) {
                 throw new Exception('component_id is required');
@@ -12604,13 +12692,17 @@ class MCP_Server {
             $text_elements = $this->get_text_elements_summary($component);
             $text_element_count = count($text_elements);
 
+            // Get image elements summary (placeholder images only)
+            $image_elements = $this->get_image_elements_summary($component);
+            $image_element_count = count($image_elements);
+
             // Check if text replacement is enabled but replacements don't match element count
             if ($this->text_replacement_enabled && $text_element_count > 0) {
                 $replacement_count = !empty($text_replacements) ? count($text_replacements) : 0;
 
                 // If no replacements or wrong count, return info so AI can call again correctly
                 if ($replacement_count !== $text_element_count) {
-                    return array(
+                    $response = array(
                         'success' => false,
                         'error' => 'TEXT_REPLACEMENT_MISMATCH',
                         'message' => 'Text replacement is enabled. You provided ' . $replacement_count . ' replacements but this component has ' . $text_element_count . ' text elements. Call bricks_insert_component again with EXACTLY ' . $text_element_count . ' replacements.',
@@ -12618,14 +12710,52 @@ class MCP_Server {
                         'required_replacement_count' => $text_element_count,
                         'instructions' => 'Provide text_replacements array with exactly ' . $text_element_count . ' items, one for each text element listed above. Match the word_count for each element!'
                     );
+
+                    // Also include image elements info if image replacement is enabled
+                    if ($this->image_replacement_enabled && $image_element_count > 0) {
+                        $response['image_elements_for_replacement'] = $image_elements;
+                        $response['required_image_replacement_count'] = $image_element_count;
+                        $response['image_instructions'] = 'Also provide image_replacements array with exactly ' . $image_element_count . ' items for placeholder images.';
+                    }
+
+                    return $response;
+                }
+            }
+
+            // Check if image replacement is enabled but replacements don't match element count
+            if ($this->image_replacement_enabled && $image_element_count > 0) {
+                $image_replacement_count = !empty($image_replacements) ? count($image_replacements) : 0;
+
+                // If no replacements or wrong count, return info so AI can call again correctly
+                if ($image_replacement_count !== $image_element_count) {
+                    return array(
+                        'success' => false,
+                        'error' => 'IMAGE_REPLACEMENT_MISMATCH',
+                        'message' => 'Image replacement is enabled. You provided ' . $image_replacement_count . ' replacements but this component has ' . $image_element_count . ' placeholder images. Call bricks_insert_component again with EXACTLY ' . $image_element_count . ' image replacements.',
+                        'image_elements_for_replacement' => $image_elements,
+                        'required_image_replacement_count' => $image_element_count,
+                        'instructions' => 'Provide image_replacements array with exactly ' . $image_element_count . ' items. Each item should have a search_query (2-4 word Unsplash search) and optional alt_text.',
+                        'text_elements_for_replacement' => $text_elements,
+                        'required_text_replacement_count' => $text_element_count
+                    );
                 }
             }
 
             // Apply text replacements only if the setting is enabled AND replacements are provided
-            $replacements_applied = 0;
+            $text_replacements_applied = 0;
             if ($this->text_replacement_enabled && !empty($text_replacements) && is_array($text_replacements)) {
                 $component = $this->apply_text_replacements($component, $text_replacements);
-                $replacements_applied = count($text_replacements);
+                $text_replacements_applied = count($text_replacements);
+            }
+
+            // Apply image replacements - search Unsplash and replace URLs
+            $image_replacements_applied = 0;
+            $applied_image_replacements = array();
+            if ($this->image_replacement_enabled && !empty($image_replacements) && is_array($image_replacements)) {
+                $result = $this->apply_image_replacements($component, $image_replacements);
+                $component = $result['component'];
+                $image_replacements_applied = $result['count'];
+                $applied_image_replacements = $result['replacements'];
             }
 
             // Return data for JavaScript bridge to handle insertion
@@ -12640,7 +12770,9 @@ class MCP_Server {
                 ),
                 'message' => 'Component data ready for insertion',
                 'instructions' => 'The JavaScript bridge will handle inserting this component into the Bricks canvas using bricksInserter.js',
-                'text_replacements_applied' => $replacements_applied
+                'text_replacements_applied' => $text_replacements_applied,
+                'image_replacements_applied' => $image_replacements_applied,
+                'image_replacements' => $applied_image_replacements
             );
 
         } catch (Exception $e) {
@@ -12845,6 +12977,474 @@ class MCP_Server {
         }
 
         return false;
+    }
+
+    /**
+     * Handle Unsplash search REST API request
+     * @param WP_REST_Request $request
+     * @return array|WP_Error
+     */
+    public function handle_unsplash_search($request) {
+        try {
+            $params = $request->get_json_params();
+            $query = sanitize_text_field($params['query'] ?? '');
+            $per_page = intval($params['per_page'] ?? 12);
+            $orientation = sanitize_text_field($params['orientation'] ?? 'landscape');
+
+            if (empty($query)) {
+                return new \WP_Error('missing_query', 'Search query is required', array('status' => 400));
+            }
+
+            $unsplash = new Unsplash_Service($this->ai_provider);
+            $results = $unsplash->search_images(array(
+                'query' => $query,
+                'per_page' => $per_page,
+                'orientation' => $orientation
+            ));
+
+            return array(
+                'success' => true,
+                'data' => $results
+            );
+
+        } catch (\Exception $e) {
+            error_log('[MagicAssistant Unsplash] Error: ' . $e->getMessage());
+            return new \WP_Error('unsplash_error', $e->getMessage(), array('status' => 500));
+        }
+    }
+
+    /**
+     * Handle Unsplash random images REST API request
+     * @param WP_REST_Request $request
+     * @return array|WP_Error
+     */
+    public function handle_unsplash_random($request) {
+        try {
+            $params = $request->get_json_params();
+            $count = intval($params['count'] ?? 12);
+            $orientation = sanitize_text_field($params['orientation'] ?? 'landscape');
+            $query = sanitize_text_field($params['query'] ?? '');
+
+            $unsplash = new Unsplash_Service($this->ai_provider);
+            $results = $unsplash->get_random_images(array(
+                'count' => $count,
+                'orientation' => $orientation,
+                'query' => $query
+            ));
+
+            return array(
+                'success' => true,
+                'data' => $results
+            );
+
+        } catch (\Exception $e) {
+            return new \WP_Error('unsplash_error', $e->getMessage(), array('status' => 500));
+        }
+    }
+
+    /**
+     * Handle Unsplash download tracking REST API request
+     * Required by Unsplash API guidelines to track downloads
+     * @param WP_REST_Request $request
+     * @return array|WP_Error
+     */
+    public function handle_unsplash_track_download($request) {
+        try {
+            $params = $request->get_json_params();
+            $download_location = $params['download_location'] ?? '';
+
+            if (empty($download_location)) {
+                return array('success' => true, 'message' => 'No download location provided');
+            }
+
+            // Make a request to the download location URL to track the download
+            // This is required by Unsplash API guidelines
+            $response = wp_remote_get($download_location, array(
+                'timeout' => 10,
+                'headers' => array(
+                    'Accept' => 'application/json'
+                )
+            ));
+
+            // We don't need to check the response - just making the request is enough
+            return array(
+                'success' => true,
+                'message' => 'Download tracked'
+            );
+
+        } catch (\Exception $e) {
+            // Tracking failures are non-critical
+            return array(
+                'success' => true,
+                'message' => 'Tracking attempted'
+            );
+        }
+    }
+
+    /**
+     * Check if a URL is a placeholder image
+     * @param string $url Image URL to check
+     * @return bool True if URL is a placeholder image service
+     */
+    private function is_placeholder_image($url) {
+        if (empty($url) || !is_string($url)) {
+            return false;
+        }
+
+        // All images from components are considered placeholders that should be replaced
+        // Components are templates with stock/demo images that users will want to customize
+        return true;
+    }
+
+    /**
+     * Get a summary of image elements with placeholder images
+     * Detects both image elements and background images on any element
+     * @param array $component The component data
+     * @return array Summary of image elements with placeholder images
+     */
+    private function get_image_elements_summary($component) {
+        if (empty($component['bricksJson']) || !is_array($component['bricksJson'])) {
+            return array();
+        }
+
+        // Flatten elements
+        $all_elements = $this->flatten_bricks_elements($component['bricksJson']);
+
+        $summary = array();
+        $index = 0;
+
+        foreach ($all_elements as $path => $element) {
+            $element_name = $element['name'] ?? '';
+            $settings = $element['settings'] ?? array();
+
+            // Check 1: Image elements
+            if ($element_name === 'image') {
+                $image_url = '';
+                if (!empty($settings['image']['url'])) {
+                    $image_url = $settings['image']['url'];
+                } elseif (!empty($settings['image']) && is_string($settings['image'])) {
+                    $image_url = $settings['image'];
+                }
+
+                if (!empty($image_url) && $this->is_placeholder_image($image_url)) {
+                    $alt_text = $settings['altText'] ?? $settings['_alt'] ?? '';
+                    $summary[] = array(
+                        'index' => $index,
+                        'path' => $path,
+                        'element_type' => $element_name,
+                        'image_type' => 'image',
+                        'label' => $element['label'] ?? 'Image',
+                        'current_url' => $image_url,
+                        'current_alt' => $alt_text,
+                        'context_hint' => !empty($alt_text) ? $alt_text : ($element['label'] ?? 'image')
+                    );
+                    $index++;
+                }
+            }
+
+            // Check 2: Background images on any element
+            $bg_image_url = '';
+            if (!empty($settings['_background']['image']['url'])) {
+                $bg_image_url = $settings['_background']['image']['url'];
+            }
+
+            if (!empty($bg_image_url) && $this->is_placeholder_image($bg_image_url)) {
+                $summary[] = array(
+                    'index' => $index,
+                    'path' => $path,
+                    'element_type' => $element_name,
+                    'image_type' => 'background',
+                    'label' => $element['label'] ?? ucfirst($element_name) . ' Background',
+                    'current_url' => $bg_image_url,
+                    'current_alt' => '',
+                    'context_hint' => $element['label'] ?? 'background image'
+                );
+                $index++;
+            }
+        }
+
+        return $summary;
+    }
+
+    /**
+     * Apply image replacements to component bricksJson
+     * Searches Unsplash for each replacement query and updates image URLs
+     * Handles both image elements and background images
+     * @param array $component The component data
+     * @param array $replacements Array of replacements { search_query, alt_text }
+     * @return array Modified component and replacement details
+     */
+    private function apply_image_replacements($component, $replacements) {
+        if (empty($component['bricksJson']) || !is_array($component['bricksJson'])) {
+            return array(
+                'component' => $component,
+                'count' => 0,
+                'replacements' => array()
+            );
+        }
+
+        // Flatten the bricksJson to get all elements
+        $all_elements = $this->flatten_bricks_elements($component['bricksJson']);
+
+        // Collect all placeholder image elements with their paths and types
+        $image_elements = array();
+        foreach ($all_elements as $path => $element) {
+            $element_name = $element['name'] ?? '';
+            $settings = $element['settings'] ?? array();
+
+            // Check 1: Image elements
+            if ($element_name === 'image') {
+                $image_url = '';
+                if (!empty($settings['image']['url'])) {
+                    $image_url = $settings['image']['url'];
+                }
+
+                if (!empty($image_url) && $this->is_placeholder_image($image_url)) {
+                    $image_elements[] = array(
+                        'path' => $path,
+                        'image_type' => 'image',
+                        'current_url' => $image_url
+                    );
+                }
+            }
+
+            // Check 2: Background images on any element
+            $bg_image_url = '';
+            if (!empty($settings['_background']['image']['url'])) {
+                $bg_image_url = $settings['_background']['image']['url'];
+            }
+
+            if (!empty($bg_image_url) && $this->is_placeholder_image($bg_image_url)) {
+                $image_elements[] = array(
+                    'path' => $path,
+                    'image_type' => 'background',
+                    'current_url' => $bg_image_url
+                );
+            }
+        }
+
+        // Apply replacements sequentially
+        $applied_replacements = array();
+        $replacement_index = 0;
+
+        foreach ($image_elements as $img_elem) {
+            if ($replacement_index >= count($replacements)) {
+                break;
+            }
+
+            $replacement = $replacements[$replacement_index];
+            $search_query = $replacement['search_query'] ?? '';
+            $alt_text = $replacement['alt_text'] ?? '';
+
+            if (empty($search_query)) {
+                $replacement_index++;
+                continue;
+            }
+
+            // Search Unsplash for the query
+            try {
+                $unsplash_result = $this->search_unsplash_for_replacement($search_query);
+
+                if (!empty($unsplash_result['url'])) {
+                    // Apply the replacement based on image type
+                    if ($img_elem['image_type'] === 'background') {
+                        $this->set_background_image_by_path(
+                            $component['bricksJson'],
+                            $img_elem['path'],
+                            $unsplash_result['url']
+                        );
+                    } else {
+                        $this->set_image_by_path(
+                            $component['bricksJson'],
+                            $img_elem['path'],
+                            $unsplash_result['url'],
+                            $alt_text ?: $unsplash_result['alt_description']
+                        );
+                    }
+
+                    $applied_replacements[] = array(
+                        'path' => $img_elem['path'],
+                        'image_type' => $img_elem['image_type'],
+                        'search_query' => $search_query,
+                        'new_url' => $unsplash_result['url'],
+                        'alt_text' => $alt_text ?: $unsplash_result['alt_description'],
+                        'photographer' => $unsplash_result['photographer'] ?? '',
+                        'unsplash_id' => $unsplash_result['id'] ?? ''
+                    );
+                }
+            } catch (Exception $e) {
+                // Continue with other replacements on error
+            }
+
+            $replacement_index++;
+        }
+
+        return array(
+            'component' => $component,
+            'count' => count($applied_replacements),
+            'replacements' => $applied_replacements
+        );
+    }
+
+    /**
+     * Search Unsplash for a replacement image
+     * @param string $query Search query
+     * @return array Image data { url, id, alt_description, photographer }
+     */
+    private function search_unsplash_for_replacement($query) {
+        // Get the Unsplash service with AI provider for license headers
+        $unsplash = new Unsplash_Service($this->ai_provider);
+
+        // Use random endpoint with query filter for variety (search always returns same results)
+        $results = $unsplash->get_random_images(array(
+            'query' => $query,
+            'count' => 1,
+            'orientation' => 'landscape'
+        ));
+
+        // Normalize response: proxy returns array directly, not { results: [...] }
+        $normalized = $this->normalize_unsplash_results($results);
+
+        if (empty($normalized)) {
+            // Try without orientation filter
+            $results = $unsplash->get_random_images(array(
+                'query' => $query,
+                'count' => 1
+            ));
+            $normalized = $this->normalize_unsplash_results($results);
+        }
+
+        if (empty($normalized)) {
+            return array();
+        }
+
+        $image = $normalized[0];
+
+        // Handle both nested (urls.*) and flattened (url_*) formats from proxy
+        // Priority: full > regular > small (prefer highest quality)
+        $url = $image['urls']['full']
+            ?? $image['url_full']
+            ?? $image['urls']['regular']
+            ?? $image['url_regular']
+            ?? $image['urls']['small']
+            ?? $image['url_small']
+            ?? $image['url']
+            ?? '';
+
+        return array(
+            'id' => $image['id'] ?? '',
+            'url' => $url,
+            'alt_description' => $image['alt_description'] ?? $image['description'] ?? $image['alt'] ?? '',
+            'photographer' => $image['user']['name'] ?? $image['photographer'] ?? ''
+        );
+    }
+
+    /**
+     * Normalize Unsplash API response to array of images
+     * Handles both { results: [...] } and direct array formats
+     * @param mixed $response Unsplash response
+     * @return array Array of image objects
+     */
+    private function normalize_unsplash_results($response) {
+        if (empty($response) || !is_array($response)) {
+            return array();
+        }
+
+        // If it's already a direct array of images (proxy format)
+        if (isset($response[0]) && isset($response[0]['id'])) {
+            return $response;
+        }
+
+        // If it has results key (Unsplash API format)
+        if (isset($response['results']) && is_array($response['results'])) {
+            return $response['results'];
+        }
+
+        // Single image object
+        if (isset($response['id'])) {
+            return array($response);
+        }
+
+        return array();
+    }
+
+    /**
+     * Set image property by path in bricksJson
+     * @param array &$elements Reference to bricksJson array
+     * @param string $path Element path
+     * @param string $url New image URL
+     * @param string $alt_text Alt text for the image
+     */
+    private function set_image_by_path(&$elements, $path, $url, $alt_text = '') {
+        $parts = explode('.', $path);
+        $current = &$elements;
+
+        foreach ($parts as $part) {
+            if (is_numeric($part)) {
+                $current = &$current[(int)$part];
+            } else {
+                $current = &$current[$part];
+            }
+        }
+
+        if (isset($current['settings'])) {
+            // Update image URL
+            if (!isset($current['settings']['image']) || !is_array($current['settings']['image'])) {
+                $current['settings']['image'] = array();
+            }
+            $current['settings']['image']['url'] = $url;
+            $current['settings']['image']['external'] = true;
+
+            // Extract filename from URL
+            $url_parts = parse_url($url);
+            $path_parts = explode('/', $url_parts['path'] ?? '');
+            $filename = end($path_parts) ?: 'unsplash-image.jpg';
+            $current['settings']['image']['filename'] = $filename;
+
+            // Update alt text
+            if (!empty($alt_text)) {
+                $current['settings']['altText'] = $alt_text;
+            }
+        }
+    }
+
+    /**
+     * Set background image property by path in bricksJson
+     * @param array &$elements Reference to bricksJson array
+     * @param string $path Element path
+     * @param string $url New image URL
+     */
+    private function set_background_image_by_path(&$elements, $path, $url) {
+        $parts = explode('.', $path);
+        $current = &$elements;
+
+        foreach ($parts as $part) {
+            if (is_numeric($part)) {
+                $current = &$current[(int)$part];
+            } else {
+                $current = &$current[$part];
+            }
+        }
+
+        if (isset($current['settings'])) {
+            // Ensure _background structure exists
+            if (!isset($current['settings']['_background']) || !is_array($current['settings']['_background'])) {
+                $current['settings']['_background'] = array();
+            }
+            if (!isset($current['settings']['_background']['image']) || !is_array($current['settings']['_background']['image'])) {
+                $current['settings']['_background']['image'] = array();
+            }
+
+            // Update background image URL
+            $current['settings']['_background']['image']['url'] = $url;
+            $current['settings']['_background']['image']['external'] = true;
+
+            // Extract filename from URL
+            $url_parts = parse_url($url);
+            $path_parts = explode('/', $url_parts['path'] ?? '');
+            $filename = end($path_parts) ?: 'unsplash-background.jpg';
+            $current['settings']['_background']['image']['filename'] = $filename;
+        }
     }
 }
 

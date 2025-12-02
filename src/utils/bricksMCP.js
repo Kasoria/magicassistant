@@ -221,29 +221,55 @@ export const handleMCPInsertComponent = async (toolResponse) => {
     if (!toolResponse.success || !toolResponse.component) {
       throw new Error('Invalid tool response');
     }
-    
-    const { component } = toolResponse;
-    
+
+    const { component, text_replacements_applied, image_replacements_applied, image_replacements } = toolResponse;
+
     // Validate component data
     if (!component.bricksJson || !Array.isArray(component.bricksJson)) {
       throw new Error('Invalid component data from MCP');
     }
-    
+
     // Insert into Bricks
     const result = insertBricksStructure(
       component.bricksJson,
       component.globalClasses || []
     );
-    
+
     if (!result) {
       throw new Error('Failed to insert component');
     }
-    
+
+    // Build success message
+    let message = `Successfully inserted "${component.name}" component`;
+    const details = [];
+
+    if (text_replacements_applied && text_replacements_applied > 0) {
+      details.push(`${text_replacements_applied} text replacement(s)`);
+    }
+
+    if (image_replacements_applied && image_replacements_applied > 0) {
+      details.push(`${image_replacements_applied} image replacement(s)`);
+      // Log image replacement details for debugging
+      if (image_replacements && Array.isArray(image_replacements)) {
+        console.log('🖼️ Image replacements applied:', image_replacements.map(r => ({
+          query: r.search_query,
+          photographer: r.photographer
+        })));
+      }
+    }
+
+    if (details.length > 0) {
+      message += ` with ${details.join(' and ')}`;
+    }
+
     return {
       success: true,
-      message: `Successfully inserted "${component.name}" component`
+      message,
+      text_replacements_applied: text_replacements_applied || 0,
+      image_replacements_applied: image_replacements_applied || 0,
+      image_replacements: image_replacements || []
     };
-    
+
   } catch (error) {
     console.error('Error handling MCP insert:', error);
     throw error;
