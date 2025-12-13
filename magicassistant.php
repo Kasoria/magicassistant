@@ -33,6 +33,11 @@ define('MAGIC_ASSISTANT_PLUGIN_BASENAME', plugin_basename(__FILE__));
 // Load Composer autoloader
 require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'vendor/autoload.php';
 
+// Load MagicPlugins Core (unified licensing + connection)
+if (!class_exists('MagicPlugins_Core')) {
+    require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'includes/class-magicplugins-core.php';
+}
+
 class MagicAssistant {
 
   private $react_dev;
@@ -43,23 +48,22 @@ class MagicAssistant {
   private $public_share;
   private $dataforseo;
   private $pagespeed_service;
-  private $licensing_client;
 
   public function __construct() {
     add_action('plugins_loaded', array($this, 'init'));
   }
 
   public function init() {
-    // Include SureCart Licensing (third-party, not using our autoloader)
-    if (!class_exists('SureCart\Licensing\Client')) {
-      // Include the autoloader if SureCart uses Composer
-      if (file_exists(MAGIC_ASSISTANT_PLUGIN_PATH . 'licensing/vendor/autoload.php')) {
-        require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'licensing/vendor/autoload.php';
-      } else {
-        // Fallback to direct inclusion if autoloader is not present
-        require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'licensing/src/Client.php';
-      }
-    }
+    // Initialize MagicPlugins Core (unified licensing + connection)
+    // This enables auto-registration when a connection already exists from another plugin
+    \MagicPlugins_Core::init(array(
+        'plugin_name' => 'MagicAssistant',
+        'plugin_slug' => 'magicassistant',
+        'plugin_version' => MAGIC_ASSISTANT_VERSION,
+        'plugin_file' => MAGIC_ASSISTANT_PLUGIN_FILE,
+        'settings_prefix' => 'magicassistant_license',
+        'text_domain' => 'magic-assistant',
+    ));
 
     // Initialize database
     $this->db = new MagicAssistant\DB();
@@ -101,24 +105,6 @@ class MagicAssistant {
 
   public function setup() {
     load_plugin_textdomain('magic-assistant', false, dirname(plugin_basename(__FILE__)) . '/languages');
-
-    // Initialize licensing after textdomains are loaded
-    $this->init_licensing();
-  }
-
-  /**
-   * Initialize SureCart Licensing
-   */
-  private function init_licensing() {
-    // Initialize with your public token from SureCart
-    $this->licensing_client = new \SureCart\Licensing\Client('MagicAssistant', 'pt_cBheuHynZ9Ft9mhGLuoWM1LA', MAGIC_ASSISTANT_PLUGIN_FILE);
-
-    // Set text domain
-    $this->licensing_client->set_textdomain('magic-assistant');
-
-    // Store the client globally for access by other classes
-    global $mat_licensing_client;
-    $mat_licensing_client = $this->licensing_client;
   }
 
   /**
@@ -149,12 +135,6 @@ class MagicAssistant {
     return $this->pagespeed_service;
   }
 
-  /**
-   * Get the licensing client instance
-   */
-  public function get_licensing_client() {
-    return $this->licensing_client;
-  }
 
   /**
    * Static instance getter
@@ -207,10 +187,39 @@ function MATPS() {
 }
 
 /**
- * Global function to access MagicAssistant licensing client
+ * Check if MagicAssistant license is active
+ *
+ * @return bool
  */
-function MATLIC() {
-  return $GLOBALS['magic_assistant']->get_licensing_client();
+function mat_is_license_active() {
+  if (!class_exists('MagicPlugins_Core')) {
+    return false;
+  }
+  return MagicPlugins_Core::is_license_active('magicassistant');
+}
+
+/**
+ * Get MagicAssistant license key
+ *
+ * @return string
+ */
+function mat_get_license_key() {
+  if (!class_exists('MagicPlugins_Core')) {
+    return '';
+  }
+  return MagicPlugins_Core::get_license_key('magicassistant');
+}
+
+/**
+ * Get MagicAssistant license tier
+ *
+ * @return string
+ */
+function mat_get_license_tier() {
+  if (!class_exists('MagicPlugins_Core')) {
+    return '';
+  }
+  return MagicPlugins_Core::get_license_tier('magicassistant');
 }
 
 // Register login event tracker

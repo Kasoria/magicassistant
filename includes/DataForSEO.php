@@ -1784,9 +1784,14 @@ class DataForSEO {
         // Attempt to get licensing client using same logic as AI_Provider
         $licensing_client = null;
 
-        // Prefer AI_Provider instance if available
-        if ( $this->ai_provider && method_exists( $this->ai_provider, 'get_licensing_client' ) ) {
-            // get_licensing_client is private in AI_Provider, so we call via reflection if possible.
+        // Prefer AI_Provider instance if available - use get_license_headers directly if possible
+        if ( $this->ai_provider && method_exists( $this->ai_provider, 'get_license_headers' ) ) {
+            // AI_Provider has a public get_license_headers method - use it directly
+            return $this->ai_provider->get_license_headers( $debug );
+        }
+
+        // Fallback: get licensing client via reflection
+        if ( $this->ai_provider ) {
             try {
                 $ref = new \ReflectionClass( $this->ai_provider );
                 if ( $ref->hasMethod( 'get_licensing_client' ) ) {
@@ -1812,44 +1817,30 @@ class DataForSEO {
         }
 
         if ( $licensing_client ) {
-            $license_key = $licensing_client->settings()->license_key ?? '';
-            if ( ! empty( $license_key ) ) {
-                $headers['X-License-Key'] = $license_key;
+            // Use the new anonymous class API (getLicenseKey, isActive, getTier)
+            // NOT the old settings() API which no longer exists
+            if ( method_exists( $licensing_client, 'getLicenseKey' ) ) {
+                $license_key = $licensing_client->getLicenseKey();
+                if ( ! empty( $license_key ) ) {
+                    $headers['X-License-Key'] = $license_key;
+                }
             }
 
-            $activation = $licensing_client->settings()->get_activation();
-            $is_active  = ! empty( $activation ) && ! empty( $activation->id );
-            $headers['X-License-Status'] = $is_active ? 'active' : 'inactive';
-
-            $tier = '';
-            if ( isset( $activation->plan_name ) && ! empty( $activation->plan_name ) ) {
-                $tier = $activation->plan_name;
-            } elseif ( isset( $activation->plan ) && is_object( $activation->plan ) && isset( $activation->plan->name ) ) {
-                $tier = $activation->plan->name;
-            } elseif ( isset( $activation->plan_key ) ) {
-                $tier = $activation->plan_key;
+            if ( method_exists( $licensing_client, 'isActive' ) ) {
+                $is_active = $licensing_client->isActive();
+                $headers['X-License-Status'] = $is_active ? 'active' : 'inactive';
             }
 
-            if ( ! empty( $tier ) ) {
-                $headers['X-License-Tier'] = $tier;
-            }
-
-            if ( isset( $activation->license ) && ! empty( $activation->license ) ) {
-                $headers['X-License-Id'] = $activation->license;
-            }
-
-            if ( isset( $activation->expires_at ) ) {
-                $headers['X-License-Expiry'] = $activation->expires_at;
+            if ( method_exists( $licensing_client, 'getTier' ) ) {
+                $tier = $licensing_client->getTier();
+                if ( ! empty( $tier ) ) {
+                    $headers['X-License-Tier'] = $tier;
+                }
             }
         }
 
         // Always send site URL for analytics
         $headers['X-Site-Url'] = esc_url_raw( home_url() );
-
-        if ( $debug || ( defined( 'WP_DEBUG' ) && WP_DEBUG ) ) {
-            if ( function_exists( 'error_log' ) ) {
-            }
-        }
 
         return $headers;
     }

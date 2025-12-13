@@ -318,7 +318,14 @@ class AI_Provider {
             'callback' => array($this, 'deactivate_license'),
             'permission_callback' => array($this, 'check_permissions'),
         ));
-        
+
+        // Remote license deactivation (called by MagicDash)
+        register_rest_route('magicassistant/v2', '/license/remote-deactivate', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'remote_deactivate_license'),
+            'permission_callback' => array($this, 'check_remote_deactivation_permission'),
+        ));
+
         // USERS ENDPOINT
         register_rest_route('magicassistant/v1', '/users', array(
             'methods' => 'GET',
@@ -4612,10 +4619,12 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'mcp_enabled' => isset($this->settings['mcp_enabled']) ? (bool) $this->settings['mcp_enabled'] : true,
             'openai_model' => $this->settings['openai_model'] ?? 'gpt-4.1-mini',
             'anthropic_model' => $this->settings['anthropic_model'] ?? 'claude-sonnet-4-5-20250929',
+            'google_model' => $this->settings['google_model'] ?? 'gemini-2.5-flash',
             'openrouter_model' => $this->settings['openrouter_model'] ?? 'anthropic/claude-sonnet-4-5-20250929',
-            'has_api_key' => $this->db ? ($this->db->has_api_key('openai_api_key') || $this->db->has_api_key('anthropic_api_key') || $this->db->has_api_key('openrouter_api_key')) : false,
+            'has_api_key' => $this->db ? ($this->db->has_api_key('openai_api_key') || $this->db->has_api_key('anthropic_api_key') || $this->db->has_api_key('google_api_key') || $this->db->has_api_key('openrouter_api_key')) : false,
             'openai_api_key' => $this->db ? $this->db->has_api_key('openai_api_key') : false,
             'anthropic_api_key' => $this->db ? $this->db->has_api_key('anthropic_api_key') : false,
+            'google_api_key' => $this->db ? $this->db->has_api_key('google_api_key') : false,
             'openrouter_api_key' => $this->db ? $this->db->has_api_key('openrouter_api_key') : false,
             'dataforseo_login_id' => $this->db ? ($this->db->has_api_key('dataforseo_login_id') ? $this->db->decrypt_api_key($this->db->get_setting('dataforseo_login_id')) : null) : null,
             'dataforseo_api_key' => $this->db ? $this->db->has_api_key('dataforseo_api_key') : false,
@@ -4666,11 +4675,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     private function add_limit_information_to_settings($settings) {
         // Get the license key from licensing client
         $licensing_client = $this->get_licensing_client();
-        if (!$licensing_client || !method_exists($licensing_client, 'settings') || !$licensing_client->settings()) {
+        if (!$licensing_client) {
             return $settings;
         }
-        
-        $license_key = $licensing_client->settings()->license_key ?? null;
+
+        $license_key = $licensing_client->getLicenseKey();
         if (empty($license_key)) {
             return $settings;
         }
@@ -4718,7 +4727,13 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             // Let save_setting handle the encryption
             $this->db->save_setting('anthropic_api_key', $api_key);
         }
-        
+
+        if (isset($data['google_api_key']) && !empty($data['google_api_key'])) {
+            $api_key = sanitize_text_field($data['google_api_key']);
+            // Let save_setting handle the encryption
+            $this->db->save_setting('google_api_key', $api_key);
+        }
+
         if (isset($data['dataforseo_login_id']) && !empty($data['dataforseo_login_id'])) {
             $login_id = sanitize_email($data['dataforseo_login_id']);
             // Let save_setting handle the encryption
@@ -4746,7 +4761,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         if (isset($data['anthropic_model'])) {
             $this->db->save_setting('anthropic_model', sanitize_text_field($data['anthropic_model']));
         }
-        
+
+        if (isset($data['google_model'])) {
+            $this->db->save_setting('google_model', sanitize_text_field($data['google_model']));
+        }
+
         if (isset($data['openrouter_model'])) {
             $this->db->save_setting('openrouter_model', sanitize_text_field($data['openrouter_model']));
         }
@@ -4981,7 +5000,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         $key_name = $provider . '_api_key';
         
-        if (!in_array($key_name, ['openai_api_key', 'anthropic_api_key', 'openrouter_api_key', 'dataforseo_api_key'])) {
+        if (!in_array($key_name, ['openai_api_key', 'anthropic_api_key', 'google_api_key', 'openrouter_api_key', 'dataforseo_api_key'])) {
             return new WP_Error('invalid_provider', 'Invalid provider', array('status' => 400));
         }
         
@@ -5818,10 +5837,10 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
      */
     private function get_license_key() {
         $licensing_client = $this->get_licensing_client();
-        if (!$licensing_client || !method_exists($licensing_client, 'settings') || !$licensing_client->settings()) {
+        if (!$licensing_client) {
             return '';
         }
-        return $licensing_client->settings()->license_key ?? '';
+        return $licensing_client->getLicenseKey();
     }
     
     /**
@@ -8125,73 +8144,78 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
      */
     public function get_license_status($request) {
         $licensing_client = $this->get_licensing_client();
-        
+
         if (!$licensing_client) {
             return new WP_Error('license_client_error', 'License client not available', array('status' => 500));
         }
-        
+
         try {
-            $activation = $licensing_client->settings()->get_activation();
-            $license_key = $licensing_client->settings()->license_key;
-            
+            $is_active = $licensing_client->isActive();
+            $license_key = $licensing_client->getLicenseKey();
+            $tier = $licensing_client->getTier();
+
             $status = array(
-                'is_active' => !empty($activation->id),
-                'activation_id' => $activation->id ?? null,
+                'is_active' => $is_active,
                 'license_key' => $this->mask_license_key($license_key),
                 'site_name' => get_bloginfo('name'),
                 'site_url' => get_site_url(),
-                'product_name' => $licensing_client->name
+                'product_name' => 'MagicAssistant'
             );
-            
-            if (!empty($activation->id) && !empty($activation->created_at)) {
-                // Use the global date formatting system
-                $timestamp = is_numeric($activation->created_at) ? $activation->created_at : strtotime($activation->created_at);
+
+            // Get activation date from stored option
+            $last_validated = get_option('magicassistant_license_last_validated', '');
+            if ($is_active && !empty($last_validated)) {
+                $timestamp = strtotime($last_validated);
                 $status['activated_at'] = \MagicAssistant\Admin::format_date($timestamp, true);
-                $status['activated_at_raw'] = $activation->created_at; // Keep raw value for debugging
+                $status['activated_at_raw'] = $last_validated;
             }
-            
-            // Get tier from MagicProxy using the license key
-            $tier = $this->get_tier_from_magicproxy( $license_key );
-            
-            if ( ! empty( $tier ) ) {
+
+            // Use tier from MagicDash first, fallback to MagicProxy
+            if (!empty($tier)) {
                 $status['tier'] = $tier;
+            } else {
+                // Fallback: Get tier from MagicProxy using the license key
+                $proxy_tier = $this->get_tier_from_magicproxy($license_key);
+                if (!empty($proxy_tier)) {
+                    $status['tier'] = $proxy_tier;
+                }
             }
-            
+
             // Get DataForSEO balance from MagicProxy
-            $dataforseo_balance = $this->get_dataforseo_balance_from_magicproxy( $license_key );
-            if ( $dataforseo_balance !== null ) {
+            $dataforseo_balance = $this->get_dataforseo_balance_from_magicproxy($license_key);
+            if ($dataforseo_balance !== null) {
                 $status['dataForSEOBalance'] = $dataforseo_balance;
             }
-            
+
             // Fetch comprehensive limit information from MagicProxy (credits or requests)
-            $comprehensive_limits = $this->get_comprehensive_limits_from_magicproxy( $license_key );
-            if ( $comprehensive_limits ) {
+            $comprehensive_limits = $this->get_comprehensive_limits_from_magicproxy($license_key);
+            if ($comprehensive_limits) {
                 $status['limit_type'] = $comprehensive_limits['type'];
-                
-                if ( $comprehensive_limits['type'] === 'credits' && isset( $comprehensive_limits['credits'] ) ) {
+
+                if ($comprehensive_limits['type'] === 'credits' && isset($comprehensive_limits['credits'])) {
                     // Credit-based tier (starter, pro, expert)
                     $credits = $comprehensive_limits['credits'];
-                    if ( isset( $credits['remaining'] ) ) {
-                        $status['credits_remaining'] = intval( $credits['remaining'] );
+                    if (isset($credits['remaining'])) {
+                        $status['credits_remaining'] = intval($credits['remaining']);
                     }
-                    if ( isset( $credits['limit'] ) ) {
-                        $status['credit_limit'] = intval( $credits['limit'] );
+                    if (isset($credits['limit'])) {
+                        $status['credit_limit'] = intval($credits['limit']);
                     }
-                } elseif ( $comprehensive_limits['type'] === 'requests' && isset( $comprehensive_limits['requests'] ) ) {
+                } elseif ($comprehensive_limits['type'] === 'requests' && isset($comprehensive_limits['requests'])) {
                     // Request-based tier (free, byok, lifetime)
                     $status['request_limits'] = $comprehensive_limits['requests'];
                 }
             } else {
                 // Fallback to legacy credit fetching for backward compatibility
-                $credits = $this->get_credits_from_magicproxy( $license_key );
-                if ( $credits && isset( $credits['remaining'] ) ) {
-                    $status['credits_remaining'] = intval( $credits['remaining'] );
-                    if ( isset( $credits['limit'] ) ) {
-                        $status['credit_limit'] = intval( $credits['limit'] );
+                $credits = $this->get_credits_from_magicproxy($license_key);
+                if ($credits && isset($credits['remaining'])) {
+                    $status['credits_remaining'] = intval($credits['remaining']);
+                    if (isset($credits['limit'])) {
+                        $status['credit_limit'] = intval($credits['limit']);
                     }
                 }
             }
-            
+
             // Always include current_credits from the DB if present
             if ($this->db) {
                 $settings = $this->db->get_all_settings();
@@ -8199,7 +8223,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     $status['current_credits'] = $settings['current_credits'];
                 }
             }
-            
+
             return array(
                 'success' => true,
                 'data' => $status
@@ -8210,56 +8234,60 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
     }
     
-         /**
-      * Activate license
-      */
-     public function activate_license($request) {
-         $licensing_client = $this->get_licensing_client();
-         
-         if (!$licensing_client) {
-             return new WP_Error('license_client_error', 'License client not available', array('status' => 500));
-         }
-        
+    /**
+     * Activate license
+     */
+    public function activate_license($request) {
+        $licensing_client = $this->get_licensing_client();
+
+        if (!$licensing_client) {
+            return new WP_Error('license_client_error', 'License client not available', array('status' => 500));
+        }
+
         $data = $request->get_json_params();
         $license_key = sanitize_text_field($data['license_key'] ?? '');
-        
+
         if (empty($license_key)) {
             return new WP_Error('invalid_license_key', 'License key is required', array('status' => 400));
         }
-        
+
         try {
-            // Activate the license
-            $activation = $licensing_client->license()->activate($license_key);
-            
-            if ($activation === true) {
-                // Get the activation details after successful activation
-                $activation_data = $licensing_client->settings()->get_activation();
-                
-                // Format activation date using global date formatting
-                $activated_at_raw = $activation_data->created_at ?? current_time('mysql');
-                $timestamp = is_numeric($activated_at_raw) ? $activated_at_raw : strtotime($activated_at_raw);
+            // Activate the license using MagicPlugins_Core
+            $result = $licensing_client->activate($license_key);
+
+            if ($result === true) {
+                // Get the updated license info
+                $tier = $licensing_client->getTier();
+                $stored_license_key = $licensing_client->getLicenseKey();
+
+                // Get activation date from stored option
+                $last_validated = get_option('magicassistant_license_last_validated', current_time('mysql'));
+                $timestamp = strtotime($last_validated);
                 $activated_at_formatted = \MagicAssistant\Admin::format_date($timestamp, true);
 
-                // Get tier from MagicProxy using the license key
-                $tier = $this->get_tier_from_magicproxy( $licensing_client->settings()->license_key );
-                
+                // Fallback: Get tier from MagicProxy if not from MagicDash
+                if (empty($tier)) {
+                    $tier = $this->get_tier_from_magicproxy($stored_license_key);
+                }
+
                 // Get DataForSEO balance from MagicProxy
-                $dataforseo_balance = $this->get_dataforseo_balance_from_magicproxy( $licensing_client->settings()->license_key );
-                
+                $dataforseo_balance = $this->get_dataforseo_balance_from_magicproxy($stored_license_key);
+
                 $response_data = array(
                     'is_active' => true,
-                    'activation_id' => $licensing_client->settings()->activation_id,
-                    'license_key' => $this->mask_license_key($licensing_client->settings()->license_key),
+                    'license_key' => $this->mask_license_key($stored_license_key),
                     'site_name' => get_bloginfo('name'),
+                    'site_url' => get_site_url(),
                     'activated_at' => $activated_at_formatted,
-                    'activated_at_raw' => $activated_at_raw, // Keep raw value for debugging
-                    'tier' => $tier
+                    'activated_at_raw' => $last_validated,
+                    'tier' => $tier,
+                    'product_name' => 'MagicAssistant'
                 );
-                
-                if ( $dataforseo_balance !== null ) {
+
+                if ($dataforseo_balance !== null) {
                     $response_data['dataForSEOBalance'] = $dataforseo_balance;
                 }
-                
+
                 return array(
                     'success' => true,
                     'message' => 'License activated successfully',
@@ -8268,15 +8296,14 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             } else {
                 // Handle WP_Error or other error responses
                 $error_message = 'Failed to activate license';
-                
-                if (is_wp_error($activation)) {
-                    // Extract the first error message from WP_Error
-                    $error_messages = $activation->get_error_messages();
+
+                if (is_wp_error($result)) {
+                    $error_messages = $result->get_error_messages();
                     if (!empty($error_messages)) {
                         $error_message = $error_messages[0];
                     }
                 }
-                
+
                 return new WP_Error('activation_failed', $error_message, array('status' => 400));
             }
         } catch (Exception $e) {
@@ -8285,22 +8312,21 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
     }
     
-         /**
-      * Deactivate license
-      */
-     public function deactivate_license($request) {
-         $licensing_client = $this->get_licensing_client();
-         
-         if (!$licensing_client) {
-             return new WP_Error('license_client_error', 'License client not available', array('status' => 500));
-         }
-        
+    /**
+     * Deactivate license
+     */
+    public function deactivate_license($request) {
+        $licensing_client = $this->get_licensing_client();
+
+        if (!$licensing_client) {
+            return new WP_Error('license_client_error', 'License client not available', array('status' => 500));
+        }
+
         try {
-            $result = $licensing_client->license()->deactivate($licensing_client->settings()->activation_id);
-            
+            // Deactivate the license using MagicPlugins_Core
+            $result = $licensing_client->deactivate();
+
             if ($result === true) {
-                // License key and activation ID are automatically cleared by the SureCart client
-                
                 return array(
                     'success' => true,
                     'message' => 'License deactivated successfully'
@@ -8308,15 +8334,14 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             } else {
                 // Handle WP_Error or other error responses
                 $error_message = 'Failed to deactivate license';
-                
+
                 if (is_wp_error($result)) {
-                    // Extract the first error message from WP_Error
                     $error_messages = $result->get_error_messages();
                     if (!empty($error_messages)) {
                         $error_message = $error_messages[0];
                     }
                 }
-                
+
                 return new WP_Error('deactivation_failed', $error_message, array('status' => 400));
             }
         } catch (Exception $e) {
@@ -8324,25 +8349,94 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             return new WP_Error('deactivation_error', 'License deactivation failed: ' . $e->getMessage(), array('status' => 400));
         }
     }
-    
+
+    /**
+     * Check permission for remote license deactivation
+     * Validates HMAC signature from MagicDash
+     */
+    public function check_remote_deactivation_permission($request) {
+        $license_key = $request->get_param('licenseKey');
+        $timestamp = $request->get_param('timestamp');
+        $signature = $request->get_param('signature');
+
+        if (empty($license_key) || empty($timestamp) || empty($signature)) {
+            return new WP_Error('missing_params', 'Missing required parameters', array('status' => 400));
+        }
+
+        // Check timestamp is within 5 minutes
+        $current_time = time();
+        if (abs($current_time - intval($timestamp)) > 300) {
+            return new WP_Error('expired_request', 'Request has expired', array('status' => 401));
+        }
+
+        // Verify the license key matches what's stored locally
+        $stored_license_key = get_option('magicassistant_license_key', '');
+        if (empty($stored_license_key) || $stored_license_key !== $license_key) {
+            return new WP_Error('invalid_license', 'License key does not match', array('status' => 401));
+        }
+
+        // Verify HMAC signature
+        // The signature is created using: HMAC-SHA256(licenseKey + timestamp + siteUrl, licenseKey)
+        $site_url = home_url();
+        $expected_signature = hash_hmac('sha256', $license_key . $timestamp . $site_url, $license_key);
+
+        if (!hash_equals($expected_signature, $signature)) {
+            return new WP_Error('invalid_signature', 'Invalid signature', array('status' => 401));
+        }
+
+        return true;
+    }
+
+    /**
+     * Remote license deactivation (called by MagicDash)
+     */
+    public function remote_deactivate_license($request) {
+        $licensing_client = $this->get_licensing_client();
+
+        if (!$licensing_client) {
+            return new WP_Error('license_client_error', 'License client not available', array('status' => 500));
+        }
+
+        try {
+            // Deactivate the license
+            $result = $licensing_client->deactivate();
+
+            if ($result === true) {
+                error_log('MagicAssistant: License remotely deactivated by MagicDash');
+                return array(
+                    'success' => true,
+                    'message' => 'License deactivated successfully'
+                );
+            } else {
+                $error_message = 'Failed to deactivate license';
+                if (is_wp_error($result)) {
+                    $error_messages = $result->get_error_messages();
+                    if (!empty($error_messages)) {
+                        $error_message = $error_messages[0];
+                    }
+                }
+                return new WP_Error('deactivation_failed', $error_message, array('status' => 400));
+            }
+        } catch (Exception $e) {
+            error_log('MagicAssistant Remote Deactivation Error: ' . $e->getMessage());
+            return new WP_Error('deactivation_error', 'License deactivation failed: ' . $e->getMessage(), array('status' => 400));
+        }
+    }
+
     /**
      * Debug license client availability
      */
     public function debug_license_client($request) {
         global $mat_licensing_client;
-        
+
         $debug_info = array(
             'global_client_available' => !empty($mat_licensing_client),
             'global_client_class' => $mat_licensing_client ? get_class($mat_licensing_client) : null,
             'magic_assistant_function_exists' => function_exists('magic_assistant'),
             'matlic_function_exists' => function_exists('MATLIC'),
-            'surecart_client_class_exists' => class_exists('SureCart\Licensing\Client'),
-            'licensing_files_exist' => array(
-                'vendor_autoload' => file_exists(MAGIC_ASSISTANT_PLUGIN_PATH . 'licensing/vendor/autoload.php'),
-                'client_class' => file_exists(MAGIC_ASSISTANT_PLUGIN_PATH . 'licensing/src/Client.php'),
-            )
+            'magicplugins_core_class_exists' => class_exists('MagicPlugins_Core'),
         );
-        
+
         if (function_exists('magic_assistant')) {
             $instance = magic_assistant();
             $debug_info['magic_assistant_instance'] = !empty($instance);
@@ -8352,16 +8446,20 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     $client = $instance->get_licensing_client();
                     $debug_info['instance_client_available'] = !empty($client);
                     $debug_info['instance_client_class'] = $client ? get_class($client) : null;
+                    if ($client) {
+                        $debug_info['license_is_active'] = $client->isActive();
+                        $debug_info['license_tier'] = $client->getTier();
+                    }
                 }
             }
         }
-        
+
         if (function_exists('MATLIC')) {
             $client = MATLIC();
             $debug_info['matlic_client_available'] = !empty($client);
             $debug_info['matlic_client_class'] = $client ? get_class($client) : null;
         }
-        
+
         return array(
             'success' => true,
             'debug_info' => $debug_info
@@ -8369,29 +8467,40 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     }
     
     /**
-     * Get licensing client instance
+     * Get licensing client wrapper (compatibility layer for MagicPlugins_Core)
+     *
+     * Returns an object with isActive(), getLicenseKey(), getTier(), activate(), deactivate() methods
+     * that internally use MagicPlugins_Core static methods.
      */
     private function get_licensing_client() {
-        // First try to get from global
-        global $mat_licensing_client;
-        if ($mat_licensing_client) {
-            return $mat_licensing_client;
+        if (!class_exists('MagicPlugins_Core')) {
+            return null;
         }
-        
-        // If not available globally, try to get from MagicAssistant instance
-        if (function_exists('magic_assistant')) {
-            $instance = magic_assistant();
-            if ($instance && method_exists($instance, 'get_licensing_client')) {
-                return $instance->get_licensing_client();
+
+        // Return a compatibility wrapper object
+        return new class {
+            public function isActive() {
+                return \MagicPlugins_Core::is_license_active('magicassistant');
             }
-        }
-        
-        // Last resort: try MATLIC() function
-        if (function_exists('MATLIC')) {
-            return MATLIC();
-        }
-        
-        return null;
+
+            public function getLicenseKey() {
+                return \MagicPlugins_Core::get_license_key('magicassistant');
+            }
+
+            public function getTier() {
+                return \MagicPlugins_Core::get_license_tier('magicassistant');
+            }
+
+            public function activate($license_key, $auto_connect = true) {
+                \MagicPlugins_Core::set_current_plugin('magicassistant');
+                return \MagicPlugins_Core::activate_license($license_key, $auto_connect);
+            }
+
+            public function deactivate() {
+                \MagicPlugins_Core::set_current_plugin('magicassistant');
+                return \MagicPlugins_Core::deactivate_license();
+            }
+        };
     }
     
     /**
@@ -8412,83 +8521,24 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
     public function get_license_headers( $debug = false ) {
         // Build headers containing license information for MagicProxy
-        $headers         = array();
+        $headers = array();
         $licensing_client = $this->get_licensing_client();
 
         if ( $licensing_client ) {
-            // Raw license key stored in settings (not masked because request is internal/server-to-server)
-            $license_key = $licensing_client->settings()->license_key ?? '';
+            // Get license key from MagicPlugins_Core
+            $license_key = $licensing_client->getLicenseKey();
             if ( ! empty( $license_key ) ) {
                 $headers['X-License-Key'] = $license_key;
             }
 
-            // 1. Activation object (fast, cached locally)
-            $activation   = $licensing_client->settings()->get_activation();
-            $is_active    = ! empty( $activation ) && ! empty( $activation->id );
+            // Get license status from MagicPlugins_Core
+            $is_active = $licensing_client->isActive();
             $headers['X-License-Status'] = $is_active ? 'active' : 'inactive';
 
-            // Try to detect tier in several common places
-            $tier = '';
-            if ( isset( $activation->plan_name ) && ! empty( $activation->plan_name ) ) {
-                $tier = $activation->plan_name;
-            } elseif ( isset( $activation->plan ) && is_object( $activation->plan ) && isset( $activation->plan->name ) ) {
-                $tier = $activation->plan->name;
-            } elseif ( isset( $activation->plan_key ) ) {
-                $tier = $activation->plan_key; // sometimes contains slug like starter / pro etc.
-            } elseif ( isset( $license_obj->plan ) && is_object( $license_obj->plan ) && isset( $license_obj->plan->product_name ) ) {
-                $tier = $license_obj->plan->product_name;
-            }
-
-            // 2. If still no tier, fetch the full license record once to enrich (safe because only runs when missing)
-            if ( empty( $tier ) && ! empty( $license_key ) && method_exists( $licensing_client, 'license' ) ) {
-                try {
-                    $license_obj = $licensing_client->license()->retrieve( $license_key );
-                    if ( is_object( $license_obj ) ) {
-                        if ( isset( $license_obj->plan_name ) ) {
-                            $tier = $license_obj->plan_name;
-                        } elseif ( isset( $license_obj->plan ) && is_object( $license_obj->plan ) && isset( $license_obj->plan->name ) ) {
-                            $tier = $license_obj->plan->name;
-                        } elseif ( isset( $license_obj->plan_key ) ) {
-                            $tier = $license_obj->plan_key;
-                        } elseif ( isset( $license_obj->plan ) && is_object( $license_obj->plan ) && isset( $license_obj->plan->product_name ) ) {
-                            $tier = $license_obj->plan->product_name;
-                        }
-
-                        // Status override if available
-                        if ( isset( $license_obj->status ) ) {
-                            $headers['X-License-Status'] = $license_obj->status;
-                        }
-
-                        if ( isset( $license_obj->expires_at ) ) {
-                            $headers['X-License-Expiry'] = $license_obj->expires_at;
-                        }
-
-                        // Expose license ID header for MagicProxy analytics
-                        if ( isset( $license_obj->id ) && ! empty( $license_obj->id ) ) {
-                            $headers['X-License-Id'] = $license_obj->id;
-                        }
-                    }
-                } catch ( \Exception $e ) {
-                    // silent – we will proceed without tier if retrieval fails
-                }
-            }
-
+            // Get tier from MagicPlugins_Core (stored from MagicDash response)
+            $tier = $licensing_client->getTier();
             if ( ! empty( $tier ) ) {
                 $headers['X-License-Tier'] = $tier;
-            }
-
-            // Expiry (already attempted above). If still empty, check activation keys
-            if ( ! isset( $headers['X-License-Expiry'] ) ) {
-                if ( isset( $activation->expires_at ) ) {
-                    $headers['X-License-Expiry'] = $activation->expires_at;
-                } elseif ( isset( $activation->expiry ) ) {
-                    $headers['X-License-Expiry'] = $activation->expiry;
-                }
-            }
-
-            // If we already have an activation object, it usually contains the related license ID
-            if ( isset( $activation->license ) && ! empty( $activation->license ) ) {
-                $headers['X-License-Id'] = $activation->license;
             }
         }
 

@@ -582,6 +582,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
   ]
 
   const googleModels = [
+    { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro' },
     { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (Latest)' },
     { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (Latest)' },
     { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image (Nano Banana)' },
