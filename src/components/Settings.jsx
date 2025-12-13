@@ -77,7 +77,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         debug_log_raw_responses: settings.debug_log_raw_responses === true,
         max_response_tokens: parseInt(settings.max_response_tokens) || 1500,
         conversation_history_limit: parseInt(settings.conversation_history_limit) || 20,
-        streaming_enabled: settings.streaming_enabled === true,
+        streaming_enabled: settings.streaming_enabled === undefined ? true : settings.streaming_enabled === true,
         manual_competitors: settings.manual_competitors || '',
         show_tips: settings.show_tips === undefined ? true : settings.show_tips,
         seo_target_location: settings.seo_target_location || '',
@@ -1521,7 +1521,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
 
             {/* Streaming Section */}
             <div className="space-y-4 border-t border-gray-200 dark:border-gray-600 pt-4">
-              <h5 className="font-medium text-brand-dark dark:text-white">Real-time Streaming (Beta)</h5>
+              <h5 className="font-medium text-brand-dark dark:text-white">Real-time Streaming</h5>
               <div className="space-y-4">
                 <div className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
                   <div className="flex-1 mr-4">
@@ -1530,9 +1530,6 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                     </Label>
                     <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
                       Shows AI responses as they're generated, word-by-word. Applies to all chat interfaces and content generation.
-                      <span className="block mt-1 text-yellow-600 dark:text-yellow-400">
-                        ⚠️ Beta feature - disable if you experience connection issues.
-                      </span>
                     </p>
                   </div>
                   <label className="inline-flex items-center cursor-pointer">
