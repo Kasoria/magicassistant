@@ -4642,7 +4642,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'seo_target_location' => $this->settings['seo_target_location'] ?? '',
             'seo_target_language' => $this->settings['seo_target_language'] ?? 'en',
             'seo_target_keywords' => $this->settings['seo_target_keywords'] ?? '',
-            'floating_chat_enabled' => isset($this->settings['floating_chat_enabled']) ? (bool) $this->settings['floating_chat_enabled'] : true,
+            'floating_chat_enabled' => isset($this->settings['floating_chat_enabled']) ? (bool) $this->settings['floating_chat_enabled'] : false,
             'floating_chat_conditions' => $this->settings['floating_chat_conditions'] ?? 'everywhere',
             'floating_chat_user_roles' => isset($this->settings['floating_chat_user_roles']) ? json_decode($this->settings['floating_chat_user_roles'], true) : [],
             'floating_chat_specific_users' => isset($this->settings['floating_chat_specific_users']) ? json_decode($this->settings['floating_chat_specific_users'], true) : [],
@@ -4659,7 +4659,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'floating_chat_button_icon'  => $this->settings['floating_chat_button_icon']  ?? 'chat',
             'floating_chat_custom_color' => $this->settings['floating_chat_custom_color'] ?? '',
             'floating_chat_custom_icon'  => $this->settings['floating_chat_custom_icon']  ?? '',
-            'streaming_enabled' => isset($this->settings['streaming_enabled']) ? (bool) $this->settings['streaming_enabled'] : false,
+            'streaming_enabled' => isset($this->settings['streaming_enabled']) ? (bool) $this->settings['streaming_enabled'] : true,
         );
         
         // Add comprehensive limit information if available
