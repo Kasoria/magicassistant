@@ -568,6 +568,13 @@ class AI_Provider {
             'callback' => array($this, 'handle_chatbot_chat'),
             'permission_callback' => '__return_true',
         ));
+
+        // BRICKS FRAMEWORK CONTEXT ENDPOINT (for AI Site Builder)
+        register_rest_route('magicassistant/v1', '/bricks/framework-context', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_bricks_framework_context'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
     }
     
     public function handle_chat($request) {
@@ -4976,7 +4983,111 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         return array('success' => true);
     }
-    
+
+    /**
+     * Get Bricks Builder framework context (CSS variables, classes, colors)
+     * This data is used by the AI Site Builder to use existing design system values
+     *
+     * @return WP_REST_Response|WP_Error
+     */
+    public function get_bricks_framework_context() {
+        // Check if Bricks is active
+        if (!defined('BRICKS_VERSION')) {
+            return new WP_REST_Response(array(
+                'success' => false,
+                'error' => 'Bricks Builder is not active',
+                'data' => null,
+            ), 200);
+        }
+
+        // Collect Bricks design data
+        $variables = get_option('bricks_global_variables', array());
+        $classes = get_option('bricks_global_classes', array());
+        $colors = get_option('bricks_color_palette', array());
+
+        // Format for AI consumption
+        $formatted = $this->format_bricks_framework_data($variables, $classes, $colors);
+
+        return new WP_REST_Response(array(
+            'success' => true,
+            'data' => $formatted,
+            'raw' => array(
+                'variables' => $variables,
+                'classes' => $classes,
+                'colors' => $colors,
+            ),
+        ), 200);
+    }
+
+    /**
+     * Format Bricks data into AI-friendly format
+     *
+     * @param array $variables Bricks global CSS variables
+     * @param array $classes Bricks global CSS classes
+     * @param array $colors Bricks color palette
+     * @return string Formatted string for AI consumption
+     */
+    private function format_bricks_framework_data($variables, $classes, $colors) {
+        $sections = array();
+
+        // Format CSS Variables
+        if (!empty($variables)) {
+            $var_lines = array();
+            foreach ($variables as $var) {
+                $name = isset($var['name']) ? $var['name'] : '';
+                $value = isset($var['value']) ? $var['value'] : '';
+                if ($name && $value) {
+                    // Ensure variable name has -- prefix
+                    $name = strpos($name, '--') === 0 ? $name : '--' . $name;
+                    $var_lines[] = $name . ': ' . $value;
+                }
+            }
+            if (!empty($var_lines)) {
+                $sections[] = "### CSS Variables\n" . implode("\n", $var_lines);
+            }
+        }
+
+        // Format Color Palette
+        if (!empty($colors)) {
+            $color_lines = array();
+            foreach ($colors as $color) {
+                $name = isset($color['name']) ? $color['name'] : '';
+                $raw = isset($color['raw']) ? $color['raw'] : (isset($color['value']) ? $color['value'] : '');
+                if ($name && $raw) {
+                    $color_lines[] = $name . ': ' . $raw;
+                }
+            }
+            if (!empty($color_lines)) {
+                $sections[] = "### Color Palette\n" . implode("\n", $color_lines);
+            }
+        }
+
+        // Format CSS Classes (group by category if available)
+        if (!empty($classes)) {
+            $class_names = array();
+            foreach ($classes as $class) {
+                $name = isset($class['name']) ? $class['name'] : '';
+                if ($name) {
+                    $class_names[] = '.' . ltrim($name, '.');
+                }
+            }
+            if (!empty($class_names)) {
+                // Limit to reasonable number for AI context
+                $display_classes = array_slice($class_names, 0, 100);
+                $sections[] = "### Available Utility Classes\n" . implode(', ', $display_classes);
+                if (count($class_names) > 100) {
+                    $sections[count($sections) - 1] .= "\n(+" . (count($class_names) - 100) . " more classes)";
+                }
+            }
+        }
+
+        if (empty($sections)) {
+            return "No CSS framework data found in Bricks.";
+        }
+
+        return implode("\n\n", $sections);
+    }
+
     public function check_permissions() {
         $can_manage = current_user_can('manage_options');
         return $can_manage;

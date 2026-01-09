@@ -161,6 +161,21 @@ class MCP_Server {
     }
     
     public function register_rest_routes() {
+        // MagicDash project import endpoints - ALWAYS register these
+        // Requires: WordPress login (cookie+nonce) AND license validation (handled by proxy)
+        // Register these BEFORE the enabled check so they work even if MCP is disabled
+        register_rest_route('magicassistant/v1', '/magicdash/projects', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'handle_magicdash_get_projects'),
+            'permission_callback' => array($this, 'check_magicdash_permissions'),
+        ));
+
+        register_rest_route('magicassistant/v1', '/magicdash/projects/(?P<project_id>[a-zA-Z0-9-]+)/bricks', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'handle_magicdash_get_bricks'),
+            'permission_callback' => array($this, 'check_magicdash_permissions'),
+        ));
+
         if (!$this->enabled) {
             return;
         }
@@ -329,6 +344,33 @@ class MCP_Server {
         return current_user_can('manage_options');
     }
 
+    /**
+     * Permission check for MagicDash endpoints
+     * Requires logged-in WordPress user with edit_posts capability
+     * License validation is also performed by the proxy for additional security
+     */
+    public function check_magicdash_permissions() {
+        // User must be logged in
+        if (!is_user_logged_in()) {
+            return new \WP_Error(
+                'rest_not_logged_in',
+                'You must be logged in to access MagicDash projects.',
+                array('status' => 401)
+            );
+        }
+
+        // User must have edit_posts capability (editors and admins)
+        if (!current_user_can('edit_posts')) {
+            return new \WP_Error(
+                'rest_forbidden',
+                'You do not have permission to access MagicDash projects.',
+                array('status' => 403)
+            );
+        }
+
+        return true;
+    }
+
     public function generate_jwt_token($request) {
         $params = $request->get_json_params();
         $expires_in = isset($params['expires_in']) ? intval($params['expires_in']) : 3600; // 1 hour default
@@ -452,7 +494,10 @@ class MCP_Server {
         
         // Register Bricks component library tools
         $this->register_bricks_component_tools();
-        
+
+        // Register MagicDash AI Builder project tools
+        $this->register_magicdash_tools();
+
         // Register resources
         $this->register_default_resources();
     }
@@ -550,7 +595,49 @@ class MCP_Server {
             'callback' => array($this, 'bricks_insert_component')
         ));
     }
-    
+
+    /**
+     * Register MagicDash AI Builder project tools for importing projects into Bricks
+     */
+    private function register_magicdash_tools() {
+        // magicdash_get_projects - Get list of user's AI Builder projects from MagicDash
+        $this->register_tool(array(
+            'name' => 'magicdash_get_projects',
+            'description' => 'Fetch the user\'s AI Builder projects from MagicDash. Returns a list of projects that can be imported into Bricks Builder. Each project contains website designs created with the MagicDash AI Site Builder. Use this tool when the user wants to import a project from MagicDash into Bricks.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'limit' => array(
+                        'type' => 'integer',
+                        'description' => 'Maximum number of projects to return',
+                        'default' => 20,
+                        'minimum' => 1,
+                        'maximum' => 50
+                    )
+                ),
+                'required' => array()
+            ),
+            'callback' => array($this, 'magicdash_get_projects')
+        ));
+
+        // magicdash_import_project - Import a MagicDash project into Bricks Builder
+        $this->register_tool(array(
+            'name' => 'magicdash_import_project',
+            'description' => 'Import an AI Builder project from MagicDash directly into the Bricks Builder canvas. This converts the project to Bricks format and inserts it at the current position in the builder. Use this after getting the list of projects with magicdash_get_projects and letting the user choose which project to import.',
+            'inputSchema' => array(
+                'type' => 'object',
+                'properties' => array(
+                    'project_id' => array(
+                        'type' => 'string',
+                        'description' => 'The ID of the MagicDash project to import'
+                    )
+                ),
+                'required' => array('project_id')
+            ),
+            'callback' => array($this, 'magicdash_import_project')
+        ));
+    }
+
     private function register_media_tools() {
         // wp_list_media - List WordPress media items with pagination and filtering
         $this->register_tool(array(
@@ -13444,6 +13531,349 @@ class MCP_Server {
             $path_parts = explode('/', $url_parts['path'] ?? '');
             $filename = end($path_parts) ?: 'unsplash-background.jpg';
             $current['settings']['_background']['image']['filename'] = $filename;
+        }
+    }
+
+    // =============================================================================
+    // MagicDash AI Builder Project Functions
+    // =============================================================================
+
+    /**
+     * Fetch user's AI Builder projects from MagicDash
+     * @param array $args { limit: int }
+     * @return array { success: bool, projects: array, error?: string }
+     */
+    public function magicdash_get_projects($args) {
+        try {
+            // Get MagicProxy API URL from settings
+            $proxy_url = $this->db->get_setting('magicproxy_url', 'https://proxy.magicplugins.io');
+
+            // Build query parameters
+            $params = array();
+            $params['limit'] = !empty($args['limit']) ? min(50, max(1, intval($args['limit']))) : 20;
+
+            $endpoint = $proxy_url . '/api/magicdash/projects?' . http_build_query($params);
+
+            // Get license headers from AI Provider
+            $license_headers = array();
+            if ($this->ai_provider && method_exists($this->ai_provider, 'get_license_headers')) {
+                $license_headers = $this->ai_provider->get_license_headers();
+            } else {
+                // Fallback: try to get license key directly
+                $license_key = $this->db ? $this->db->get_setting('license_key') : '';
+                if (!empty($license_key)) {
+                    $license_headers['X-License-Key'] = $license_key;
+                }
+            }
+
+            // Prepare request headers
+            $request_headers = array(
+                'Accept' => 'application/json'
+            );
+
+            // Merge license headers (convert to lowercase for Express.js)
+            foreach ($license_headers as $key => $value) {
+                $lower_key = strtolower($key);
+                $request_headers[$lower_key] = $value;
+            }
+
+            // Add site URL if not already present
+            if (!isset($request_headers['x-site-url'])) {
+                $request_headers['x-site-url'] = get_site_url();
+            }
+
+            // Make API request
+            $response = wp_remote_get($endpoint, array(
+                'timeout' => 15,
+                'headers' => $request_headers
+            ));
+
+            if (is_wp_error($response)) {
+                throw new Exception('Failed to fetch projects: ' . $response->get_error_message());
+            }
+
+            $status_code = wp_remote_retrieve_response_code($response);
+            $body = wp_remote_retrieve_body($response);
+            $data = json_decode($body, true);
+
+            if ($status_code !== 200) {
+                $error_msg = !empty($data['error']) ? $data['error'] : 'Failed to fetch projects (HTTP ' . $status_code . ')';
+                throw new Exception($error_msg);
+            }
+
+            if (empty($data['success'])) {
+                throw new Exception($data['error'] ?? 'Unknown error fetching projects');
+            }
+
+            // Format projects for display
+            $projects = array_map(function($project) {
+                return array(
+                    'id' => $project['id'],
+                    'title' => $project['title'] ?? 'Untitled Project',
+                    'mode' => $project['mode'] ?? 'unknown',
+                    'updatedAt' => $project['updatedAt'] ?? null,
+                    'createdAt' => $project['createdAt'] ?? null
+                );
+            }, $data['projects'] ?? array());
+
+            return array(
+                'success' => true,
+                'projects' => $projects,
+                'project_count' => count($projects),
+                'message' => count($projects) > 0
+                    ? 'Found ' . count($projects) . ' project(s). Use magicdash_import_project with the project ID to import into Bricks.'
+                    : 'No projects found. Create projects at app.magicplugins.io using the AI Site Builder.'
+            );
+
+        } catch (Exception $e) {
+            return array(
+                'success' => false,
+                'projects' => array(),
+                'error' => $e->getMessage()
+            );
+        }
+    }
+
+    /**
+     * Import a MagicDash AI Builder project into Bricks Builder
+     * @param array $args { project_id: string }
+     * @return array { success: bool, component?: array, error?: string }
+     */
+    public function magicdash_import_project($args) {
+        try {
+            $project_id = $args['project_id'] ?? '';
+
+            if (empty($project_id)) {
+                throw new Exception('project_id is required');
+            }
+
+            // Get MagicProxy API URL from settings
+            $proxy_url = $this->db->get_setting('magicproxy_url', 'https://proxy.magicplugins.io');
+
+            $endpoint = $proxy_url . '/api/magicdash/projects/' . urlencode($project_id) . '/bricks';
+
+            // Get license headers from AI Provider
+            $license_headers = array();
+            if ($this->ai_provider && method_exists($this->ai_provider, 'get_license_headers')) {
+                $license_headers = $this->ai_provider->get_license_headers();
+            } else {
+                // Fallback: try to get license key directly
+                $license_key = $this->db ? $this->db->get_setting('license_key') : '';
+                if (!empty($license_key)) {
+                    $license_headers['X-License-Key'] = $license_key;
+                }
+            }
+
+            // Prepare request headers
+            $request_headers = array(
+                'Accept' => 'application/json'
+            );
+
+            // Merge license headers (convert to lowercase for Express.js)
+            foreach ($license_headers as $key => $value) {
+                $lower_key = strtolower($key);
+                $request_headers[$lower_key] = $value;
+            }
+
+            // Add site URL if not already present
+            if (!isset($request_headers['x-site-url'])) {
+                $request_headers['x-site-url'] = get_site_url();
+            }
+
+            // Make API request with longer timeout for Bricks conversion
+            $response = wp_remote_get($endpoint, array(
+                'timeout' => 30,
+                'headers' => $request_headers
+            ));
+
+            if (is_wp_error($response)) {
+                throw new Exception('Failed to fetch Bricks data: ' . $response->get_error_message());
+            }
+
+            $status_code = wp_remote_retrieve_response_code($response);
+            $body = wp_remote_retrieve_body($response);
+            $data = json_decode($body, true);
+
+            if ($status_code !== 200) {
+                $error_msg = !empty($data['error']) ? $data['error'] : 'Failed to export to Bricks (HTTP ' . $status_code . ')';
+                throw new Exception($error_msg);
+            }
+
+            if (empty($data['success']) || empty($data['bricksJson'])) {
+                throw new Exception($data['error'] ?? 'No Bricks data returned');
+            }
+
+            // Parse the Bricks JSON
+            $bricks_data = json_decode($data['bricksJson'], true);
+
+            if (empty($bricks_data) || !is_array($bricks_data)) {
+                throw new Exception('Invalid Bricks JSON format');
+            }
+
+            // Return data formatted for JavaScript bridge to handle insertion
+            // This matches the format used by bricks_insert_component
+            return array(
+                'success' => true,
+                'component' => array(
+                    'name' => $data['projectTitle'] ?? 'MagicDash Import',
+                    'category' => 'magicdash',
+                    'bricksJson' => $bricks_data['content'] ?? array(),
+                    'globalClasses' => $bricks_data['globalClasses'] ?? array()
+                ),
+                'message' => 'Project "' . ($data['projectTitle'] ?? 'Untitled') . '" ready for insertion',
+                'instructions' => 'The JavaScript bridge will handle inserting this project into the Bricks canvas'
+            );
+
+        } catch (Exception $e) {
+            return array(
+                'success' => false,
+                'error' => 'Error importing MagicDash project: ' . $e->getMessage()
+            );
+        }
+    }
+
+    // =============================================================================
+    // MagicDash REST API Handlers
+    // =============================================================================
+
+    /**
+     * Handle REST API request to get MagicDash projects
+     * @param WP_REST_Request $request
+     * @return WP_REST_Response
+     */
+    public function handle_magicdash_get_projects($request) {
+        try {
+            $limit = $request->get_param('limit') ?: 30;
+
+            // Get MagicProxy API URL from settings
+            $proxy_url = $this->db->get_setting('magicproxy_url', 'https://proxy.magicplugins.io');
+            $endpoint = $proxy_url . '/api/magicdash/projects?limit=' . intval($limit);
+
+            // Get license headers
+            $license_headers = array();
+            if ($this->ai_provider && method_exists($this->ai_provider, 'get_license_headers')) {
+                $license_headers = $this->ai_provider->get_license_headers();
+            } else {
+                $license_key = $this->db ? $this->db->get_setting('license_key') : '';
+                if (!empty($license_key)) {
+                    $license_headers['X-License-Key'] = $license_key;
+                }
+            }
+
+            // Build request headers
+            $request_headers = array('Accept' => 'application/json');
+            foreach ($license_headers as $key => $value) {
+                $request_headers[strtolower($key)] = $value;
+            }
+            if (!isset($request_headers['x-site-url'])) {
+                $request_headers['x-site-url'] = get_site_url();
+            }
+
+            // Make API request
+            $response = wp_remote_get($endpoint, array(
+                'timeout' => 15,
+                'headers' => $request_headers
+            ));
+
+            if (is_wp_error($response)) {
+                return new \WP_REST_Response(array(
+                    'success' => false,
+                    'error' => $response->get_error_message()
+                ), 500);
+            }
+
+            $status_code = wp_remote_retrieve_response_code($response);
+            $body = wp_remote_retrieve_body($response);
+            $data = json_decode($body, true);
+
+            if ($status_code !== 200) {
+                return new \WP_REST_Response(array(
+                    'success' => false,
+                    'error' => $data['error'] ?? 'Failed to fetch projects'
+                ), $status_code);
+            }
+
+            return new \WP_REST_Response($data, 200);
+
+        } catch (Exception $e) {
+            return new \WP_REST_Response(array(
+                'success' => false,
+                'error' => $e->getMessage()
+            ), 500);
+        }
+    }
+
+    /**
+     * Handle REST API request to get Bricks JSON for a MagicDash project
+     * @param WP_REST_Request $request
+     * @return \WP_REST_Response
+     */
+    public function handle_magicdash_get_bricks($request) {
+        try {
+            $project_id = $request->get_param('project_id');
+
+            if (empty($project_id)) {
+                return new \WP_REST_Response(array(
+                    'success' => false,
+                    'error' => 'Project ID is required'
+                ), 400);
+            }
+
+            // Get MagicProxy API URL from settings
+            $proxy_url = $this->db->get_setting('magicproxy_url', 'https://proxy.magicplugins.io');
+            $endpoint = $proxy_url . '/api/magicdash/projects/' . urlencode($project_id) . '/bricks';
+
+            // Get license headers
+            $license_headers = array();
+            if ($this->ai_provider && method_exists($this->ai_provider, 'get_license_headers')) {
+                $license_headers = $this->ai_provider->get_license_headers();
+            } else {
+                $license_key = $this->db ? $this->db->get_setting('license_key') : '';
+                if (!empty($license_key)) {
+                    $license_headers['X-License-Key'] = $license_key;
+                }
+            }
+
+            // Build request headers
+            $request_headers = array('Accept' => 'application/json');
+            foreach ($license_headers as $key => $value) {
+                $request_headers[strtolower($key)] = $value;
+            }
+            if (!isset($request_headers['x-site-url'])) {
+                $request_headers['x-site-url'] = get_site_url();
+            }
+
+            // Make API request with longer timeout for Bricks conversion
+            $response = wp_remote_get($endpoint, array(
+                'timeout' => 30,
+                'headers' => $request_headers
+            ));
+
+            if (is_wp_error($response)) {
+                return new \WP_REST_Response(array(
+                    'success' => false,
+                    'error' => $response->get_error_message()
+                ), 500);
+            }
+
+            $status_code = wp_remote_retrieve_response_code($response);
+            $body = wp_remote_retrieve_body($response);
+            $data = json_decode($body, true);
+
+            if ($status_code !== 200) {
+                return new \WP_REST_Response(array(
+                    'success' => false,
+                    'error' => $data['error'] ?? 'Failed to export to Bricks'
+                ), $status_code);
+            }
+
+            return new \WP_REST_Response($data, 200);
+
+        } catch (Exception $e) {
+            return new \WP_REST_Response(array(
+                'success' => false,
+                'error' => $e->getMessage()
+            ), 500);
         }
     }
 }

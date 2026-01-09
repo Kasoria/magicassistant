@@ -33,6 +33,11 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
   const [customIcon, setCustomIcon] = useState('')
   const [openrouterModels, setOpenrouterModels] = useState([])
   const [isLoadingOpenrouterModels, setIsLoadingOpenrouterModels] = useState(false)
+  // AI Site Builder design context state
+  const [designContext, setDesignContext] = useState('')
+  const [isLoadingDesignContext, setIsLoadingDesignContext] = useState(false)
+  const [designContextError, setDesignContextError] = useState(null)
+  const [hasBricks, setHasBricks] = useState(null)
   const { showSuccess, showWarning, showError } = useToast()
 
   // Update tour status when component mounts or tour functions change
@@ -630,6 +635,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     { id: 'ai', label: 'AI Configuration', icon: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z' },
     { id: 'seo', label: 'SEO Configuration', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' },
     { id: 'floating-chat', label: 'Floating Chat', icon: 'M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z' },
+    { id: 'ai-site-builder', label: 'AI Site Builder', icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10' },
     { id: 'sharing', label: 'Shared Conversations', icon: 'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z' }
   ]
 
@@ -639,9 +645,59 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
       'ai': { border: 'border-green-500', text: 'text-green-600', darkText: 'dark:text-green-400' },
       'seo': { border: 'border-purple-500', text: 'text-purple-600', darkText: 'dark:text-purple-400' },
       'floating-chat': { border: 'border-orange-500', text: 'text-orange-600', darkText: 'dark:text-orange-400' },
+      'ai-site-builder': { border: 'border-cyan-500', text: 'text-cyan-600', darkText: 'dark:text-cyan-400' },
       'sharing': { border: 'border-pink-500', text: 'text-pink-600', darkText: 'dark:text-pink-400' }
     }
     return colors[tabId] || { border: 'border-brand-accent', text: 'text-brand-accent', darkText: 'dark:text-brand-accent' }
+  }
+
+  // Fetch design context from Bricks
+  const fetchDesignContext = async () => {
+    setIsLoadingDesignContext(true)
+    setDesignContextError(null)
+
+    try {
+      const response = await fetch(`${window.matAdminData?.restUrl || '/wp-json/magicassistant/v1/'}bricks/framework-context`, {
+        method: 'GET',
+        headers: {
+          'X-WP-Nonce': window.matAdminData?.nonces?.wp_rest || '',
+        },
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        setDesignContext(data.data || '')
+        setHasBricks(true)
+        if (data.data) {
+          showSuccess('Design context loaded successfully')
+        } else {
+          showWarning('Bricks is active but no design variables found')
+        }
+      } else {
+        setDesignContextError(data.error || 'Failed to fetch design context')
+        setHasBricks(false)
+      }
+    } catch (error) {
+      console.error('Error fetching design context:', error)
+      setDesignContextError('Failed to connect to the server')
+      setHasBricks(false)
+    } finally {
+      setIsLoadingDesignContext(false)
+    }
+  }
+
+  // Copy design context to clipboard
+  const copyDesignContext = async () => {
+    if (!designContext) return
+
+    try {
+      await navigator.clipboard.writeText(designContext)
+      showSuccess('Design context copied to clipboard!')
+    } catch (error) {
+      console.error('Error copying to clipboard:', error)
+      showError('Failed to copy to clipboard')
+    }
   }
 
   const renderTabContent = () => {
@@ -2559,11 +2615,136 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           </div>
         )
 
+      case 'ai-site-builder':
+        return (
+          <div className="space-y-6">
+            {/* Design Context Section */}
+            <div className="p-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <h4 className="font-medium text-lg text-brand-dark dark:text-white">Bricks Design Context</h4>
+                  <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">
+                    Extract your CSS variables, color palette, and utility classes from Bricks Builder.
+                    Copy this context into the AI Site Builder to maintain design consistency.
+                  </p>
+                </div>
+              </div>
+
+              {/* Fetch Button */}
+              <div className="flex items-center gap-3 mb-4">
+                <Button
+                  onClick={fetchDesignContext}
+                  disabled={isLoadingDesignContext}
+                  className="flex items-center gap-2"
+                >
+                  {isLoadingDesignContext ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Loading...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                      </svg>
+                      Fetch Design Context
+                    </>
+                  )}
+                </Button>
+
+                {designContext && (
+                  <Button
+                    onClick={copyDesignContext}
+                    color="light"
+                    className="flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    Copy to Clipboard
+                  </Button>
+                )}
+              </div>
+
+              {/* Error Message */}
+              {designContextError && (
+                <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                  <div className="flex items-center gap-2 text-red-700 dark:text-red-400">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span className="font-medium">{designContextError}</span>
+                  </div>
+                  {hasBricks === false && (
+                    <p className="mt-2 text-sm text-red-600 dark:text-red-300">
+                      Bricks Builder must be active on this site to extract design context.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Design Context Textarea */}
+              {designContext && (
+                <div className="space-y-2">
+                  <Label htmlFor="design-context" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Your Design Context
+                  </Label>
+                  <textarea
+                    id="design-context"
+                    value={designContext}
+                    readOnly
+                    rows={15}
+                    className="w-full px-3 py-2 text-xs font-mono bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 focus:ring-2 focus:ring-cyan-500 focus:border-transparent resize-none"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Copy this context and paste it into the AI Site Builder's "CSS Framework Variables" field.
+                  </p>
+                </div>
+              )}
+
+              {/* Empty State */}
+              {!designContext && !designContextError && !isLoadingDesignContext && (
+                <div className="text-center py-8 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg">
+                  <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+                  </svg>
+                  <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">No design context loaded</h3>
+                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    Click "Fetch Design Context" to extract your Bricks CSS variables and classes.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Info Box */}
+            <div className="p-4 bg-cyan-50 dark:bg-cyan-900/20 border border-cyan-200 dark:border-cyan-800 rounded-lg">
+              <div className="flex items-start gap-3">
+                <svg className="w-5 h-5 text-cyan-600 dark:text-cyan-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div>
+                  <h5 className="font-medium text-cyan-800 dark:text-cyan-300">How to use this</h5>
+                  <ol className="mt-2 text-sm text-cyan-700 dark:text-cyan-400 list-decimal list-inside space-y-1">
+                    <li>Click "Fetch Design Context" to extract your Bricks CSS variables</li>
+                    <li>Copy the generated context to your clipboard</li>
+                    <li>Go to the AI Site Builder in your MagicDash account</li>
+                    <li>Paste the context into the "CSS Framework Variables" field</li>
+                    <li>The AI will use your existing design system instead of creating new styles</li>
+                  </ol>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+
       case 'sharing':
         return (
           <SharedConversations adminData={window.matAdminData} />
         )
-        
+
       default:
         return null
     }

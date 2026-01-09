@@ -8,6 +8,7 @@ import remarkBreaks from 'remark-breaks'
 import ContentMode from './ContentMode'
 import { parseHtmlStringToObjectArray, getDefaultParserStates, generateId } from '../utils/bricksParser'
 import { insertBricksStructure, isBricksBuilder } from '../utils/bricksInserter'
+import MagicDashImportModal from './MagicDashImportModal'
 
 const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, onAiResponseUpdate }) => {
   const [isContentMode, setIsContentMode] = useState(false)
@@ -143,6 +144,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
   const [siteMetaDescription, setSiteMetaDescription] = useState('')
   const [isSiteContextModalOpen, setIsSiteContextModalOpen] = useState(false)
   const [isBricksSettingsOpen, setIsBricksSettingsOpen] = useState(false)
+  const [isMagicDashImportOpen, setIsMagicDashImportOpen] = useState(false)
   
   // Helper: Sanitize message history to prevent large base64 images from being sent
   const sanitizeMessageHistory = (messages) => {
@@ -3816,6 +3818,33 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
                                   </div>
                                 </div>
                               </div>
+
+                              {/* Divider */}
+                              <div className="border-t border-gray-200 dark:border-gray-700 my-2"></div>
+
+                              {/* Import from MagicDash */}
+                              <button
+                                onClick={() => {
+                                  setIsMagicDashImportOpen(true);
+                                  setIsBricksSettingsOpen(false);
+                                }}
+                                className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-left rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                              >
+                                <div className="w-8 h-8 flex items-center justify-center rounded-md bg-gradient-to-br from-blue-500 to-purple-500">
+                                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                                  </svg>
+                                </div>
+                                <div className="flex flex-col flex-1">
+                                  <div className="font-medium text-gray-900 dark:text-white">Import from MagicDash</div>
+                                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                                    Import AI Builder projects
+                                  </div>
+                                </div>
+                                <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                </svg>
+                              </button>
                             </div>
                           </div>
                         </>
@@ -4620,6 +4649,15 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
           </div>
         </div>
       )}
+
+      {/* MagicDash Import Modal */}
+      <MagicDashImportModal
+        isOpen={isMagicDashImportOpen}
+        onClose={() => setIsMagicDashImportOpen(false)}
+        onSuccess={(result) => {
+          showSuccess(result.message || 'Project imported successfully!')
+        }}
+      />
     </div>
   )
 }
