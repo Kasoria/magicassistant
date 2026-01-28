@@ -137,7 +137,7 @@ if (!class_exists('MagicPlugins_Core')) {
             // Build request body
             $request_body = array(
                 'licenseKey' => $license_key,
-                'siteUrl' => home_url(),
+                'siteUrl' => get_site_url(),
                 'pluginName' => $config['plugin_name'],
                 'siteName' => get_bloginfo('name'),
             );
@@ -214,7 +214,7 @@ if (!class_exists('MagicPlugins_Core')) {
             wp_remote_post(self::get_proxy_url() . '/api/proxy/license/deactivate', array(
                 'body' => wp_json_encode(array(
                     'licenseKey' => $license_key,
-                    'siteUrl' => home_url(),
+                    'siteUrl' => get_site_url(),
                 )),
                 'headers' => array(
                     'Content-Type' => 'application/json',
@@ -637,8 +637,14 @@ if (!class_exists('MagicPlugins_Core')) {
             $prefix = $config['settings_prefix'];
             $update_checker->addQueryArgFilter(function($query_args) use ($prefix) {
                 $query_args['license_key'] = get_option($prefix . '_key', '');
-                $query_args['site_url'] = home_url();
+                $query_args['site_url'] = get_site_url();
                 return $query_args;
+            });
+
+            // Increase timeout for update checks on slow connections (default is 3s)
+            add_filter('puc_request_info_options-' . $slug, function($options) {
+                $options['timeout'] = 30;
+                return $options;
             });
 
             self::$update_checkers[$slug] = $update_checker;

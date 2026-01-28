@@ -38,6 +38,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
   const [isLoadingDesignContext, setIsLoadingDesignContext] = useState(false)
   const [designContextError, setDesignContextError] = useState(null)
   const [hasBricks, setHasBricks] = useState(null)
+  const [selectedFramework, setSelectedFramework] = useState('none')
+  const [designContextStats, setDesignContextStats] = useState(null)
   const { showSuccess, showWarning, showError } = useToast()
 
   // Update tour status when component mounts or tour functions change
@@ -88,6 +90,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         seo_target_location: settings.seo_target_location || '',
         seo_target_language: settings.seo_target_language || 'en',
         seo_target_keywords: settings.seo_target_keywords || '',
+        seo_target_domain: settings.seo_target_domain || '',
         floating_chat_enabled: settings.floating_chat_enabled === undefined ? false : settings.floating_chat_enabled,
         floating_chat_conditions: settings.floating_chat_conditions || 'everywhere',
         floating_chat_user_roles: settings.floating_chat_user_roles || [],
@@ -543,6 +546,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           seo_target_location: localSettings.seo_target_location,
           seo_target_language: localSettings.seo_target_language,
           seo_target_keywords: localSettings.seo_target_keywords,
+          seo_target_domain: localSettings.seo_target_domain,
           manual_competitors: localSettings.manual_competitors
         }
       case 'floating-chat':
@@ -588,6 +592,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
 
   const googleModels = [
     { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro' },
+    { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash' },
     { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (Latest)' },
     { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (Latest)' },
     { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image (Nano Banana)' },
@@ -655,9 +660,15 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
   const fetchDesignContext = async () => {
     setIsLoadingDesignContext(true)
     setDesignContextError(null)
+    setDesignContextStats(null)
 
     try {
-      const response = await fetch(`${window.matAdminData?.restUrl || '/wp-json/magicassistant/v1/'}bricks/framework-context`, {
+      // Build URL with framework parameter
+      const baseUrl = `${window.matAdminData?.restUrl || '/wp-json/magicassistant/v1/'}bricks/framework-context`
+      const url = new URL(baseUrl, window.location.origin)
+      url.searchParams.set('framework', selectedFramework)
+
+      const response = await fetch(url.toString(), {
         method: 'GET',
         headers: {
           'X-WP-Nonce': window.matAdminData?.nonces?.wp_rest || '',
@@ -668,11 +679,13 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
 
       if (data.success) {
         setDesignContext(data.data || '')
+        setDesignContextStats(data.stats || null)
         setHasBricks(true)
         if (data.data) {
-          showSuccess('Design context loaded successfully')
+          const framework = data.stats?.framework || 'Bricks'
+          showSuccess(`Design context loaded from ${framework}`)
         } else {
-          showWarning('Bricks is active but no design variables found')
+          showWarning('Bricks is active but no design variables found for selected framework')
         }
       } else {
         setDesignContextError(data.error || 'Failed to fetch design context')
@@ -1750,6 +1763,25 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
       case 'seo':
         return (
           <div className="space-y-6">
+            {/* Target Domain */}
+            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
+              <h4 className="font-medium text-brand-dark dark:text-white mb-3">Monitored Domain</h4>
+              <div>
+                <Label htmlFor="seo-target-domain" value="Target Domain" className="mb-2" />
+                <TextInput
+                  id="seo-target-domain"
+                  type="text"
+                  placeholder="example.com"
+                  value={localSettings.seo_target_domain}
+                  onChange={(e) => handleLocalChange('seo_target_domain', e.target.value)}
+                  disabled={isSavingSettings}
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  The domain to track keyword rankings for. If left empty, the current WordPress site URL will be used.
+                </p>
+              </div>
+            </div>
+
             {/* Target Location and Language */}
             <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
               <h4 className="font-medium text-brand-dark dark:text-white mb-3">Target Audience</h4>
@@ -2630,6 +2662,31 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                 </div>
               </div>
 
+              {/* Framework Selector */}
+              <div className="mb-4">
+                <Label htmlFor="framework-select" className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">
+                  CSS Framework
+                </Label>
+                <select
+                  id="framework-select"
+                  value={selectedFramework}
+                  onChange={(e) => {
+                    setSelectedFramework(e.target.value)
+                    setDesignContext('')
+                    setDesignContextStats(null)
+                    setDesignContextError(null)
+                  }}
+                  className="w-full max-w-xs px-3 py-2 text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                >
+                  <option value="none">No Framework (show all)</option>
+                  <option value="acss">AutomaticCSS</option>
+                  <option value="coreframework">CoreFramework</option>
+                </select>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Select your CSS framework to fetch only its specific variables and classes.
+                </p>
+              </div>
+
               {/* Fetch Button */}
               <div className="flex items-center gap-3 mb-4">
                 <Button
@@ -2668,6 +2725,23 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                   </Button>
                 )}
               </div>
+
+              {/* Stats Display */}
+              {designContextStats && (
+                <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg">
+                  <div className="flex flex-wrap gap-3 text-xs text-gray-600 dark:text-gray-400">
+                    <span className="font-medium text-gray-800 dark:text-gray-200">{designContextStats.framework}</span>
+                    {designContextStats.colors_count > 0 && <span>Colors: {designContextStats.colors_count}</span>}
+                    {designContextStats.typography_count > 0 && <span>Typography: {designContextStats.typography_count}</span>}
+                    {designContextStats.spacing_count > 0 && <span>Spacing: {designContextStats.spacing_count}</span>}
+                    {designContextStats.layout_count > 0 && <span>Layout: {designContextStats.layout_count}</span>}
+                    {designContextStats.borders_count > 0 && <span>Borders: {designContextStats.borders_count}</span>}
+                    {designContextStats.classes_count > 0 && (
+                      <span>Classes: {designContextStats.classes_count}/{designContextStats.total_classes_available}</span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Error Message */}
               {designContextError && (

@@ -228,8 +228,11 @@ class DB {
 
         // Run chatbot header customization migration if needed
         $this->run_chatbot_header_migration();
+
+        // Run provider override migration if needed
+        $this->run_provider_override_migration();
     }
-    
+
     private function run_content_mode_migration() {
         // Check if migration has already been run
         $migration_version = $this->get_setting('content_mode_migration_version', 0);
@@ -273,6 +276,39 @@ class DB {
             } else {
                 // Columns already exist, mark migration as complete
                 $this->save_setting('chatbot_header_migration_version', 1);
+            }
+        }
+    }
+
+    private function run_provider_override_migration() {
+        // Check if migration has already been run
+        $migration_version = $this->get_setting('provider_override_migration_version', 0);
+
+        if ($migration_version < 1) {
+            global $wpdb;
+
+            // Check if columns already exist
+            $columns = $wpdb->get_results("SHOW COLUMNS FROM {$this->chat_history_table}");
+            $column_names = array_column($columns, 'Field');
+
+            $columns_to_add = [];
+            if (!in_array('override_provider', $column_names)) {
+                $columns_to_add[] = "ADD COLUMN override_provider varchar(50) DEFAULT NULL";
+            }
+            if (!in_array('override_model', $column_names)) {
+                $columns_to_add[] = "ADD COLUMN override_model varchar(100) DEFAULT NULL";
+            }
+
+            if (!empty($columns_to_add)) {
+                $sql = "ALTER TABLE {$this->chat_history_table} " . implode(', ', $columns_to_add);
+                $result = $wpdb->query($sql);
+
+                if ($result !== false) {
+                    $this->save_setting('provider_override_migration_version', 1);
+                }
+            } else {
+                // Columns already exist, mark migration as complete
+                $this->save_setting('provider_override_migration_version', 1);
             }
         }
     }
@@ -802,10 +838,11 @@ class DB {
         } else {
             // Get all sessions for user (for session list)
             $sessions = $wpdb->get_results($wpdb->prepare(
-                "SELECT session_id, title, message_count, total_tokens, 
-                        providers_used, models_used, agent_mode, agent_id, created_at, updated_at
-                FROM {$this->chat_history_table} 
-                WHERE user_id = %d 
+                "SELECT session_id, title, message_count, total_tokens,
+                        providers_used, models_used, agent_mode, agent_id,
+                        override_provider, override_model, created_at, updated_at
+                FROM {$this->chat_history_table}
+                WHERE user_id = %d
                 ORDER BY updated_at DESC LIMIT %d",
                 $user_id,
                 $limit
@@ -1317,7 +1354,39 @@ class DB {
             array('%d', '%s')
         );
     }
-    
+
+    /**
+     * Set AI provider/model override for a chat session
+     */
+    public function set_chat_session_provider_override($user_id, $session_id, $provider, $model) {
+        global $wpdb;
+
+        return $wpdb->update(
+            $this->chat_history_table,
+            array(
+                'override_provider' => $provider,
+                'override_model' => $model
+            ),
+            array('user_id' => $user_id, 'session_id' => $session_id),
+            array('%s', '%s'),
+            array('%d', '%s')
+        );
+    }
+
+    /**
+     * Get AI provider/model override for a chat session
+     */
+    public function get_chat_session_provider_override($user_id, $session_id) {
+        global $wpdb;
+
+        return $wpdb->get_row($wpdb->prepare(
+            "SELECT override_provider, override_model FROM {$this->chat_history_table}
+             WHERE user_id = %d AND session_id = %s",
+            $user_id,
+            $session_id
+        ), ARRAY_A);
+    }
+
     /**
      * Fix double-encrypted API keys
      * This migrates keys that were accidentally encrypted twice

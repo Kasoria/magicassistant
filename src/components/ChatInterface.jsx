@@ -83,7 +83,11 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
   const [webSearchEnabled, setWebSearchEnabled] = useState(false)
   const [selectedAgentId, setSelectedAgentId] = useState(null)
   const [availableAgents, setAvailableAgents] = useState([])
-  
+
+  // Per-chat provider/model override
+  const [overrideProvider, setOverrideProvider] = useState(null)
+  const [overrideModel, setOverrideModel] = useState(null)
+
   // Bricks framework selector state
   // Load saved framework from localStorage, default to Native
   const [selectedFramework, setSelectedFramework] = useState(() => {
@@ -145,7 +149,48 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
   const [isSiteContextModalOpen, setIsSiteContextModalOpen] = useState(false)
   const [isBricksSettingsOpen, setIsBricksSettingsOpen] = useState(false)
   const [isMagicDashImportOpen, setIsMagicDashImportOpen] = useState(false)
-  
+
+  // AI Provider/Model options for per-chat override
+  const aiProviderOptions = [
+    { value: '', label: 'Global Default' },
+    { value: 'openai', label: 'OpenAI' },
+    { value: 'anthropic', label: 'Anthropic (Claude)' },
+    { value: 'google', label: 'Google (Gemini)' },
+    { value: 'openrouter', label: 'OpenRouter' }
+  ]
+
+  const openaiModelOptions = [
+    { value: 'gpt-4.1', label: 'GPT-4.1' },
+    { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
+    { value: 'gpt-4o', label: 'GPT-4o' },
+    { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+    { value: 'o1', label: 'o1' },
+    { value: 'o3-mini', label: 'o3-mini' }
+  ]
+
+  const anthropicModelOptions = [
+    { value: 'claude-sonnet-4-5-20250929', label: 'Claude 4.5 Sonnet' },
+    { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
+    { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku' },
+    { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus' }
+  ]
+
+  const googleModelOptions = [
+    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' }
+  ]
+
+  const getModelOptionsForProvider = (provider) => {
+    switch (provider) {
+      case 'openai': return openaiModelOptions
+      case 'anthropic': return anthropicModelOptions
+      case 'google': return googleModelOptions
+      case 'openrouter': return [] // OpenRouter has too many, just use default
+      default: return []
+    }
+  }
+
   // Helper: Sanitize message history to prevent large base64 images from being sent
   const sanitizeMessageHistory = (messages) => {
     return messages
@@ -979,6 +1024,10 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
         ...(isBricksMode ? {
           text_replacement_enabled: textReplacementEnabled,
           image_replacement_enabled: imageReplacementEnabled
+        } : {}),
+        ...(overrideProvider ? {
+          override_provider: overrideProvider,
+          override_model: overrideModel
         } : {})
       }
 
@@ -1478,6 +1527,10 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
           ...(isBricksMode ? {
             text_replacement_enabled: textReplacementEnabled,
             image_replacement_enabled: imageReplacementEnabled
+          } : {}),
+          ...(overrideProvider ? {
+            override_provider: overrideProvider,
+            override_model: overrideModel
           } : {})
         };
 
@@ -1952,6 +2005,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
     setIsEditingTitle(false) // Stop editing if in edit mode
     setForceAgentMode(true)   // Default back to Agent Mode
     setSelectedAgentId(null)  // Reset AI agent selection
+    setOverrideProvider(null) // Reset provider override
+    setOverrideModel(null)    // Reset model override
     // Only clear files if persistence is disabled
     if (!persistFiles) {
       setAttachedFiles([]) // Clear any attached files
@@ -2034,6 +2089,14 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
             setSelectedAgentId(parseInt(session.agent_id))
           } else {
             setSelectedAgentId(null)
+          }
+          // Restore provider/model override if saved with session
+          if (session.override_provider) {
+            setOverrideProvider(session.override_provider)
+            setOverrideModel(session.override_model || null)
+          } else {
+            setOverrideProvider(null)
+            setOverrideModel(null)
           }
           // Persist last opened session
           saveLastSession(session.id)
@@ -2299,6 +2362,10 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
           ...(isBricksMode ? {
             text_replacement_enabled: textReplacementEnabled,
             image_replacement_enabled: imageReplacementEnabled
+          } : {}),
+          ...(overrideProvider ? {
+            override_provider: overrideProvider,
+            override_model: overrideModel
           } : {})
         })
       })
@@ -2957,6 +3024,72 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
     }
   }
 
+  const saveProviderOverride = async () => {
+    if (!currentSessionId) {
+      showError('Please start a conversation before setting a model override')
+      return
+    }
+
+    try {
+      const response = await fetch(`${adminData.restUrl}chat-sessions/${currentSessionId}/provider`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-WP-Nonce': adminData.nonces.wp_rest,
+        },
+        body: JSON.stringify({
+          provider: overrideProvider || null,
+          model: overrideModel || null
+        })
+      })
+
+      const data = await response.json()
+      if (data.success) {
+        showSuccess(overrideProvider ? `Switched to ${aiProviderOptions.find(p => p.value === overrideProvider)?.label || overrideProvider}` : 'Using global default settings')
+        // Update chat sessions to reflect provider override
+        setChatSessions(prevSessions =>
+          prevSessions.map(session =>
+            session.id === currentSessionId
+              ? { ...session, override_provider: overrideProvider, override_model: overrideModel }
+              : session
+          )
+        )
+      } else {
+        showError(data.message || 'Failed to save model override')
+      }
+    } catch (error) {
+      console.error('Failed to save provider override:', error)
+      showError('Failed to save model override')
+    }
+  }
+
+  const clearProviderOverride = async () => {
+    setOverrideProvider(null)
+    setOverrideModel(null)
+    if (currentSessionId) {
+      try {
+        await fetch(`${adminData.restUrl}chat-sessions/${currentSessionId}/provider`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-WP-Nonce': adminData.nonces.wp_rest,
+          },
+          body: JSON.stringify({ provider: null, model: null })
+        })
+        showSuccess('Using global default settings')
+        setChatSessions(prevSessions =>
+          prevSessions.map(session =>
+            session.id === currentSessionId
+              ? { ...session, override_provider: null, override_model: null }
+              : session
+          )
+        )
+      } catch (error) {
+        console.error('Failed to clear provider override:', error)
+      }
+    }
+  }
+
   // If in Content Mode, render that instead
   if (isContentMode && !isDrawerMode) {
     return <ContentMode adminData={adminData} onExitContentMode={() => setIsContentMode(false)} />
@@ -2967,7 +3100,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
     <div className={`h-[calc(100vh-7.4rem)] mx-auto flex flex-col ${isDrawerMode ? 'h-full' : ''}`}>
       {/* Header - new layout */}
       {!isDrawerMode && (
-        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
+        <div className="flex items-center justify-between p-2 border-b border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
           <div className="flex items-center space-x-2">
             <Button size="sm" color="gray" onClick={() => setIsSettingsOpen(true)}>Settings</Button>
             <Button size="sm" color="gray" onClick={() => setIsHistoryOpen(true)}>History</Button>
@@ -3044,7 +3177,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
 
       {/* Drawer mode compact header */}
       {isDrawerMode && (
-        <div className="flex items-center justify-between p-3 border-b border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
+        <div className="flex items-center justify-between p-2 border-b border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
           <div className="flex-1 min-w-0">
             {isEditingTitle && currentSessionId ? (
               <div className="flex items-center space-x-2">
@@ -3113,17 +3246,17 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
           ? 'h-[calc(100%-190px)]' 
           : 'h-[calc(100vh-18.7rem)] sm:h-[calc(100vh-15.4rem)]'
       }`}>
-        <div className="max-w-6xl mx-auto py-4 lg:py-6 space-y-6 px-4 lg:px-6">
+        <div className="max-w-6xl mx-auto py-3 lg:py-3 space-y-3 px-3 lg:px-3">
           {messages.map((message, index) => (
             <div
               key={index}
               data-message-index={index}
-              className={`p-6 shadow-xs rounded-lg flex items-start gap-6 group relative pe-14 ${
+              className={`p-3 shadow-xs rounded-lg flex flex-col items-start gap-4 group relative pe-14 ${
                 message.role === 'user'
-                  ? 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700'
+                  ? 'bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700'
                   : message.isError
                     ? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/30'
-                    : 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700'
+                    : 'bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/30'
               }`}
             >
               {/* Avatar */}
@@ -3146,7 +3279,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
               </div>
 
               {/* Message Content */}
-              <div className="format dark:format-invert format-blue flex-1 text-gray-900 dark:text-gray-100 overflow-x-auto">
+              <div className="format dark:format-invert format-blue flex-1 text-gray-900 dark:text-gray-100 overflow-x-auto text-sm leading-[normal]">
                 {editingMessageIndex === index ? (
                   <div className="space-y-2">
                     <textarea
@@ -3441,7 +3574,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
               <div className="format dark:format-invert format-blue flex-1">
                 <div className="flex items-center space-x-2">
                   <Spinner size="sm" />
-                  <span className="text-gray-600 dark:text-gray-300">AI is thinking...</span>
+                  <span className="text-gray-600 dark:text-gray-300 text-sm">AI is thinking...</span>
                 </div>
               </div>
             </div>
@@ -3964,14 +4097,14 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
 
       {/* Settings Modal */}
       {!isDrawerMode && (
-        <ConfirmationModal 
-          isOpen={isSettingsOpen} 
+        <ConfirmationModal
+          isOpen={isSettingsOpen}
           onClose={() => setIsSettingsOpen(false)}
           title="Chat Settings"
           showActions={false}
           maxWidth="max-w-4xl"
         >
-          <div className="space-y-6">
+          <div className="space-y-6 max-h-[70vh] overflow-y-auto pr-2">
             {/* Custom System Message Section */}
             <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
               <div className="flex items-center mb-3">
@@ -4117,6 +4250,99 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
                 >
                   Save Agent Selection
                 </Button>
+              </div>
+            </div>
+
+            {/* AI Model Override */}
+            <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4 border border-green-200 dark:border-green-800">
+              <div className="flex items-center mb-3">
+                <svg className="w-5 h-5 text-green-600 dark:text-green-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z" />
+                </svg>
+                <h3 className="text-sm font-medium text-green-900 dark:text-green-100">AI Model Override</h3>
+              </div>
+
+              <p className="text-sm text-green-800 dark:text-green-200 mb-3">
+                Override the global AI settings for this chat session. Your choice will be remembered when you reload this conversation.
+              </p>
+
+              {/* Current Model Indicator */}
+              <div className="mb-4 p-2 bg-green-100 dark:bg-green-800/30 rounded text-sm">
+                <span className="font-medium">Currently using: </span>
+                {overrideProvider ? (
+                  <span className="text-green-700 dark:text-green-300">
+                    {aiProviderOptions.find(p => p.value === overrideProvider)?.label || overrideProvider}
+                    {overrideModel && ` (${overrideModel})`}
+                    <span className="ml-2 text-xs bg-green-200 dark:bg-green-700 px-2 py-0.5 rounded">Override</span>
+                  </span>
+                ) : (
+                  <span className="text-gray-600 dark:text-gray-400">Global default ({settings?.ai_provider || 'openai'})</span>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-green-900 dark:text-green-100 mb-2">
+                    Provider
+                  </label>
+                  <select
+                    value={overrideProvider || ''}
+                    onChange={(e) => {
+                      const newProvider = e.target.value || null
+                      setOverrideProvider(newProvider)
+                      setOverrideModel(null) // Reset model when provider changes
+                    }}
+                    className="w-full p-2 border border-green-300 dark:border-green-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-green-500"
+                  >
+                    {aiProviderOptions.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {overrideProvider && getModelOptionsForProvider(overrideProvider).length > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-green-900 dark:text-green-100 mb-2">
+                      Model
+                    </label>
+                    <select
+                      value={overrideModel || ''}
+                      onChange={(e) => setOverrideModel(e.target.value || null)}
+                      className="w-full p-2 border border-green-300 dark:border-green-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-green-500"
+                    >
+                      <option value="">Default for provider</option>
+                      {getModelOptionsForProvider(overrideProvider).map(option => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <Button
+                    onClick={saveProviderOverride}
+                    size="sm"
+                    className="bg-green-600 hover:bg-green-700 text-white"
+                    disabled={!currentSessionId}
+                  >
+                    Save Override
+                  </Button>
+                  {overrideProvider && (
+                    <Button
+                      onClick={clearProviderOverride}
+                      size="sm"
+                      color="gray"
+                    >
+                      Clear Override
+                    </Button>
+                  )}
+                </div>
+
+                {!currentSessionId && (
+                  <p className="text-xs text-green-700 dark:text-green-300">
+                    Start a conversation to enable model override for this session.
+                  </p>
+                )}
               </div>
             </div>
 

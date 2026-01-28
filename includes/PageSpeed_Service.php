@@ -82,8 +82,8 @@ class PageSpeed_Service {
         }
         
         $proxy_url = 'https://magicplugins.io/wp-json/magicproxy/v1/pagespeed';
-        
-        $site_url = home_url();
+
+        $site_url = get_site_url();
         $site_id = parse_url($site_url, PHP_URL_HOST);
         $timestamp = time();
         
@@ -453,8 +453,8 @@ class PageSpeed_Service {
         $debug_info = array(
             'proxy_url' => 'https://magicplugins.io/wp-json/magicproxy/v1/pagespeed',
             'test_url' => $test_url ?: home_url(),
-            'site_url' => home_url(),
-            'site_id' => parse_url(home_url(), PHP_URL_HOST),
+            'site_url' => get_site_url(),
+            'site_id' => parse_url(get_site_url(), PHP_URL_HOST),
             'timestamp' => time(),
             'tests' => array()
         );
@@ -587,8 +587,8 @@ class PageSpeed_Service {
         try {
             $url_to_test = $test_url ?: home_url();
             $proxy_url = 'https://magicplugins.io/wp-json/magicproxy/v1/pagespeed';
-            
-            $site_url = home_url();
+
+            $site_url = get_site_url();
             $site_id = parse_url($site_url, PHP_URL_HOST);
             $timestamp = time();
             

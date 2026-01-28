@@ -470,7 +470,7 @@ const FloatingChat = ({ pluginData }) => {
         />
         
         {/* Drawer Header */}
-        <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900">
+        <div className="flex justify-between items-center p-2 border-b border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900">
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">MagicAssistant</h2>
             {isBricksEditor && (

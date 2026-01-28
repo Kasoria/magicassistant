@@ -7,6 +7,11 @@ use Exception;
 use WP_Error;
 use WP_REST_Response;
 
+// Import utility classes
+use MagicAssistant\Utils\FrameworkExtractor;
+use MagicAssistant\Utils\ClassCategorizer;
+use MagicAssistant\Utils\ACSSSettingsParser;
+
 if (!defined('ABSPATH')) exit;
 
 class AI_Provider {
@@ -102,7 +107,13 @@ class AI_Provider {
             'callback' => array($this, 'update_chat_agent'),
             'permission_callback' => array($this, 'check_permissions'),
         ));
-        
+
+        register_rest_route('magicassistant/v1', '/chat-sessions/(?P<session_id>[a-zA-Z0-9_-]+)/provider', array(
+            'methods' => 'PUT',
+            'callback' => array($this, 'update_chat_provider'),
+            'permission_callback' => array($this, 'check_permissions'),
+        ));
+
         // Settings endpoints
         register_rest_route('magicassistant/v1', '/settings', array(
             'methods' => 'GET',
@@ -575,6 +586,27 @@ class AI_Provider {
             'callback' => array($this, 'get_bricks_framework_context'),
             'permission_callback' => array($this, 'check_permissions'),
         ));
+
+        // FRAMEWORK CSS ENDPOINT (for MagicDash preview)
+        register_rest_route('magicassistant/v1', '/framework-css', array(
+            'methods'             => 'GET',
+            'callback'            => array($this, 'get_framework_css'),
+            'permission_callback' => array($this, 'check_magicdash_permissions'),
+            'args'                => array(
+                'framework' => array(
+                    'required' => false,
+                    'type'     => 'string',
+                    'enum'     => array('acss', 'coreframework', 'none'),
+                    'default'  => 'acss',
+                ),
+                'include_bricks' => array(
+                    'required' => false,
+                    'type'     => 'string',
+                    'default'  => 'true',
+                    'description' => 'Include Bricks frontend CSS and theme styles',
+                ),
+            ),
+        ));
     }
     
     public function handle_chat($request) {
@@ -602,6 +634,8 @@ class AI_Provider {
         $site_meta_description = $data['site_meta_description'] ?? '';
         $text_replacement_enabled = $data['text_replacement_enabled'] ?? false;
         $image_replacement_enabled = $data['image_replacement_enabled'] ?? false;
+        $override_provider = isset($data['override_provider']) && $data['override_provider'] !== '' ? sanitize_text_field($data['override_provider']) : null;
+        $override_model = isset($data['override_model']) && $data['override_model'] !== '' ? sanitize_text_field($data['override_model']) : null;
 
         // Reset tool discovery flag for new sessions
         if ($this->current_session_id !== $session_id) {
@@ -707,9 +741,21 @@ class AI_Provider {
                 $this->mcp_server->set_image_replacement_context($image_replacement_enabled, $image_replacement_context);
             }
 
-            // Get AI provider settings
+            // Get AI provider settings - check for per-session override first
             $provider = $this->settings['ai_provider'] ?? 'openai';
             $model = $this->get_model_for_provider($provider);
+
+            // Priority: request override > session override > global settings
+            if ($override_provider) {
+                $provider = $override_provider;
+                $model = $override_model ?? $this->get_model_for_provider($provider);
+            } elseif ($session_id && $this->db) {
+                $session_override = $this->db->get_chat_session_provider_override(get_current_user_id(), $session_id);
+                if (!empty($session_override['override_provider'])) {
+                    $provider = $session_override['override_provider'];
+                    $model = $session_override['override_model'] ?? $this->get_model_for_provider($provider);
+                }
+            }
 
             // Get the appropriate API key based on provider (already decrypted in settings)
             if ($provider === 'openai') {
@@ -1518,10 +1564,12 @@ class AI_Provider {
         $site_meta_description = $data['site_meta_description'] ?? '';
         $text_replacement_enabled = $data['text_replacement_enabled'] ?? false;
         $image_replacement_enabled = $data['image_replacement_enabled'] ?? false;
+        $override_provider = isset($data['override_provider']) && $data['override_provider'] !== '' ? sanitize_text_field($data['override_provider']) : null;
+        $override_model = isset($data['override_model']) && $data['override_model'] !== '' ? sanitize_text_field($data['override_model']) : null;
 
         $user_id = get_current_user_id();
         $start_time = microtime(true);
-        
+
         // Reset tool discovery flag for new sessions
         if ($this->current_session_id !== $session_id) {
             $this->current_session_id = $session_id;
@@ -1529,7 +1577,7 @@ class AI_Provider {
                 $this->mcp_server->reset_tools_discovered();
             }
         }
-        
+
         try {
             // Save user message to database immediately
             if ($this->db) {
@@ -1597,9 +1645,22 @@ class AI_Provider {
                 $this->mcp_server->set_image_replacement_context($image_replacement_enabled, $image_replacement_context);
             }
 
-            // Get AI provider settings
+            // Get AI provider settings - check for per-session override first
             $provider = $this->settings['ai_provider'] ?? 'openai';
             $model = $this->get_model_for_provider($provider);
+
+            // Priority: request override > session override > global settings
+            if ($override_provider) {
+                $provider = $override_provider;
+                $model = $override_model ?? $this->get_model_for_provider($provider);
+            } elseif ($session_id && $this->db) {
+                $session_override = $this->db->get_chat_session_provider_override($user_id, $session_id);
+                if (!empty($session_override['override_provider'])) {
+                    $provider = $session_override['override_provider'];
+                    $model = $session_override['override_model'] ?? $this->get_model_for_provider($provider);
+                }
+            }
+
             $api_key = $this->get_api_key($provider);
 
             // Send metadata info
@@ -3319,7 +3380,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     'reasoning'  => $this->get_reasoning_config(),
                     'web_search_enabled' => $web_search_enabled,
                 ),
-                'site_url'  => home_url(),
+                'site_url'  => get_site_url(),
                 'timestamp' => time(),
             );
 
@@ -3734,7 +3795,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 'messages'   => $conversation,
                 'web_search_enabled' => $web_search_enabled,
             ),
-            'site_url'  => home_url(),
+            'site_url'  => get_site_url(),
             'timestamp' => time(),
         );
 
@@ -4032,7 +4093,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 'messages'   => $conversation,
                 'web_search_enabled' => $web_search_enabled,
             ),
-            'site_url'  => home_url(),
+            'site_url'  => get_site_url(),
             'timestamp' => time(),
         );
 
@@ -4649,6 +4710,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'seo_target_location' => $this->settings['seo_target_location'] ?? '',
             'seo_target_language' => $this->settings['seo_target_language'] ?? 'en',
             'seo_target_keywords' => $this->settings['seo_target_keywords'] ?? '',
+            'seo_target_domain' => $this->settings['seo_target_domain'] ?? '',
             'floating_chat_enabled' => isset($this->settings['floating_chat_enabled']) ? (bool) $this->settings['floating_chat_enabled'] : false,
             'floating_chat_conditions' => $this->settings['floating_chat_conditions'] ?? 'everywhere',
             'floating_chat_user_roles' => isset($this->settings['floating_chat_user_roles']) ? json_decode($this->settings['floating_chat_user_roles'], true) : [],
@@ -4863,7 +4925,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         if (isset($data['seo_target_keywords'])) {
             $this->db->save_setting('seo_target_keywords', sanitize_textarea_field($data['seo_target_keywords']));
         }
-        
+
+        if (isset($data['seo_target_domain'])) {
+            $this->db->save_setting('seo_target_domain', sanitize_text_field($data['seo_target_domain']));
+        }
+
         // Floating chat settings
         if (isset($data['floating_chat_enabled'])) {
             $this->db->save_setting('floating_chat_enabled', (bool) $data['floating_chat_enabled']);
@@ -4987,10 +5053,12 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     /**
      * Get Bricks Builder framework context (CSS variables, classes, colors)
      * This data is used by the AI Site Builder to use existing design system values
+     * Accepts optional framework parameter to filter by specific CSS framework
      *
+     * @param WP_REST_Request $request Optional request object with framework parameter.
      * @return WP_REST_Response|WP_Error
      */
-    public function get_bricks_framework_context() {
+    public function get_bricks_framework_context($request = null) {
         // Check if Bricks is active
         if (!defined('BRICKS_VERSION')) {
             return new WP_REST_Response(array(
@@ -5000,100 +5068,559 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             ), 200);
         }
 
-        // Collect Bricks design data
-        $variables = get_option('bricks_global_variables', array());
-        $classes = get_option('bricks_global_classes', array());
-        $colors = get_option('bricks_color_palette', array());
+        // Get framework parameter from request (acss, coreframework, or none)
+        $selected_framework = 'none';
+        if ($request && method_exists($request, 'get_param')) {
+            $selected_framework = $request->get_param('framework') ?? 'none';
+        }
 
-        // Format for AI consumption
-        $formatted = $this->format_bricks_framework_data($variables, $classes, $colors);
+        // Validate framework parameter
+        $valid_frameworks = array('none', 'acss', 'coreframework');
+        if (!in_array($selected_framework, $valid_frameworks, true)) {
+            $selected_framework = 'none';
+        }
+
+        // Get framework label for display
+        $framework_labels = array(
+            'none' => 'Bricks Native',
+            'acss' => 'AutomaticCSS',
+            'coreframework' => 'CoreFramework',
+        );
+        $framework_label = $framework_labels[$selected_framework];
+
+        // 1. Initialize data structure
+        $data = array(
+            'framework' => $selected_framework,
+            'framework_label' => $framework_label,
+            'colors' => array(),
+            'typography' => array(),
+            'spacing' => array(),
+            'layout' => array(),
+            'breakpoints' => array(),
+            'borders' => array(),
+            'effects' => array(),
+            'variables' => array(),
+            'classes' => array(),
+            'acss_reference' => null,
+        );
+
+        // 2. Framework-specific data extraction
+        if ($selected_framework === 'acss') {
+            // AutomaticCSS: Extract from automatic_css_settings ONLY
+            $acss_settings = get_option('automatic_css_settings', array());
+            if (!empty($acss_settings)) {
+                $tokens = ACSSSettingsParser::extract($acss_settings);
+
+                // Merge ACSS tokens
+                if (!empty($tokens['colors'])) {
+                    $data['colors'] = $tokens['colors'];
+                }
+                if (!empty($tokens['typography'])) {
+                    $data['typography'] = $tokens['typography'];
+                }
+                if (!empty($tokens['spacing'])) {
+                    $data['spacing'] = $tokens['spacing'];
+                }
+                if (!empty($tokens['layout'])) {
+                    $data['layout'] = $tokens['layout'];
+                }
+                if (!empty($tokens['breakpoints'])) {
+                    $data['breakpoints'] = $tokens['breakpoints'];
+                }
+                if (!empty($tokens['borders'])) {
+                    $data['borders'] = $tokens['borders'];
+                }
+                if (!empty($tokens['effects'])) {
+                    $data['effects'] = $tokens['effects'];
+                }
+
+                // Add ACSS variable reference for AI
+                $data['acss_reference'] = ACSSSettingsParser::get_acss_variable_reference();
+            }
+        } elseif ($selected_framework === 'coreframework') {
+            // CoreFramework: Use bricks_global_variables filtered by category="corefrm"
+            $variables = get_option('bricks_global_variables', array());
+            if (!empty($variables)) {
+                foreach ($variables as $var) {
+                    $name = isset($var['name']) ? $var['name'] : '';
+                    $value = isset($var['value']) ? $var['value'] : '';
+                    $category = isset($var['category']) ? strtolower($var['category']) : '';
+
+                    // Only include CoreFramework variables (category = "corefrm")
+                    if ($name && $value && $category === 'corefrm') {
+                        $name_lower = strtolower($name);
+
+                        // Categorize by naming patterns
+                        if (strpos($name_lower, 'color') !== false || strpos($name_lower, 'primary') !== false ||
+                            strpos($name_lower, 'secondary') !== false || strpos($name_lower, 'accent') !== false ||
+                            strpos($name_lower, 'neutral') !== false || strpos($name_lower, 'base') !== false) {
+                            $data['colors'][$name] = $value;
+                        } elseif (strpos($name_lower, 'font') !== false || strpos($name_lower, 'text') !== false ||
+                                  strpos($name_lower, 'heading') !== false || strpos($name_lower, 'h1') !== false ||
+                                  strpos($name_lower, 'h2') !== false || strpos($name_lower, 'h3') !== false) {
+                            $data['typography'][$name] = $value;
+                        } elseif (strpos($name_lower, 'space') !== false || strpos($name_lower, 'gap') !== false ||
+                                  strpos($name_lower, 'margin') !== false || strpos($name_lower, 'padding') !== false ||
+                                  strpos($name_lower, 'section') !== false) {
+                            $data['spacing'][$name] = $value;
+                        } elseif (strpos($name_lower, 'radius') !== false || strpos($name_lower, 'border') !== false ||
+                                  strpos($name_lower, 'rounded') !== false) {
+                            $data['borders'][$name] = $value;
+                        } elseif (strpos($name_lower, 'width') !== false || strpos($name_lower, 'container') !== false ||
+                                  strpos($name_lower, 'breakpoint') !== false || strpos($name_lower, 'grid') !== false) {
+                            $data['layout'][$name] = $value;
+                        } elseif (strpos($name_lower, 'shadow') !== false || strpos($name_lower, 'transition') !== false) {
+                            $data['effects'][$name] = $value;
+                        } else {
+                            $data['variables'][$name] = $value;
+                        }
+                    }
+                }
+            }
+        } else {
+            // No framework selected: Get Bricks native data (color palette + global variables)
+            // Get Bricks color palette
+            $colors = get_option('bricks_color_palette', array());
+            if (!empty($colors)) {
+                foreach ($colors as $color) {
+                    $name = isset($color['name']) ? $color['name'] : '';
+                    $raw = isset($color['raw']) ? $color['raw'] : (isset($color['value']) ? $color['value'] : '');
+                    if ($name && $raw) {
+                        $data['colors'][$name] = $raw;
+                    }
+                }
+            }
+
+            // Get Bricks global variables (all of them, no filtering)
+            $variables = get_option('bricks_global_variables', array());
+            if (!empty($variables)) {
+                foreach ($variables as $var) {
+                    $name = isset($var['name']) ? $var['name'] : '';
+                    $value = isset($var['value']) ? $var['value'] : '';
+                    if ($name && $value) {
+                        $name_lower = strtolower($name);
+                        if (strpos($name_lower, 'color') !== false || strpos($name_lower, 'primary') !== false ||
+                            strpos($name_lower, 'secondary') !== false || strpos($name_lower, 'accent') !== false) {
+                            $data['colors'][$name] = $value;
+                        } elseif (strpos($name_lower, 'font') !== false || strpos($name_lower, 'text') !== false ||
+                                  strpos($name_lower, 'heading') !== false) {
+                            $data['typography'][$name] = $value;
+                        } elseif (strpos($name_lower, 'space') !== false || strpos($name_lower, 'gap') !== false ||
+                                  strpos($name_lower, 'margin') !== false || strpos($name_lower, 'padding') !== false) {
+                            $data['spacing'][$name] = $value;
+                        } elseif (strpos($name_lower, 'radius') !== false || strpos($name_lower, 'border') !== false) {
+                            $data['borders'][$name] = $value;
+                        } else {
+                            $data['variables'][$name] = $value;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Get categorized utility classes (filtered by framework)
+        $classes = get_option('bricks_global_classes', array());
+        if (!empty($classes)) {
+            $data['classes'] = ClassCategorizer::filter_classes($classes, $selected_framework);
+        }
+
+        // 4. Format for AI consumption (compact format)
+        $formatted = $this->format_compact_framework_data($data);
+
+        // 5. Calculate stats
+        $stats = array(
+            'framework' => $framework_label,
+            'selected_framework' => $selected_framework,
+            'colors_count' => count($data['colors']),
+            'typography_count' => count($data['typography']),
+            'spacing_count' => count($data['spacing']),
+            'layout_count' => count($data['layout']),
+            'breakpoints_count' => count($data['breakpoints']),
+            'borders_count' => count($data['borders']),
+            'effects_count' => count($data['effects']),
+            'variables_count' => count($data['variables']),
+            'classes_count' => ClassCategorizer::get_total_count($data['classes']),
+            'total_classes_available' => count($classes),
+        );
 
         return new WP_REST_Response(array(
             'success' => true,
             'data' => $formatted,
-            'raw' => array(
-                'variables' => $variables,
-                'classes' => $classes,
-                'colors' => $colors,
-            ),
+            'stats' => $stats,
         ), 200);
     }
 
     /**
-     * Format Bricks data into AI-friendly format
+     * Get framework CSS files for MagicDash preview
+     * Returns the compiled CSS from AutomaticCSS or CoreFramework
      *
-     * @param array $variables Bricks global CSS variables
-     * @param array $classes Bricks global CSS classes
-     * @param array $colors Bricks color palette
+     * @param WP_REST_Request $request The REST request object.
+     * @return WP_REST_Response The response with CSS content.
+     */
+    public function get_framework_css($request) {
+        $framework = $request->get_param('framework');
+        $include_bricks = $request->get_param('include_bricks') === 'true' || $request->get_param('include_bricks') === '1';
+        $css = '';
+        $files_included = array();
+        $debug_info = array();
+
+        if ($framework === 'acss') {
+            // Read ALL CSS files from /wp-content/uploads/automatic-css/
+            $upload_dir = wp_upload_dir();
+            $acss_dir = $upload_dir['basedir'] . '/automatic-css/';
+            $debug_info['acss_dir'] = $acss_dir;
+            $debug_info['dir_exists'] = is_dir($acss_dir);
+
+            if (is_dir($acss_dir)) {
+                // Get all CSS files in the directory AND subdirectories
+                $css_files = array();
+
+                // Root level CSS files
+                $root_files = glob($acss_dir . '*.css');
+                if ($root_files) {
+                    $css_files = array_merge($css_files, $root_files);
+                }
+
+                // Check for subdirectories and get their CSS files too
+                $subdirs = glob($acss_dir . '*', GLOB_ONLYDIR);
+                if ($subdirs) {
+                    foreach ($subdirs as $subdir) {
+                        $subdir_files = glob($subdir . '/*.css');
+                        if ($subdir_files) {
+                            $css_files = array_merge($css_files, $subdir_files);
+                        }
+                    }
+                }
+
+                $debug_info['files_found'] = count($css_files);
+                $debug_info['all_files'] = array_map('basename', $css_files);
+
+                // Sort to ensure consistent order (variables first)
+                usort($css_files, function($a, $b) {
+                    // Prioritize variables file first
+                    if (strpos($a, 'variables') !== false) return -1;
+                    if (strpos($b, 'variables') !== false) return 1;
+                    return strcmp($a, $b);
+                });
+
+                foreach ($css_files as $file_path) {
+                    if (file_exists($file_path)) {
+                        $file_name = basename($file_path);
+                        // Include subdirectory name if in a subdirectory
+                        $relative_path = str_replace($acss_dir, '', $file_path);
+                        $content = file_get_contents($file_path); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+                        $css .= "/* ACSS: {$relative_path} */\n" . $content . "\n\n";
+                        $files_included[] = $relative_path;
+                    }
+                }
+            }
+        } elseif ($framework === 'coreframework') {
+            // CoreFramework stores compiled CSS in this option
+            $cf_css = get_option('core_framework_selected_preset_backup', '');
+            if (!empty($cf_css)) {
+                $css = "/* CoreFramework Preset CSS */\n" . $cf_css;
+                $files_included[] = 'core_framework_selected_preset_backup';
+            }
+        }
+
+        // Optionally include Bricks theme styles
+        if ($include_bricks) {
+            $bricks_css = $this->get_bricks_frontend_css();
+            if (!empty($bricks_css)) {
+                $css = "/* Bricks Frontend CSS */\n" . $bricks_css . "\n\n" . $css;
+                $files_included[] = 'bricks-frontend';
+            }
+        }
+
+        if (empty($css)) {
+            return new WP_REST_Response(array(
+                'success'   => false,
+                'error'     => 'No CSS found for framework: ' . $framework,
+                'framework' => $framework,
+                'debug'     => $debug_info,
+            ), 404);
+        }
+
+        return new WP_REST_Response(array(
+            'success'        => true,
+            'framework'      => $framework,
+            'css'            => $css,
+            'size_kb'        => round(strlen($css) / 1024, 2),
+            'files_included' => $files_included,
+            'debug'          => $debug_info,
+        ), 200);
+    }
+
+    /**
+     * Get Bricks frontend CSS for preview rendering
+     * Includes theme styles, custom CSS, and global settings
+     */
+    private function get_bricks_frontend_css() {
+        if (!defined('BRICKS_VERSION')) {
+            return '';
+        }
+
+        $css_parts = array();
+
+        // 1. Bricks frontend CSS file
+        $bricks_css_path = BRICKS_PATH . 'assets/css/frontend.min.css';
+        if (file_exists($bricks_css_path)) {
+            $css_parts[] = file_get_contents($bricks_css_path); // phpcs:ignore
+        }
+
+        // 2. Bricks theme styles (custom CSS from theme settings)
+        $theme_styles = get_option('bricks_theme_styles', array());
+        if (!empty($theme_styles) && is_array($theme_styles)) {
+            foreach ($theme_styles as $style_name => $style_data) {
+                if (!empty($style_data['css'])) {
+                    $css_parts[] = "/* Bricks Theme Style: {$style_name} */\n" . $style_data['css'];
+                }
+            }
+        }
+
+        // 3. Bricks global CSS (from Settings > Custom Code > Custom CSS)
+        $global_css = get_option('bricks_global_css', '');
+        if (!empty($global_css)) {
+            $css_parts[] = "/* Bricks Global CSS */\n" . $global_css;
+        }
+
+        // 4. Bricks color palette as CSS variables
+        $color_palette = get_option('bricks_color_palette', array());
+        if (!empty($color_palette) && is_array($color_palette)) {
+            $color_vars = ":root {\n";
+            foreach ($color_palette as $color) {
+                if (!empty($color['id']) && !empty($color['raw'])) {
+                    $var_name = '--bricks-color-' . sanitize_title($color['id']);
+                    $color_vars .= "  {$var_name}: {$color['raw']};\n";
+                }
+                if (!empty($color['name']) && !empty($color['raw'])) {
+                    $var_name = '--bricks-' . sanitize_title($color['name']);
+                    $color_vars .= "  {$var_name}: {$color['raw']};\n";
+                }
+            }
+            $color_vars .= "}\n";
+            $css_parts[] = "/* Bricks Color Palette */\n" . $color_vars;
+        }
+
+        // 5. Bricks typography settings
+        $typography = get_option('bricks_typography', array());
+        if (!empty($typography) && is_array($typography)) {
+            $typo_css = '';
+            foreach ($typography as $element => $styles) {
+                if (!empty($styles) && is_array($styles)) {
+                    $selector = $element === 'body' ? 'body' : $element;
+                    $typo_css .= "{$selector} {\n";
+                    foreach ($styles as $prop => $value) {
+                        if (!empty($value)) {
+                            $css_prop = str_replace('_', '-', $prop);
+                            $typo_css .= "  {$css_prop}: {$value};\n";
+                        }
+                    }
+                    $typo_css .= "}\n";
+                }
+            }
+            if (!empty($typo_css)) {
+                $css_parts[] = "/* Bricks Typography */\n" . $typo_css;
+            }
+        }
+
+        return implode("\n\n", $css_parts);
+    }
+
+    /**
+     * Format framework data into compact AI-friendly format
+     * Optimized for minimal token usage while preserving design context
+     *
+     * @param array $data Extracted framework data with colors, typography, spacing, borders, classes
      * @return string Formatted string for AI consumption
      */
-    private function format_bricks_framework_data($variables, $classes, $colors) {
+    private function format_compact_framework_data($data) {
         $sections = array();
 
-        // Format CSS Variables
-        if (!empty($variables)) {
-            $var_lines = array();
-            foreach ($variables as $var) {
-                $name = isset($var['name']) ? $var['name'] : '';
-                $value = isset($var['value']) ? $var['value'] : '';
-                if ($name && $value) {
-                    // Ensure variable name has -- prefix
-                    $name = strpos($name, '--') === 0 ? $name : '--' . $name;
-                    $var_lines[] = $name . ': ' . $value;
-                }
+        // Header with framework name
+        $sections[] = "## CSS Framework: " . $data['framework_label'];
+
+        // Format Colors (compact inline format)
+        if (!empty($data['colors'])) {
+            $color_parts = array();
+            foreach ($data['colors'] as $name => $value) {
+                $name = strpos($name, '--') === 0 ? $name : '--' . $name;
+                $color_parts[] = $name . ': ' . $value;
             }
-            if (!empty($var_lines)) {
-                $sections[] = "### CSS Variables\n" . implode("\n", $var_lines);
+            // Group on lines up to ~80 chars
+            $lines = $this->group_values_into_lines($color_parts, 80);
+            $sections[] = "### Colors\n" . implode("\n", $lines);
+        }
+
+        // Format Typography
+        if (!empty($data['typography'])) {
+            $typo_parts = array();
+            foreach ($data['typography'] as $name => $value) {
+                $name = strpos($name, '--') === 0 ? $name : '--' . $name;
+                $typo_parts[] = $name . ': ' . $value;
+            }
+            $lines = $this->group_values_into_lines($typo_parts, 80);
+            $sections[] = "### Typography\n" . implode("\n", $lines);
+        }
+
+        // Format Spacing
+        if (!empty($data['spacing'])) {
+            $space_parts = array();
+            foreach ($data['spacing'] as $name => $value) {
+                $name = strpos($name, '--') === 0 ? $name : '--' . $name;
+                $space_parts[] = $name . ': ' . $value;
+            }
+            $lines = $this->group_values_into_lines($space_parts, 80);
+            $sections[] = "### Spacing\n" . implode("\n", $lines);
+        }
+
+        // Format Layout
+        if (!empty($data['layout'])) {
+            $layout_parts = array();
+            foreach ($data['layout'] as $name => $value) {
+                $name = strpos($name, '--') === 0 ? $name : '--' . $name;
+                $layout_parts[] = $name . ': ' . $value;
+            }
+            $lines = $this->group_values_into_lines($layout_parts, 80);
+            $sections[] = "### Layout\n" . implode("\n", $lines);
+        }
+
+        // Format Breakpoints
+        if (!empty($data['breakpoints'])) {
+            $bp_parts = array();
+            foreach ($data['breakpoints'] as $name => $value) {
+                $bp_parts[] = $name . ': ' . $value . 'px';
+            }
+            $sections[] = "### Breakpoints\n" . implode('; ', $bp_parts);
+        }
+
+        // Format Borders/Radius
+        if (!empty($data['borders'])) {
+            $border_parts = array();
+            foreach ($data['borders'] as $name => $value) {
+                $name = strpos($name, '--') === 0 ? $name : '--' . $name;
+                $border_parts[] = $name . ': ' . $value;
+            }
+            $lines = $this->group_values_into_lines($border_parts, 80);
+            $sections[] = "### Borders\n" . implode("\n", $lines);
+        }
+
+        // Format Effects (shadows, transitions)
+        if (!empty($data['effects'])) {
+            $effects_parts = array();
+            foreach ($data['effects'] as $name => $value) {
+                $name = strpos($name, '--') === 0 ? $name : '--' . $name;
+                $effects_parts[] = $name . ': ' . $value;
+            }
+            $lines = $this->group_values_into_lines($effects_parts, 80);
+            $sections[] = "### Effects\n" . implode("\n", $lines);
+        }
+
+        // Format Other Variables (for non-ACSS frameworks)
+        if (!empty($data['variables'])) {
+            $var_parts = array();
+            foreach ($data['variables'] as $name => $value) {
+                $name = strpos($name, '--') === 0 ? $name : '--' . $name;
+                $var_parts[] = $name . ': ' . $value;
+            }
+            $lines = $this->group_values_into_lines($var_parts, 80);
+            $sections[] = "### Variables\n" . implode("\n", $lines);
+        }
+
+        // Format Utility Classes (categorized)
+        if (!empty($data['classes'])) {
+            $class_output = ClassCategorizer::format_for_output($data['classes']);
+            if (!empty($class_output)) {
+                $sections[] = "### Utility Classes\n" . $class_output;
             }
         }
 
-        // Format Color Palette
-        if (!empty($colors)) {
-            $color_lines = array();
-            foreach ($colors as $color) {
-                $name = isset($color['name']) ? $color['name'] : '';
-                $raw = isset($color['raw']) ? $color['raw'] : (isset($color['value']) ? $color['value'] : '');
-                if ($name && $raw) {
-                    $color_lines[] = $name . ': ' . $raw;
+        // Add ACSS variable reference (tells AI what variables are available)
+        if (!empty($data['acss_reference'])) {
+            $ref_lines = array("### Available CSS Variables (use these in your designs)");
+            foreach ($data['acss_reference'] as $category => $items) {
+                $ref_lines[] = ucfirst($category) . ':';
+                foreach ($items as $label => $vars) {
+                    $ref_lines[] = "  {$label}: {$vars}";
                 }
             }
-            if (!empty($color_lines)) {
-                $sections[] = "### Color Palette\n" . implode("\n", $color_lines);
-            }
+            $sections[] = implode("\n", $ref_lines);
         }
 
-        // Format CSS Classes (group by category if available)
-        if (!empty($classes)) {
-            $class_names = array();
-            foreach ($classes as $class) {
-                $name = isset($class['name']) ? $class['name'] : '';
-                if ($name) {
-                    $class_names[] = '.' . ltrim($name, '.');
-                }
-            }
-            if (!empty($class_names)) {
-                // Limit to reasonable number for AI context
-                $display_classes = array_slice($class_names, 0, 100);
-                $sections[] = "### Available Utility Classes\n" . implode(', ', $display_classes);
-                if (count($class_names) > 100) {
-                    $sections[count($sections) - 1] .= "\n(+" . (count($class_names) - 100) . " more classes)";
-                }
-            }
-        }
-
-        if (empty($sections)) {
+        if (count($sections) <= 1) {
             return "No CSS framework data found in Bricks.";
         }
 
         return implode("\n\n", $sections);
     }
 
+    /**
+     * Group CSS variable declarations into lines of approximately max_length characters
+     *
+     * @param array $parts Array of "name: value" strings
+     * @param int $max_length Target maximum line length
+     * @return array Array of grouped lines
+     */
+    private function group_values_into_lines($parts, $max_length = 80) {
+        $lines = array();
+        $current_line = array();
+        $current_length = 0;
+
+        foreach ($parts as $part) {
+            $part_length = strlen($part) + 2; // +2 for "; " separator
+
+            if ($current_length + $part_length > $max_length && !empty($current_line)) {
+                $lines[] = implode('; ', $current_line);
+                $current_line = array();
+                $current_length = 0;
+            }
+
+            $current_line[] = $part;
+            $current_length += $part_length;
+        }
+
+        if (!empty($current_line)) {
+            $lines[] = implode('; ', $current_line);
+        }
+
+        return $lines;
+    }
+
     public function check_permissions() {
         $can_manage = current_user_can('manage_options');
         return $can_manage;
     }
-    
-    
+
+    /**
+     * Check permissions for MagicDash API requests
+     * Validates that the site has a valid license and request is from MagicDash proxy
+     */
+    public function check_magicdash_permissions() {
+        // First check if user is logged in admin
+        if (current_user_can('manage_options')) {
+            return true;
+        }
+
+        // Check for X-MagicDash-Request header (indicates request from proxy)
+        $is_magicdash_request = isset($_SERVER['HTTP_X_MAGICDASH_REQUEST']) && $_SERVER['HTTP_X_MAGICDASH_REQUEST'] === 'true';
+
+        if (!$is_magicdash_request) {
+            return false;
+        }
+
+        // Verify this site has a valid license installed
+        // The proxy already validates the license before calling this endpoint
+        $stored_license_key = get_option('magicassistant_license_key', '');
+
+        if (empty($stored_license_key)) {
+            return false;
+        }
+
+        // License exists - trust the proxy's validation
+        return true;
+    }
+
+
     /**
      * Delete API key endpoint
      */
@@ -5182,6 +5709,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 'models_used' => $session['models_used'],
                 'agent_mode' => isset($session['agent_mode']) ? (bool)$session['agent_mode'] : false,
                 'agent_id' => isset($session['agent_id']) ? intval($session['agent_id']) : null,
+                'override_provider' => $session['override_provider'] ?? null,
+                'override_model' => $session['override_model'] ?? null,
                 'first_message_time' => $session['created_at'],
                 'last_message_time' => $session['updated_at']
             );
@@ -5323,6 +5852,44 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'success' => true,
             'agent_id' => $agent_id,
             'message' => 'Chat agent updated successfully'
+        );
+    }
+
+    /**
+     * Update chat session provider/model override
+     */
+    public function update_chat_provider($request) {
+        if (!$this->db) {
+            return new \WP_Error('db_error', 'Database not available', array('status' => 500));
+        }
+
+        $session_id = $request->get_param('session_id');
+        $data = $request->get_json_params();
+        $provider = isset($data['provider']) && $data['provider'] !== '' ? sanitize_text_field($data['provider']) : null;
+        $model = isset($data['model']) && $data['model'] !== '' ? sanitize_text_field($data['model']) : null;
+        $user_id = get_current_user_id();
+
+        if (empty($session_id)) {
+            return new \WP_Error('missing_session', 'Session ID is required', array('status' => 400));
+        }
+
+        // Validate provider if set
+        $valid_providers = array('openai', 'anthropic', 'google', 'openrouter');
+        if ($provider !== null && !in_array($provider, $valid_providers)) {
+            return new \WP_Error('invalid_provider', 'Invalid provider specified', array('status' => 400));
+        }
+
+        $updated = $this->db->set_chat_session_provider_override($user_id, $session_id, $provider, $model);
+
+        if ($updated === false) {
+            return new \WP_Error('update_failed', 'Failed to update provider override', array('status' => 500));
+        }
+
+        return array(
+            'success' => true,
+            'provider' => $provider,
+            'model' => $model,
+            'message' => $provider ? 'Provider override set' : 'Using global settings'
         );
     }
 
@@ -6702,20 +7269,24 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         if (isset($seo_data['keyword_rankings']) && is_array($seo_data['keyword_rankings']) && !empty($seo_data['keyword_rankings'])) {
             $total_position = 0;
             $position_count = 0;
-            
-            foreach (array_slice($seo_data['keyword_rankings'], -20) as $ranking) { // Latest 20 keywords
+
+            // Filter to only include keywords with valid positions (> 0)
+            // This excludes old entries where position lookup failed before the bug fix
+            $valid_rankings = array_filter($seo_data['keyword_rankings'], function($ranking) {
+                return !empty($ranking['position']) && intval($ranking['position']) > 0;
+            });
+
+            foreach (array_slice($valid_rankings, -20) as $ranking) { // Latest 20 keywords with valid positions
                 if (isset($ranking['keyword'])) {
                     $analytics['keywordRankings'][] = array(
                         'keyword' => $ranking['keyword'],
-                        'position' => intval($ranking['position'] ?? $ranking['difficulty'] ?? 0),
+                        'position' => intval($ranking['position']),
                         'volume' => intval($ranking['search_volume'] ?? $ranking['volume'] ?? 0),
                         'difficulty' => intval($ranking['difficulty'] ?? $ranking['competition_index'] ?? 0)
                     );
-                    
-                    if (!empty($ranking['position']) && $ranking['position'] > 0) {
-                        $total_position += intval($ranking['position']);
-                        $position_count++;
-                    }
+
+                    $total_position += intval($ranking['position']);
+                    $position_count++;
                 }
             }
             
@@ -9996,7 +10567,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         'download_location' => $download_location,
                         'unsplash_id' => $unsplash_id,
                         'photographer' => $photographer,
-                        'site_url' => home_url(),
+                        'site_url' => get_site_url(),
                         'plugin_version' => defined('MAGICASSISTANT_VERSION') ? MAGICASSISTANT_VERSION : '1.0.0',
                         'retry_attempt' => $retry_count + 1
                     ))
@@ -10150,7 +10721,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         'download_location' => $download_location,
                         'unsplash_id' => $unsplash_id,
                         'photographer' => $photographer,
-                        'site_url' => home_url(),
+                        'site_url' => get_site_url(),
                         'plugin_version' => defined('MAGICASSISTANT_VERSION') ? MAGICASSISTANT_VERSION : '1.0.0',
                         'context' => 'featured_image',
                         'post_id' => $post_id,

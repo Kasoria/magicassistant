@@ -61,11 +61,139 @@ class DataForSEO {
             
         } catch (\Exception $e) {
             // Log the error for debugging
-            
+
             throw $e;
         }
     }
-    
+
+    /**
+     * Handle bulk SERP analysis for all target keywords from settings
+     */
+    public function handle_bulk_serp_analysis($args) {
+        try {
+            // Get SEO settings
+            $seo_settings = $this->get_seo_settings();
+
+            // Check if we have target keywords configured
+            if (empty($seo_settings['target_keywords'])) {
+                return array(
+                    'error' => true,
+                    'message' => 'No target keywords configured. Please add keywords in Settings > SEO Configuration > Target Keywords.'
+                );
+            }
+
+            // Parse keywords (one per line)
+            $keywords = array_filter(
+                array_map('trim', explode("\n", $seo_settings['target_keywords'])),
+                function($keyword) {
+                    return !empty($keyword);
+                }
+            );
+
+            if (empty($keywords)) {
+                return array(
+                    'error' => true,
+                    'message' => 'No valid keywords found in settings.'
+                );
+            }
+
+            // Get location and language from settings
+            $location_code = $this->get_location_code($seo_settings['target_location']);
+            $language_code = $seo_settings['target_language'] ?: 'en';
+            $target_domain = $seo_settings['target_domain'] ?: '';
+            $device = $args['device'] ?? 'desktop';
+
+            $results = array();
+            $successful = 0;
+            $failed = 0;
+
+            // Process each keyword
+            foreach ($keywords as $keyword) {
+                try {
+                    $serp_args = array(
+                        'keyword' => $keyword,
+                        'location_code' => $location_code,
+                        'language_code' => $language_code,
+                        'device' => $device,
+                        'target_domain' => $target_domain
+                    );
+
+                    $result = $this->handle_serp_analysis($serp_args);
+
+                    if ($result && !isset($result['error'])) {
+                        $successful++;
+                        $results[] = array(
+                            'keyword' => $keyword,
+                            'success' => true,
+                            'position' => $this->extract_position_from_result($result, $target_domain)
+                        );
+                    } else {
+                        $failed++;
+                        $results[] = array(
+                            'keyword' => $keyword,
+                            'success' => false,
+                            'error' => $result['message'] ?? 'Unknown error'
+                        );
+                    }
+                } catch (\Exception $e) {
+                    $failed++;
+                    $results[] = array(
+                        'keyword' => $keyword,
+                        'success' => false,
+                        'error' => $e->getMessage()
+                    );
+                }
+            }
+
+            return array(
+                'success' => true,
+                'message' => "Analyzed {$successful} keywords successfully" . ($failed > 0 ? ", {$failed} failed" : ""),
+                'total_keywords' => count($keywords),
+                'successful' => $successful,
+                'failed' => $failed,
+                'target_domain' => $target_domain ?: parse_url(home_url(), PHP_URL_HOST),
+                'location_code' => $location_code,
+                'language_code' => $language_code,
+                'results' => $results
+            );
+
+        } catch (\Exception $e) {
+            return array(
+                'error' => true,
+                'message' => $e->getMessage()
+            );
+        }
+    }
+
+    /**
+     * Extract position from SERP result for a domain
+     */
+    private function extract_position_from_result($result, $target_domain) {
+        if (empty($target_domain)) {
+            $target_domain = parse_url(home_url(), PHP_URL_HOST);
+        }
+
+        $target_domain = preg_replace('/^(https?:\/\/)?(www\.)?/', '', rtrim($target_domain, '/'));
+
+        // Check in items array (flattened format)
+        $items = $result['items'] ?? array();
+
+        foreach ($items as $item) {
+            if (($item['type'] ?? '') === 'organic') {
+                $item_domain = preg_replace('/^www\./', '', $item['domain'] ?? '');
+                $check_domain = preg_replace('/^www\./', '', $target_domain);
+
+                if ($item_domain === $check_domain ||
+                    strpos($item_domain, $check_domain) !== false ||
+                    strpos($check_domain, $item_domain) !== false) {
+                    return $item['rank_absolute'] ?? null;
+                }
+            }
+        }
+
+        return null; // Not found in results
+    }
+
     /**
      * Handle keyword difficulty request
      */
@@ -250,229 +378,6 @@ class DataForSEO {
             // Reset timeout back to default
             $this->timeout = 30;
             
-            // Log the error for debugging
-            
-            throw $e;
-        }
-    }
-    
-    /**
-     * Handle content generation request
-     */
-    public function handle_content_generate($args) {
-        try {
-            // Validate required parameters
-            if (empty($args['text'])) {
-                throw new \Exception('Text parameter is required for content generation');
-            }
-            
-            // Add default parameters if missing
-            $args = array_merge(array(
-                'creativity_index' => 0.5,
-                'max_new_tokens' => 100,
-                'max_tokens' => 1024
-            ), $args);
-            
-            $result = $this->make_proxy_request_with_retry('content_generate', $args);
-            
-            return $result;
-            
-        } catch (\Exception $e) {
-            // Log the error for debugging
-            
-            throw $e;
-        }
-    }
-    
-    /**
-     * Handle text generation request
-     */
-    public function handle_content_generate_text($args) {
-        try {
-            // Validate required parameters
-            if (empty($args['topic'])) {
-                throw new \Exception('Topic parameter is required for text generation');
-            }
-            
-            // Add default parameters if missing
-            $args = array_merge(array(
-                'word_count' => 100,
-                'creativity_index' => 0.5
-            ), $args);
-            
-            $result = $this->make_proxy_request_with_retry('content_generate_text', $args);
-            
-            return $result;
-            
-        } catch (\Exception $e) {
-            // Log the error for debugging
-            
-            throw $e;
-        }
-    }
-    
-    /**
-     * Handle meta tags generation request
-     */
-    public function handle_content_generate_meta_tags($args) {
-        try {
-            // Validate required parameters
-            if (empty($args['content'])) {
-                throw new \Exception('Content parameter is required for meta tags generation');
-            }
-            
-            $result = $this->make_proxy_request_with_retry('content_generate_meta_tags', $args);
-            
-            return $result;
-            
-        } catch (\Exception $e) {
-            // Log the error for debugging
-            
-            throw $e;
-        }
-    }
-    
-    /**
-     * Handle sub-topics generation request
-     */
-    public function handle_content_generate_sub_topics($args) {
-        try {
-            // Validate required parameters
-            if (empty($args['topic'])) {
-                throw new \Exception('Topic parameter is required for sub-topics generation');
-            }
-            
-            $result = $this->make_proxy_request_with_retry('content_generate_sub_topics', $args);
-            
-            return $result;
-            
-        } catch (\Exception $e) {
-            // Log the error for debugging
-            
-            throw $e;
-        }
-    }
-    
-    /**
-     * Handle paraphrase request
-     */
-    public function handle_content_paraphrase($args) {
-        try {
-            // Validate required parameters
-            if (empty($args['text'])) {
-                throw new \Exception('Text parameter is required for paraphrasing');
-            }
-            
-            // Add default parameters if missing
-            $args = array_merge(array(
-                'creativity_index' => 0.5
-            ), $args);
-            
-            $result = $this->make_proxy_request_with_retry('content_paraphrase', $args);
-            
-            return $result;
-            
-        } catch (\Exception $e) {
-            // Log the error for debugging
-            
-            throw $e;
-        }
-    }
-    
-    /**
-     * Handle grammar check request
-     */
-    public function handle_content_check_grammar($args) {
-        try {
-            // Validate required parameters
-            if (empty($args['text'])) {
-                throw new \Exception('Text parameter is required for grammar check');
-            }
-            
-            // Add default parameters if missing
-            $args = array_merge(array(
-                'language_code' => 'en'
-            ), $args);
-            
-            $result = $this->make_proxy_request_with_retry('content_check_grammar', $args);
-            
-            return $result;
-            
-        } catch (\Exception $e) {
-            // Log the error for debugging
-            
-            throw $e;
-        }
-    }
-    
-    /**
-     * Handle text summary request
-     */
-    public function handle_content_text_summary($args) {
-        try {
-            // Validate required parameters
-            if (empty($args['text'])) {
-                throw new \Exception('Text parameter is required for text summary');
-            }
-            
-            // Add default parameters if missing
-            $args = array_merge(array(
-                'language_code' => 'en'
-            ), $args);
-            
-            $result = $this->make_proxy_request_with_retry('content_text_summary', $args);
-            
-            return $result;
-            
-        } catch (\Exception $e) {
-            // Log the error for debugging
-            
-            throw $e;
-        }
-    }
-    
-    /**
-     * Handle grammar languages request
-     */
-    public function handle_content_grammar_languages($args = array()) {
-        try {
-            $result = $this->make_proxy_request_with_retry('content_grammar_languages', $args);
-            
-            return $result;
-            
-        } catch (\Exception $e) {
-            // Log the error for debugging
-            
-            throw $e;
-        }
-    }
-    
-    /**
-     * Handle grammar rules request
-     */
-    public function handle_content_grammar_rules($args = array()) {
-        try {
-            $result = $this->make_proxy_request_with_retry('content_grammar_rules', $args);
-            
-            return $result;
-            
-        } catch (\Exception $e) {
-            // Log the error for debugging
-            
-            throw $e;
-        }
-    }
-    
-    /**
-     * Handle summary languages request
-     */
-    public function handle_content_summary_languages($args = array()) {
-        try {
-            $result = $this->make_proxy_request_with_retry('content_summary_languages', $args);
-            
-            return $result;
-            
-        } catch (\Exception $e) {
             // Log the error for debugging
             
             throw $e;
@@ -730,7 +635,7 @@ class DataForSEO {
         $request_data = array(
             'action' => $action,
             'data' => $args,
-            'site_url' => home_url(),
+            'site_url' => get_site_url(),
             'plugin_version' => MAGIC_ASSISTANT_VERSION,
             'timestamp' => time()
         );
@@ -1005,106 +910,125 @@ class DataForSEO {
         
         // Initialize competitors array for extraction from SERP results
         $serp_competitors = array();
-        $user_domain = parse_url(home_url(), PHP_URL_HOST);
+
+        // Get SEO settings for target domain fallback
+        $seo_settings = $this->get_seo_settings();
+
+        // Use target_domain from args > seo_target_domain setting > WordPress home URL
+        $user_domain = !empty($args['target_domain'])
+            ? preg_replace('/^(https?:\/\/)?(www\.)?/', '', rtrim($args['target_domain'], '/'))
+            : (!empty($seo_settings['target_domain'])
+                ? preg_replace('/^(https?:\/\/)?(www\.)?/', '', rtrim($seo_settings['target_domain'], '/'))
+                : parse_url(home_url(), PHP_URL_HOST));
         
         // Process DataForSEO results
-        if (isset($result['tasks']) && is_array($result['tasks'])) {
+        // The proxy may return data in two formats:
+        // 1. Flattened: { id, status_code, status_message, items: [...] }
+        // 2. Nested: { tasks: [{ result: [{ items: [...] }] }] }
+
+        // Determine which format we have and extract items accordingly
+        $items_to_process = array();
+        $se_results_count = 0;
+
+        if (isset($result['items']) && is_array($result['items'])) {
+            // Flattened format from proxy
+            $items_to_process = $result['items'];
+            $se_results_count = $result['se_results_count'] ?? 0;
+        } elseif (isset($result['tasks']) && is_array($result['tasks'])) {
+            // Nested format (original DataForSEO structure)
             foreach ($result['tasks'] as $task) {
                 if (isset($task['result']) && is_array($task['result'])) {
                     foreach ($task['result'] as $result_item) {
                         if (isset($result_item['items'])) {
-                                                        $serp_data['results_count'] = count($result_item['items']);
-                            $serp_data['se_results_count'] = $result_item['se_results_count'] ?? 0;
-                            
-                            // Extract comprehensive SERP data
-                            foreach ($result_item['items'] as $item) {
-                                switch($item['type']) {
-                                    case 'organic':
-                                        $serp_data['organic_results'][] = array(
-                                            'rank' => $item['rank_absolute'] ?? 0,
-                                            'domain' => $item['domain'] ?? '',
-                                            'title' => $item['title'] ?? '',
-                                            'url' => $item['url'] ?? '',
-                                            'description' => $item['description'] ?? '',
-                                            'breadcrumb' => $item['breadcrumb'] ?? '',
-                                            'highlighted' => $item['highlighted'] ?? array(),
-                                            'rating' => $item['rating'] ?? null,
-                                            'price' => $item['price'] ?? null,
-                                            'links' => $item['links'] ?? array(),
-                                            'faq' => $item['faq'] ?? array()
-                                        );
-                                        
-                                        // Collect top domains
-                                        if (isset($item['domain'])) {
-                                            $serp_data['top_domains'][] = $item['domain'];
-                                            
-                                            // Extract competitors from organic results (exclude user's own domain)
-                                            if ($item['domain'] !== $user_domain && !empty($item['domain'])) {
-                                                $rank = $item['rank_absolute'] ?? 999;
-                                                // Only include top 10 results as competitors
-                                                if ($rank <= 10) {
-                                                    $serp_competitors[] = array(
-                                                        'domain' => $item['domain'],
-                                                        'rank' => $rank,
-                                                        'title' => $item['title'] ?? '',
-                                                        'authority' => max(30, min(95, 100 - ($rank * 8))), // Higher rank = higher authority
-                                                        'keywords' => rand(1000, 15000), // Estimate based on ranking
-                                                        'traffic' => rand(5000, 100000), // Estimate based on ranking
-                                                        'last_updated' => current_time('mysql')
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        break;
-                                        
-                                    case 'local_pack':
-                                        $serp_data['local_pack_results'][] = array(
-                                            'rank' => $item['rank_absolute'] ?? 0,
-                                            'title' => $item['title'] ?? '',
-                                            'domain' => $item['domain'] ?? '',
-                                            'phone' => $item['phone'] ?? '',
-                                            'url' => $item['url'] ?? '',
-                                            'description' => $item['description'] ?? '',
-                                            'rating' => $item['rating'] ?? null,
-                                            'cid' => $item['cid'] ?? ''
-                                        );
-                                        break;
-                                        
-                                    case 'images':
-                                        if (isset($item['items'])) {
-                                            foreach ($item['items'] as $img) {
-                                                $serp_data['images_results'][] = array(
-                                                    'alt' => $img['alt'] ?? '',
-                                                    'url' => $img['url'] ?? '',
-                                                    'image_url' => $img['image_url'] ?? ''
-                                                );
-                                            }
-                                        }
-                                        break;
-                                        
-                                    case 'related_searches':
-                                        $serp_data['related_searches'] = $item['items'] ?? array();
-                                        break;
-                                        
-                                    default:
-                                        // Collect SERP features
-                                        $serp_data['features'][] = $item['type'];
-                                        break;
-                                }
-                            }
-                            
-                            // Extract refinement chips if available
-                            if (isset($result_item['refinement_chips']['items'])) {
-                                foreach ($result_item['refinement_chips']['items'] as $chip) {
-                                    $serp_data['refinement_chips'][] = array(
-                                        'title' => $chip['title'] ?? '',
-                                        'url' => $chip['url'] ?? ''
-                                    );
-                                }
-                            }
+                            $items_to_process = array_merge($items_to_process, $result_item['items']);
+                            $se_results_count = $result_item['se_results_count'] ?? $se_results_count;
                         }
                     }
                 }
+            }
+        }
+
+        $serp_data['results_count'] = count($items_to_process);
+        $serp_data['se_results_count'] = $se_results_count;
+
+        // Process each item
+        foreach ($items_to_process as $item) {
+            $item_type = $item['type'] ?? '';
+
+            switch($item_type) {
+                case 'organic':
+                    $serp_data['organic_results'][] = array(
+                        'rank' => $item['rank_absolute'] ?? 0,
+                        'domain' => $item['domain'] ?? '',
+                        'title' => $item['title'] ?? '',
+                        'url' => $item['url'] ?? '',
+                        'description' => $item['description'] ?? '',
+                        'breadcrumb' => $item['breadcrumb'] ?? '',
+                        'highlighted' => $item['highlighted'] ?? array(),
+                        'rating' => $item['rating'] ?? null,
+                        'price' => $item['price'] ?? null,
+                        'links' => $item['links'] ?? array(),
+                        'faq' => $item['faq'] ?? array()
+                    );
+
+                    // Collect top domains
+                    if (isset($item['domain'])) {
+                        $serp_data['top_domains'][] = $item['domain'];
+
+                        // Extract competitors from organic results (exclude user's own domain)
+                        if ($item['domain'] !== $user_domain && !empty($item['domain'])) {
+                            $rank = $item['rank_absolute'] ?? 999;
+                            // Only include top 10 results as competitors
+                            if ($rank <= 10) {
+                                $serp_competitors[] = array(
+                                    'domain' => $item['domain'],
+                                    'rank' => $rank,
+                                    'title' => $item['title'] ?? '',
+                                    'authority' => max(30, min(95, 100 - ($rank * 8))), // Higher rank = higher authority
+                                    'keywords' => rand(1000, 15000), // Estimate based on ranking
+                                    'traffic' => rand(5000, 100000), // Estimate based on ranking
+                                    'last_updated' => current_time('mysql')
+                                );
+                            }
+                        }
+                    }
+                    break;
+
+                case 'local_pack':
+                    $serp_data['local_pack_results'][] = array(
+                        'rank' => $item['rank_absolute'] ?? 0,
+                        'title' => $item['title'] ?? '',
+                        'domain' => $item['domain'] ?? '',
+                        'phone' => $item['phone'] ?? '',
+                        'url' => $item['url'] ?? '',
+                        'description' => $item['description'] ?? '',
+                        'rating' => $item['rating'] ?? null,
+                        'cid' => $item['cid'] ?? ''
+                    );
+                    break;
+
+                case 'images':
+                    if (isset($item['items'])) {
+                        foreach ($item['items'] as $img) {
+                            $serp_data['images_results'][] = array(
+                                'alt' => $img['alt'] ?? '',
+                                'url' => $img['url'] ?? '',
+                                'image_url' => $img['image_url'] ?? ''
+                            );
+                        }
+                    }
+                    break;
+
+                case 'related_searches':
+                    $serp_data['related_searches'] = $item['items'] ?? array();
+                    break;
+
+                default:
+                    // Collect SERP features
+                    if (!empty($item_type)) {
+                        $serp_data['features'][] = $item_type;
+                    }
+                    break;
             }
         }
         
@@ -1117,11 +1041,17 @@ class DataForSEO {
             $existing_data['keyword_rankings'] = array();
         }
         
-        // Check if user's domain appears in results
-        $user_domain = parse_url(home_url(), PHP_URL_HOST);
+        // Check if target domain appears in results
+        // Use same domain as $user_domain (already calculated above with proper fallback chain)
+        $target_domain = $user_domain;
+
         $user_ranking = null;
         foreach ($serp_data['organic_results'] as $result) {
-            if (strpos($result['domain'], $user_domain) !== false) {
+            // Check both exact match and partial match (for subdomains)
+            $result_domain = preg_replace('/^www\./', '', $result['domain']);
+            $check_domain = preg_replace('/^www\./', '', $target_domain);
+
+            if ($result_domain === $check_domain || strpos($result_domain, $check_domain) !== false || strpos($check_domain, $result_domain) !== false) {
                 $user_ranking = $result['rank'];
                 break;
             }
@@ -1130,7 +1060,7 @@ class DataForSEO {
         $existing_data['keyword_rankings'][] = array(
             'keyword' => $serp_data['keyword'],
             'position' => $user_ranking,
-            'search_volume' => $serp_data['se_results_count'],
+            'search_volume' => $serp_data['se_results_count'] ?? 0,
             'difficulty' => null, // Will be filled by keyword difficulty analysis
             'location' => $this->get_location_name($args['location_code']),
             'device' => $serp_data['device'],
@@ -1732,7 +1662,8 @@ class DataForSEO {
         $default_settings = array(
             'target_location' => '',
             'target_language' => 'en',
-            'target_keywords' => ''
+            'target_keywords' => '',
+            'target_domain' => ''
         );
 
         if ($this->ai_provider && $this->ai_provider->get_db()) {
@@ -1740,7 +1671,8 @@ class DataForSEO {
             return array(
                 'target_location' => $settings['seo_target_location'] ?? $default_settings['target_location'],
                 'target_language' => $settings['seo_target_language'] ?? $default_settings['target_language'],
-                'target_keywords' => $settings['seo_target_keywords'] ?? $default_settings['target_keywords']
+                'target_keywords' => $settings['seo_target_keywords'] ?? $default_settings['target_keywords'],
+                'target_domain' => $settings['seo_target_domain'] ?? $default_settings['target_domain']
             );
         }
 
@@ -1839,8 +1771,8 @@ class DataForSEO {
             }
         }
 
-        // Always send site URL for analytics
-        $headers['X-Site-Url'] = esc_url_raw( home_url() );
+        // Always send site URL for analytics (use get_site_url for consistency with proxy)
+        $headers['X-Site-Url'] = esc_url_raw( get_site_url() );
 
         return $headers;
     }

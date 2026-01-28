@@ -43,7 +43,7 @@ class Unsplash_Service {
                 'per_page'    => isset($args['per_page']) ? intval($args['per_page']) : 10,
                 'orientation' => isset($args['orientation']) ? sanitize_text_field($args['orientation']) : 'landscape',
             ),
-            'site_url'  => home_url(),
+            'site_url'  => get_site_url(),
             'timestamp' => time(),
         );
 
@@ -97,7 +97,7 @@ class Unsplash_Service {
                 'count'       => isset($args['count']) ? max(1, min(30, intval($args['count']))) : 1,
                 'orientation' => isset($args['orientation']) ? sanitize_text_field($args['orientation']) : 'landscape',
             ),
-            'site_url'  => home_url(),
+            'site_url'  => get_site_url(),
             'timestamp' => time(),
         );
 

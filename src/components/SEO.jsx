@@ -296,19 +296,23 @@ const SEO = ({ adminData, settings }) => {
               return `#${Math.round(val)}`
             },
             style: {
-              fontSize: '11px',
+              fontSize: '12px',
               fontWeight: 'bold',
-              colors: ['#FFFFFF']
+              colors: ['#60A5FA'],
+              cssClass: 'apexcharts-datalabel-keyword'
             },
             background: {
-              enabled: true,
-              foreColor: '#fff',
-              borderRadius: 4,
-              borderWidth: 1,
-              borderColor: '#3B82F6',
-              opacity: 0.9
+              enabled: false
             },
-            offsetY: -8
+            dropShadow: {
+              enabled: true,
+              top: 0,
+              left: 0,
+              blur: 3,
+              color: '#000',
+              opacity: 0.8
+            },
+            offsetY: -10
           },
           stroke: {
             curve: 'smooth', // Use smooth curve for better line visualization
