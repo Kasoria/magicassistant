@@ -1,4 +1,4 @@
-<?php
+<?php // phpcs:ignore WordPress.Files.FileName -- Standalone debug file, works without WordPress
 /**
  * MagicAssistant Debug API - Fallback API for when WordPress is not loaded
  * 
@@ -228,7 +228,7 @@ function handle_ai_chat() {
             $headers[] = 'Authorization: Bearer ' . $api_key;
         }
     }
-    // Use cURL for the request with extended timeout and detailed logging
+    // phpcs:ignore WordPress.WP.AlternativeFunctions -- Standalone debug file, cURL required
     $ch = curl_init($proxy_url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
@@ -524,7 +524,7 @@ function parse_log_file($file_path, $source, $search = '', $level = '') {
             $current_entry = array(
                 'id' => uniqid(),
                 'timestamp' => $timestamp,
-                'formatted_time' => date('Y-m-d H:i:s', $timestamp),
+                'formatted_time' => wp_date('Y-m-d H:i:s', $timestamp),
                 'level' => $log_level,
                 'message' => $message,
                 'full_message' => $line,
@@ -687,6 +687,7 @@ function get_wp_content_dir() {
 function test_proxy_connectivity() {
     $test_url = 'https://api.openai.com';
 
+    // phpcs:ignore WordPress.WP.AlternativeFunctions -- Standalone debug file, cURL required
     $ch = curl_init($test_url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
@@ -730,7 +731,7 @@ function test_proxy_connectivity() {
 }
 
 function sanitize_text($text) {
-    return htmlspecialchars(strip_tags(trim($text)), ENT_QUOTES, 'UTF-8');
+    return htmlspecialchars(wp_strip_all_tags(trim($text)), ENT_QUOTES, 'UTF-8');
 }
 
 /**
@@ -805,7 +806,7 @@ function get_debug_db_connection() {
     }
     
     try {
-        $connection = new PDO(
+        $connection = new PDO( // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO -- Standalone debug file, PDO required
             "mysql:host={$config['host']};dbname={$config['name']};charset=utf8mb4",
             $config['user'],
             $config['password'] ?? '',

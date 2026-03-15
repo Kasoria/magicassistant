@@ -1,4 +1,5 @@
 <?php
+// phpcs:disable WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Exception messages are developer-facing, not displayed as HTML
 
 namespace MagicAssistant;
 
@@ -1143,7 +1144,7 @@ class MCP_Server {
             // Read the downloaded file
             $file_data = file_get_contents($tmp);
             if ($file_data === false) {
-                @unlink($tmp);
+                wp_delete_file($tmp);
                 throw new Exception('Failed to read downloaded file');
             }
             
@@ -1154,7 +1155,7 @@ class MCP_Server {
             
             // Get filename from URL if not provided via title
             if ($filename === 'upload') {
-                $url_path = parse_url($file_input, PHP_URL_PATH);
+                $url_path = wp_parse_url($file_input, PHP_URL_PATH);
                 $path_info = pathinfo($url_path);
                 if (!empty($path_info['filename'])) {
                     $filename = sanitize_file_name($path_info['filename']);
@@ -1162,7 +1163,7 @@ class MCP_Server {
             }
             
             // Clean up temp file
-            @unlink($tmp);
+            wp_delete_file($tmp);
             
         } else {
             // Handle base64 input
@@ -4151,7 +4152,7 @@ class MCP_Server {
                 'user_login'  => $user->user_login,
                 'user_email'  => $user->user_email,
                 'registered'  => $user->user_registered,
-                'last_login'  => $last_login ? date('Y-m-d H:i:s', $last_login) : null,
+                'last_login'  => $last_login ? wp_date('Y-m-d H:i:s', $last_login) : null,
                 'dormant'     => $dormant
             );
         }
@@ -4476,7 +4477,7 @@ class MCP_Server {
                 }
                 $zip->close();
             }
-            unlink($tmp);
+            wp_delete_file($tmp);
             if (!$remote_hash) {
                 $results[$slug] = array('status' => 'unknown', 'message' => 'Main file not found in zip');
                 continue;
@@ -4544,7 +4545,7 @@ class MCP_Server {
                 }
                 $zip->close();
             }
-            unlink($tmp);
+            wp_delete_file($tmp);
             if (!$remote_hash) {
                 $results[$slug] = array('status' => 'unknown', 'message' => 'style.css not found in zip');
                 continue;
@@ -4739,7 +4740,7 @@ class MCP_Server {
                         'severity' => 'Medium',
                         'cvss_score' => null,
                         'fixed_in' => null,
-                        'published' => date('Y-m-d', $last_updated),
+                        'published' => wp_date('Y-m-d', $last_updated),
                         'references' => array()
                     );
                 }
@@ -4762,6 +4763,7 @@ class MCP_Server {
         // Try to use curl with streaming and early termination
         $wordfence_url = 'https://www.wordfence.com/api/intelligence/v2/vulnerabilities/production';
         
+        // phpcs:ignore WordPress.WP.AlternativeFunctions -- cURL required for streaming response
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $wordfence_url);
         curl_setopt($ch, CURLOPT_WRITEFUNCTION, array($this, 'curl_write_callback'));
@@ -6435,24 +6437,24 @@ class MCP_Server {
         if (empty($date_min) || empty($date_max)) {
             switch ($period) {
                 case 'week':
-                    $date_min = date('Y-m-d', strtotime('-7 days'));
-                    $date_max = date('Y-m-d');
+                    $date_min = wp_date('Y-m-d', strtotime('-7 days'));
+                    $date_max = wp_date('Y-m-d');
                     break;
                 case 'month':
-                    $date_min = date('Y-m-01');
-                    $date_max = date('Y-m-d');
+                    $date_min = wp_date('Y-m-01');
+                    $date_max = wp_date('Y-m-d');
                     break;
                 case 'last_month':
-                    $date_min = date('Y-m-01', strtotime('last month'));
-                    $date_max = date('Y-m-t', strtotime('last month'));
+                    $date_min = wp_date('Y-m-01', strtotime('last month'));
+                    $date_max = wp_date('Y-m-t', strtotime('last month'));
                     break;
                 case 'year':
-                    $date_min = date('Y-01-01');
-                    $date_max = date('Y-m-d');
+                    $date_min = wp_date('Y-01-01');
+                    $date_max = wp_date('Y-m-d');
                     break;
                 default:
-                    $date_min = date('Y-m-d', strtotime('-7 days'));
-                    $date_max = date('Y-m-d');
+                    $date_min = wp_date('Y-m-d', strtotime('-7 days'));
+                    $date_max = wp_date('Y-m-d');
             }
         }
         
@@ -8145,7 +8147,7 @@ class MCP_Server {
                     'name' => $plugin['name'] ?? '',
                     'slug' => $plugin['slug'] ?? '',
                     'version' => $plugin['version'] ?? '',
-                    'author' => strip_tags($plugin['author'] ?? ''),
+                    'author' => wp_strip_all_tags($plugin['author'] ?? ''),
                     'rating' => floatval($plugin['rating'] ?? 0),
                     'num_ratings' => intval($plugin['num_ratings'] ?? 0),
                     'active_installs' => intval($plugin['active_installs'] ?? 0),
@@ -8238,7 +8240,7 @@ class MCP_Server {
             'name' => $plugin['name'] ?? '',
             'slug' => $plugin['slug'] ?? '',
             'version' => $plugin['version'] ?? '',
-            'author' => strip_tags($plugin['author'] ?? ''),
+            'author' => wp_strip_all_tags($plugin['author'] ?? ''),
             'rating' => floatval($plugin['rating'] ?? 0),
             'num_ratings' => intval($plugin['num_ratings'] ?? 0),
             'active_installs' => intval($plugin['active_installs'] ?? 0),
@@ -8451,7 +8453,7 @@ class MCP_Server {
                     'name' => $theme['name'] ?? '',
                     'slug' => $theme['slug'] ?? '',
                     'version' => $theme['version'] ?? '',
-                    'author' => strip_tags($theme['author']['display_name'] ?? $theme['author'] ?? ''),
+                    'author' => wp_strip_all_tags($theme['author']['display_name'] ?? $theme['author'] ?? ''),
                     'rating' => floatval($theme['rating'] ?? 0),
                     'num_ratings' => intval($theme['num_ratings'] ?? 0),
                     'downloaded' => intval($theme['downloaded'] ?? 0),
@@ -8533,7 +8535,7 @@ class MCP_Server {
             'name' => $theme['name'] ?? '',
             'slug' => $theme['slug'] ?? '',
             'version' => $theme['version'] ?? '',
-            'author' => strip_tags($theme['author']['display_name'] ?? $theme['author'] ?? ''),
+            'author' => wp_strip_all_tags($theme['author']['display_name'] ?? $theme['author'] ?? ''),
             'rating' => floatval($theme['rating'] ?? 0),
             'num_ratings' => intval($theme['num_ratings'] ?? 0),
             'downloaded' => intval($theme['downloaded'] ?? 0),
@@ -10939,7 +10941,7 @@ class MCP_Server {
         return array(
             'success' => true,
             'site_info' => array(
-                'domain' => parse_url($site_url, PHP_URL_HOST),
+                'domain' => wp_parse_url($site_url, PHP_URL_HOST),
                 'site_url' => $site_url,
                 'site_name' => $site_name
             ),
@@ -12315,7 +12317,7 @@ class MCP_Server {
             }
 
             $text = $element['settings'][$text_prop];
-            $plain_text = strip_tags($text);
+            $plain_text = wp_strip_all_tags($text);
             $word_count = str_word_count($plain_text);
 
             $summary[] = array(
@@ -12343,7 +12345,7 @@ class MCP_Server {
         }
 
         // Strip HTML tags for analysis
-        $plain_text = strtolower(strip_tags($text));
+        $plain_text = strtolower(wp_strip_all_tags($text));
 
         // Common placeholder patterns
         $placeholder_patterns = array(
@@ -12792,7 +12794,7 @@ class MCP_Server {
             $current['settings']['image']['external'] = true;
 
             // Extract filename from URL
-            $url_parts = parse_url($url);
+            $url_parts = wp_parse_url($url);
             $path_parts = explode('/', $url_parts['path'] ?? '');
             $filename = end($path_parts) ?: 'unsplash-image.jpg';
             $current['settings']['image']['filename'] = $filename;
@@ -12836,7 +12838,7 @@ class MCP_Server {
             $current['settings']['_background']['image']['external'] = true;
 
             // Extract filename from URL
-            $url_parts = parse_url($url);
+            $url_parts = wp_parse_url($url);
             $path_parts = explode('/', $url_parts['path'] ?? '');
             $filename = end($path_parts) ?: 'unsplash-background.jpg';
             $current['settings']['_background']['image']['filename'] = $filename;

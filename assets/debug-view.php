@@ -1,4 +1,4 @@
-<?php
+<?php // phpcs:ignore WordPress.Files.FileName -- Standalone debug file, works without WordPress
 /**
  * MagicAssistant Debug View - Standalone Debug Interface
  * 
@@ -133,7 +133,7 @@ function get_debug_db_connection_debug_view() {
     }
     
     try {
-        $connection = new PDO(
+        $connection = new PDO( // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO -- Standalone debug file, PDO required
             "mysql:host={$config['host']};dbname={$config['name']};charset=utf8mb4",
             $config['user'],
             $config['password'] ?? '',

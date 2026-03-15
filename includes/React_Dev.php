@@ -1064,7 +1064,7 @@ class React_Dev {
      * Output the Vite React Refresh preamble snippet for HMR
      */
     public function vite_refresh_preamble() {
-        // HMR preamble required by @vitejs/plugin-react
+        // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript -- Vite HMR preamble must be inline
         echo '<script type="module">';
         echo 'import RefreshRuntime from "' . esc_url( $this->vite_dev_server ) . '/@react-refresh";';
         echo 'RefreshRuntime.injectIntoGlobalHook(window);';
@@ -1136,6 +1136,7 @@ class React_Dev {
         }
         
         ?>
+        <?php // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedStylesheet -- Inline critical CSS for admin root ?>
         <style>
         #mat-admin-root {
             width: 100%;
@@ -1694,6 +1695,7 @@ class React_Dev {
 
         // Output a script that ensures our ES modules are loaded correctly
         ?>
+        <?php // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript -- Fallback module loader must be inline ?>
         <script>
         (function() {
             // Check if our scripts are already loaded

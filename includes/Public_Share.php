@@ -76,7 +76,7 @@ class Public_Share {
         header('Content-Type: text/html; charset=utf-8');
         
         // Output the HTML
-        echo $this->generate_shared_page_html($conversation);
+        echo $this->generate_shared_page_html($conversation); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- All variables escaped in generate_shared_page_html
     }
     
     /**
@@ -87,14 +87,15 @@ class Public_Share {
         $site_url = esc_url(home_url());
         $title = esc_html($conversation['title']);
         $view_count = intval($conversation['view_count']);
-        $created_date = esc_html(date('F j, Y', strtotime($conversation['created_at'])));
+        $created_date = esc_html(wp_date('F j, Y', strtotime($conversation['created_at'])));
         $html_content = wp_kses_post($conversation['html_content']);
         
         // Prepare meta tags for social sharing
-        $description = esc_attr(wp_trim_words(strip_tags($conversation['formatted_content']), 30));
+        $description = esc_attr(wp_trim_words(wp_strip_all_tags($conversation['formatted_content']), 30));
         $og_image = esc_url(MAGIC_ASSISTANT_PLUGIN_URL . 'assets/magicassistant-social.png'); // You might want to create this
         $canonical_url = esc_url(home_url("/magicassistant/shared/{$conversation['share_id']}"));
         
+        // phpcs:ignore Squiz.PHP.Heredoc.NotAllowed -- Heredoc cleaner for large HTML templates
         return <<<HTML
 <!DOCTYPE html>
 <html lang="en">

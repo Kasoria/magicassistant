@@ -38,6 +38,5 @@ logs
 *.log 
 
 # Composer
-vendor/
 composer.lock
 licensing/

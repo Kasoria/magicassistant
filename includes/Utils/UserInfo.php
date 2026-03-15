@@ -95,7 +95,7 @@ class UserInfo {
 		$active_users = 0;
 		
 		// Calculate cutoff date for recent registrations (last 30 days)
-		$recent_cutoff = date( 'Y-m-d H:i:s', strtotime( '-30 days' ) );
+		$recent_cutoff = wp_date( 'Y-m-d H:i:s', strtotime( '-30 days' ) );
 		
 		foreach ( $users as $user ) {
 			$user_roles = $user->roles;

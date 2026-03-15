@@ -193,7 +193,7 @@ class Logger {
         // Remove oldest backup if we have too many
         $oldest_backup = $log_dir . '/' . $base_name . '.' . $this->max_backup_files . '.log';
         if (file_exists($oldest_backup)) {
-            unlink($oldest_backup);
+            wp_delete_file($oldest_backup);
         }
         
         // Rotate existing backups
@@ -202,14 +202,14 @@ class Logger {
             $new_file = $log_dir . '/' . $base_name . '.' . ($i + 1) . '.log';
             
             if (file_exists($old_file)) {
-                rename($old_file, $new_file);
+                rename($old_file, $new_file); // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
             }
         }
         
         // Move current log to .1 backup
         $first_backup = $log_dir . '/' . $base_name . '.1.log';
         if (file_exists($this->log_file_path)) {
-            rename($this->log_file_path, $first_backup);
+            rename($this->log_file_path, $first_backup); // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
         }
     }
     
@@ -222,14 +222,14 @@ class Logger {
         
         // Remove main log file
         if (file_exists($this->log_file_path)) {
-            unlink($this->log_file_path);
+            wp_delete_file($this->log_file_path);
         }
         
         // Remove backup files
         for ($i = 1; $i <= $this->max_backup_files; $i++) {
             $backup_file = $log_dir . '/' . $base_name . '.' . $i . '.log';
             if (file_exists($backup_file)) {
-                unlink($backup_file);
+                wp_delete_file($backup_file);
             }
         }
     }

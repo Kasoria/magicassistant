@@ -29,6 +29,7 @@ const includeFiles = [
   'languages',
   'uninstall.php',
   'dist',
+  'vendor',
   'readme.txt',
   'LICENSE'
 ];

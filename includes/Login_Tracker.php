@@ -1,6 +1,8 @@
 <?php
 namespace MagicAssistant;
 
+if ( ! defined( 'ABSPATH' ) ) { exit; }
+
 /**
  * Track successful and failed login events and maintain last login timestamps.
  */

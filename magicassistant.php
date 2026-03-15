@@ -23,6 +23,11 @@
 
 if (!defined('ABSPATH')) exit;
 
+// Load Composer autoloader (PSR-4 for MagicAssistant namespace)
+if (file_exists(__DIR__ . '/vendor/autoload.php')) {
+    require_once __DIR__ . '/vendor/autoload.php';
+}
+
 // Define plugin constants
 define('MAGIC_ASSISTANT_VERSION', '2.0');
 define('MAGIC_ASSISTANT_PLUGIN_FILE', __FILE__);

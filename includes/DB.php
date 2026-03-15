@@ -881,7 +881,7 @@ class DB {
     public function get_api_stats($user_id = null, $days = 30) {
         global $wpdb;
         
-        $date_from = date('Y-m-d H:i:s', strtotime("-{$days} days"));
+        $date_from = wp_date('Y-m-d H:i:s', strtotime("-{$days} days"));
         
         if ($user_id) {
             $stats = $wpdb->get_row($wpdb->prepare(
@@ -919,7 +919,7 @@ class DB {
     public function cleanup_old_data($days = 90) {
         global $wpdb;
         
-        $date_threshold = date('Y-m-d H:i:s', strtotime("-{$days} days"));
+        $date_threshold = wp_date('Y-m-d H:i:s', strtotime("-{$days} days"));
         
         // Clean up old chat sessions (using updated_at for last activity)
         $wpdb->query($wpdb->prepare(

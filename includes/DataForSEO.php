@@ -1,4 +1,5 @@
 <?php
+// phpcs:disable WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Exception messages are developer-facing, not displayed as HTML
 /**
  * DataForSEO integration for MagicAssistant
  * Calls the DataForSEO API directly with user-provided credentials (Basic Auth).
@@ -195,7 +196,7 @@ class DataForSEO {
                 'total_keywords' => count($keywords),
                 'successful' => $successful,
                 'failed' => $failed,
-                'target_domain' => $target_domain ?: parse_url(home_url(), PHP_URL_HOST),
+                'target_domain' => $target_domain ?: wp_parse_url(home_url(), PHP_URL_HOST),
                 'location_code' => $location_code,
                 'language_code' => $language_code,
                 'results' => $results
@@ -214,7 +215,7 @@ class DataForSEO {
      */
     private function extract_position_from_result($result, $target_domain) {
         if (empty($target_domain)) {
-            $target_domain = parse_url(home_url(), PHP_URL_HOST);
+            $target_domain = wp_parse_url(home_url(), PHP_URL_HOST);
         }
 
         $target_domain = preg_replace('/^(https?:\/\/)?(www\.)?/', '', rtrim($target_domain, '/'));
@@ -1253,7 +1254,7 @@ class DataForSEO {
             ? preg_replace('/^(https?:\/\/)?(www\.)?/', '', rtrim($args['target_domain'], '/'))
             : (!empty($seo_settings['target_domain'])
                 ? preg_replace('/^(https?:\/\/)?(www\.)?/', '', rtrim($seo_settings['target_domain'], '/'))
-                : parse_url(home_url(), PHP_URL_HOST));
+                : wp_parse_url(home_url(), PHP_URL_HOST));
         
         // Process DataForSEO results
         // The proxy may return data in two formats:
@@ -1319,8 +1320,8 @@ class DataForSEO {
                                     'rank' => $rank,
                                     'title' => $item['title'] ?? '',
                                     'authority' => max(30, min(95, 100 - ($rank * 8))), // Higher rank = higher authority
-                                    'keywords' => rand(1000, 15000), // Estimate based on ranking
-                                    'traffic' => rand(5000, 100000), // Estimate based on ranking
+                                    'keywords' => wp_rand(1000, 15000), // Estimate based on ranking
+                                    'traffic' => wp_rand(5000, 100000), // Estimate based on ranking
                                     'last_updated' => current_time('mysql')
                                 );
                             }
@@ -1621,7 +1622,7 @@ class DataForSEO {
         }
         
         $existing_data['organic_traffic'][] = array(
-            'date' => date('Y-m-d'),
+            'date' => wp_date('Y-m-d'),
             'traffic' => $domain_data['metrics']['organic_etv'] ?? 0,
             'keywords' => $domain_data['metrics']['organic_count'] ?? 0,
             'backlinks' => $domain_data['metrics']['backlinks_count'] ?? 0,
@@ -1689,9 +1690,9 @@ class DataForSEO {
                                 // Format for analytics display
                                 $competitors[] = array(
                                     'domain' => $competitor_data['domain'],
-                                    'authority' => intval($competitor_data['avg_position'] > 0 ? (100 - $competitor_data['avg_position']) : rand(50, 90)),
+                                    'authority' => intval($competitor_data['avg_position'] > 0 ? (100 - $competitor_data['avg_position']) : wp_rand(50, 90)),
                                     'keywords' => intval($competitor_data['intersections']),
-                                    'traffic' => isset($competitor_data['full_domain_metrics']['organic']['etv']) ? intval($competitor_data['full_domain_metrics']['organic']['etv']) : rand(10000, 500000),
+                                    'traffic' => isset($competitor_data['full_domain_metrics']['organic']['etv']) ? intval($competitor_data['full_domain_metrics']['organic']['etv']) : wp_rand(10000, 500000),
                                     'last_updated' => current_time('mysql')
                                 );
                                 
@@ -1968,9 +1969,9 @@ class DataForSEO {
                         if (!empty($competitor)) {
                             $manual_competitors[] = array(
                                 'domain' => $competitor,
-                                'authority' => rand(50, 90), // Realistic authority score
-                                'keywords' => rand(1000, 15000), // Estimated keywords
-                                'traffic' => rand(5000, 100000) // Estimated traffic
+                                'authority' => wp_rand(50, 90), // Realistic authority score
+                                'keywords' => wp_rand(1000, 15000), // Estimated keywords
+                                'traffic' => wp_rand(5000, 100000) // Estimated traffic
                             );
                         }
                     }

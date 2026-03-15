@@ -379,7 +379,7 @@ class Admin {
     // Handle form submission
     if (isset($_POST['submit']) && check_admin_referer('magic_plugins_settings', 'magic_plugins_nonce')) {
       $this->save_shared_settings($_POST);
-      echo '<div class="notice notice-success"><p>' . __('Settings saved successfully!', 'magic-assistant') . '</p></div>';
+      echo '<div class="notice notice-success"><p>' . esc_html__('Settings saved successfully!', 'magic-assistant') . '</p></div>';
     }
 
     $settings = $this->get_shared_settings();
@@ -470,7 +470,7 @@ class Admin {
     if (is_array($menu)) {
       foreach ($menu as $item) {
         if (!empty($item[0]) && !empty($item[2])) {
-          $title = strip_tags($item[0]);
+          $title = wp_strip_all_tags($item[0]);
           $menu_items[$item[2]] = $title;
         }
       }
@@ -499,6 +499,7 @@ class Admin {
       <input type="number" name="custom_position" value="<?php echo esc_attr($custom_position); ?>" min="1" max="99" class="small-text">
     </div>
 
+    <?php // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript -- Small inline settings toggle ?>
     <script>
     document.addEventListener('DOMContentLoaded', function() {
       const positionType = document.getElementById('menu-position-type');
@@ -567,12 +568,13 @@ class Admin {
         foreach ($ordered_items as $slug => $title): ?>
           <li style="background: #f1f1f1; padding: 10px; margin: 5px 0; cursor: move; border: 1px solid #ddd;">
             <input type="hidden" name="submenu_order[]" value="<?php echo esc_attr($slug); ?>">
-            <?php echo esc_html(strip_tags($title)); ?>
+            <?php echo esc_html(wp_strip_all_tags($title)); ?>
           </li>
         <?php endforeach; ?>
       </ul>
     </div>
 
+    <?php // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript -- Small inline drag-and-drop script ?>
     <script>
     document.addEventListener('DOMContentLoaded', function() {
       // Simple drag and drop implementation
@@ -765,7 +767,7 @@ class Admin {
     );
     
     $date_format = isset($formats[$format]) ? $formats[$format] : $formats['us'];
-    return date($date_format, $timestamp);
+    return wp_date($date_format, $timestamp);
   }
 
   /**

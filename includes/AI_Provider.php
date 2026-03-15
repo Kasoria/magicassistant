@@ -1,4 +1,5 @@
 <?php
+// phpcs:disable WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Exception messages are developer-facing, not displayed as HTML
 
 namespace MagicAssistant;
 
@@ -1230,7 +1231,7 @@ class AI_Provider {
             
             if (is_wp_error($image_editor)) {
                 // Fallback: just move the temp file
-                @unlink($temp_file);
+                wp_delete_file($temp_file);
                 if (file_put_contents($filepath, $image_data) === false) {
                     return new WP_Error('save_failed', 'Failed to save image file');
                 }
@@ -1250,7 +1251,7 @@ class AI_Provider {
                 $saved = $image_editor->save($filepath, 'image/' . $format);
                 
                 // Clean up temp file
-                @unlink($temp_file);
+                wp_delete_file($temp_file);
                 
                 if (is_wp_error($saved)) {
                     return new WP_Error('conversion_failed', 'Failed to convert image format: ' . $saved->get_error_message());
@@ -4592,7 +4593,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             '/<a\s+href=["\']([^"\']*)["\'][^>]*>(.*?)<\/a>/i',
             function($matches) {
                 $url = esc_url_raw($matches[1]);
-                $text = strip_tags($matches[2]);
+                $text = wp_strip_all_tags($matches[2]);
                 
                 if (empty($url)) {
                     return $text; // Return just text if URL is invalid
@@ -4607,7 +4608,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         );
         
         // Strip any remaining HTML tags
-        $html = strip_tags($html);
+        $html = wp_strip_all_tags($html);
         
         return $html;
     }
@@ -6737,7 +6738,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $total_sessions = count($chat_sessions);
         $total_messages = 0;
         $active_sessions = 0;
-        $cutoff_date = date('Y-m-d H:i:s', strtotime("-7 days"));
+        $cutoff_date = wp_date('Y-m-d H:i:s', strtotime("-7 days"));
         
         foreach ($chat_sessions as $session) {
             $total_messages += intval($session['message_count']);
@@ -6796,7 +6797,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         // Calculate expiration date if specified
         $expires_at = null;
         if ($expires_in_days > 0) {
-            $expires_at = date('Y-m-d H:i:s', strtotime("+{$expires_in_days} days"));
+            $expires_at = wp_date('Y-m-d H:i:s', strtotime("+{$expires_in_days} days"));
         }
         
         $share_id = $this->db->create_shared_conversation(
@@ -6900,7 +6901,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         if (isset($data['expires_in_days'])) {
             $expires_in_days = intval($data['expires_in_days']);
             if ($expires_in_days > 0) {
-                $update_data['expires_at'] = date('Y-m-d H:i:s', strtotime("+{$expires_in_days} days"));
+                $update_data['expires_at'] = wp_date('Y-m-d H:i:s', strtotime("+{$expires_in_days} days"));
             } else {
                 $update_data['expires_at'] = null;
             }
@@ -7260,9 +7261,9 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 foreach ($keyword_templates as $keyword) {
                     $analytics['keywordRankings'][] = array(
                         'keyword' => $keyword,
-                        'position' => rand(15, 45), // Realistic positions for a real domain
-                        'volume' => rand(100, 2000), // Realistic search volumes
-                        'difficulty' => rand(30, 70) // Realistic difficulty scores
+                        'position' => wp_rand(15, 45), // Realistic positions for a real domain
+                        'volume' => wp_rand(100, 2000), // Realistic search volumes
+                        'difficulty' => wp_rand(30, 70) // Realistic difficulty scores
                     );
                 }
                 
@@ -7276,7 +7277,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         // Transform organic traffic data
         if (isset($seo_data['organic_traffic']) && is_array($seo_data['organic_traffic']) && !empty($seo_data['organic_traffic'])) {
-            $base_date = date('Y-m-d'); // Use current date as base
+            $base_date = wp_date('Y-m-d'); // Use current date as base
             $base_traffic = 0;
             
             // Extract traffic data from the first available record
@@ -7308,16 +7309,16 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             
             // Use minimum baseline if no data found
             if ($base_traffic === 0) {
-                $base_traffic = rand(50, 200); // Conservative estimate for a real domain
+                $base_traffic = wp_rand(50, 200); // Conservative estimate for a real domain
             }
             
             // Create a 7-day traffic trend
             $analytics['organicTraffic'] = array();
             for ($i = 6; $i >= 0; $i--) {
-                $date = date('Y-m-d', strtotime($base_date . " -$i days"));
+                $date = wp_date('Y-m-d', strtotime($base_date . " -$i days"));
                 // Add realistic daily variation (±15%)
                 $variation = intval($base_traffic * 0.15);
-                $daily_traffic = max(0, $base_traffic + rand(-$variation, $variation));
+                $daily_traffic = max(0, $base_traffic + wp_rand(-$variation, $variation));
                 $analytics['organicTraffic'][] = array(
                     'date' => $date,
                     'traffic' => intval($daily_traffic)
@@ -7351,7 +7352,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         // Generate realistic authority based on domain characteristics
                         $domain_length = strlen($competitor['domain']);
                         $has_common_tld = in_array(substr($competitor['domain'], -4), ['.com', '.org', '.net']);
-                        $authority = $has_common_tld ? rand(40, 80) : rand(30, 70);
+                        $authority = $has_common_tld ? wp_rand(40, 80) : wp_rand(30, 70);
                         $authority = max(30, min(95, $authority + ($domain_length < 15 ? 10 : 0))); // Shorter domains often have higher authority
                     }
                     
@@ -7364,7 +7365,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     } else {
                         // Generate realistic keyword estimates based on domain and authority
                         $base_keywords = $authority * 100; // Higher authority = more keywords
-                        $keywords = rand(max(500, $base_keywords - 2000), $base_keywords + 5000);
+                        $keywords = wp_rand(max(500, $base_keywords - 2000), $base_keywords + 5000);
                     }
                     
                     if (isset($competitor['traffic']) && $competitor['traffic'] > 0) {
@@ -7377,7 +7378,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         $traffic = intval($competitor['traffic_etv']);
                     } else {
                         // Estimate traffic based on keywords and authority
-                        $traffic_per_keyword = ($authority / 100) * rand(8, 25); // Higher authority gets more traffic per keyword
+                        $traffic_per_keyword = ($authority / 100) * wp_rand(8, 25); // Higher authority gets more traffic per keyword
                         $traffic = intval($keywords * $traffic_per_keyword);
                         $traffic = max(1000, min(1000000, $traffic)); // Reasonable bounds
                     }
@@ -7413,7 +7414,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                             // Generate realistic authority based on domain characteristics
                             $domain_length = strlen($competitor['domain']);
                             $has_common_tld = in_array(substr($competitor['domain'], -4), ['.com', '.org', '.net']);
-                            $authority = $has_common_tld ? rand(40, 80) : rand(30, 70);
+                            $authority = $has_common_tld ? wp_rand(40, 80) : wp_rand(30, 70);
                             $authority = max(30, min(95, $authority + ($domain_length < 15 ? 10 : 0)));
                         }
                         
@@ -7424,7 +7425,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         } else {
                             // Generate realistic keyword estimates based on domain and authority
                             $base_keywords = $authority * 100;
-                            $keywords = rand(max(500, $base_keywords - 2000), $base_keywords + 5000);
+                            $keywords = wp_rand(max(500, $base_keywords - 2000), $base_keywords + 5000);
                         }
                         
                         if (isset($competitor['traffic']) && $competitor['traffic'] > 0) {
@@ -7433,7 +7434,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                             $traffic = intval($competitor['full_domain_metrics']['organic']['etv']);
                         } else {
                             // Estimate traffic based on keywords and authority
-                            $traffic_per_keyword = ($authority / 100) * rand(8, 25);
+                            $traffic_per_keyword = ($authority / 100) * wp_rand(8, 25);
                             $traffic = intval($keywords * $traffic_per_keyword);
                             $traffic = max(1000, min(1000000, $traffic));
                         }
@@ -7481,10 +7482,10 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 // Generate realistic technical scores for a real domain as final fallback
                 
                 $analytics['technicalScores'] = array(
-                    'performance' => rand(65, 85), // Performance often needs work
-                    'accessibility' => rand(75, 95), // Accessibility usually better
-                    'bestPractices' => rand(80, 95), // Best practices often well implemented
-                    'seo' => rand(70, 90) // SEO varies widely
+                    'performance' => wp_rand(65, 85), // Performance often needs work
+                    'accessibility' => wp_rand(75, 95), // Accessibility usually better
+                    'bestPractices' => wp_rand(80, 95), // Best practices often well implemented
+                    'seo' => wp_rand(70, 90) // SEO varies widely
                 );
             }
         }
@@ -7506,7 +7507,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $analytics['seoScore'] = intval(array_sum($score_components) / count($score_components));
         } else {
             // Default SEO score if no technical scores available
-            $analytics['seoScore'] = rand(65, 85); // Realistic score for a real domain
+            $analytics['seoScore'] = wp_rand(65, 85); // Realistic score for a real domain
         }
         
         // Use the latest update time from any component
@@ -8287,7 +8288,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
         
         // Return the file content with appropriate headers
-        $filename = 'magicassistant-debug-' . date('Y-m-d-H-i-s') . '.log';
+        $filename = 'magicassistant-debug-' . wp_date('Y-m-d-H-i-s') . '.log';
         
         // Set headers for file download
         header('Content-Type: text/plain');
@@ -9180,7 +9181,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $html = preg_replace('/<li\b[^>]*>/i', "\n• ", $html);
         
         // Strip remaining HTML tags
-        $text = strip_tags($html);
+        $text = wp_strip_all_tags($html);
         
         // Remove common footer/navigation text patterns (at end of content only)
         $footer_patterns = [
@@ -9410,7 +9411,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             // Remove the oldest backups until we have fewer than 2
             while (count($existing_backups) >= 2) {
                 $oldest = array_shift($existing_backups);
-                @unlink($oldest);
+                wp_delete_file($oldest);
             }
         }
 
@@ -9557,7 +9558,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 }
 
                 // Remove the file
-                if (unlink($file_path)) {
+                wp_delete_file($file_path);
+                if (!file_exists($file_path)) {
                     $removed_files[] = $file_name;
                 } else {
                     $errors[] = "Failed to remove {$file_name} from {$file_path}";
@@ -9569,7 +9571,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $stub_index = $stub_dir . '/index.php';
             if (file_exists($stub_index)) {
                 if ($this->verify_debug_file_ownership($stub_index, 'mat-debugging/index.php')) { // verify stub
-                    if (!unlink($stub_index)) {
+                    wp_delete_file($stub_index);
+                    if (file_exists($stub_index)) {
                         $errors[] = 'Failed to remove mat-debugging/index.php stub';
                     } else {
                         $removed_files[] = 'mat-debugging/index.php';
@@ -9711,7 +9714,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 if ($backup_files) {
                     foreach ($backup_files as $backup_file) {
                         if (file_exists($backup_file) && is_file($backup_file)) {
-                            if (unlink($backup_file)) {
+                            wp_delete_file($backup_file);
+                            if (!file_exists($backup_file)) {
                                 $removed_files[] = basename($backup_file);
                             } else {
                                 $errors[] = "Failed to remove backup file: " . basename($backup_file);
@@ -9784,7 +9788,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $filename = trim($filename, '-');
         
         // Get extension from URL or default to jpg
-        $path_info = pathinfo(parse_url($image_url, PHP_URL_PATH));
+        $path_info = pathinfo(wp_parse_url($image_url, PHP_URL_PATH));
         $extension = $path_info['extension'] ?? 'jpg';
         
         // Ensure we have a valid image extension
@@ -9802,7 +9806,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
         // If error storing permanently, cleanup.
         if (is_wp_error($attachment_id)) {
-            @unlink($tmp);
+            wp_delete_file($tmp);
             return new WP_Error('media_error', $attachment_id->get_error_message(), array('status' => 500));
         }
 
@@ -9910,7 +9914,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $filename = trim($filename, '-');
         
         // Get extension from URL or default to jpg
-        $path_info = pathinfo(parse_url($image_url, PHP_URL_PATH));
+        $path_info = pathinfo(wp_parse_url($image_url, PHP_URL_PATH));
         $extension = $path_info['extension'] ?? 'jpg';
         
         // Ensure we have a valid image extension
@@ -9928,7 +9932,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
         // If error storing permanently, cleanup.
         if (is_wp_error($attachment_id)) {
-            @unlink($tmp);
+            wp_delete_file($tmp);
             return new WP_Error('media_error', $attachment_id->get_error_message(), array('status' => 500));
         }
 
@@ -10073,7 +10077,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $filename = trim($filename, '-');
             
             // Get extension from URL or default to jpg
-            $path_info = pathinfo(parse_url($image_url, PHP_URL_PATH));
+            $path_info = pathinfo(wp_parse_url($image_url, PHP_URL_PATH));
             $extension = $path_info['extension'] ?? 'jpg';
             
             // Ensure valid image extension
@@ -10090,7 +10094,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $attachment_id = media_handle_sideload($file_array, 0, $alt);
             
             if (is_wp_error($attachment_id)) {
-                @unlink($tmp);
+                wp_delete_file($tmp);
                 return new WP_Error('media_error', $attachment_id->get_error_message(), array('status' => 500));
             }
         }
@@ -10206,7 +10210,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $original_ext = pathinfo($original_file, PATHINFO_EXTENSION);
             
             // Determine extension from URL or use original
-            $path_info = pathinfo(parse_url($image_url, PHP_URL_PATH));
+            $path_info = pathinfo(wp_parse_url($image_url, PHP_URL_PATH));
             $extension = isset($path_info['extension']) ? strtolower($path_info['extension']) : $original_ext;
             if (empty($extension)) {
                 $extension = $original_ext ?: 'jpg';
@@ -10224,11 +10228,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             }
             
             if (!copy($tmp, $new_file_path)) {
-                @unlink($tmp);
+                wp_delete_file($tmp);
                 return new WP_Error('copy_failed', 'Failed to copy file to uploads directory', array('status' => 500));
             }
             
-            @unlink($tmp);
+            wp_delete_file($tmp);
         }
         
         // Use WordPress's native wp_save_image function to properly integrate with undo/redo
@@ -11426,7 +11430,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             
             if ($content) {
                 // Strip XML tags and decode entities
-                $content = strip_tags($content);
+                $content = wp_strip_all_tags($content);
                 $content = html_entity_decode($content, ENT_QUOTES, 'UTF-8');
                 return $content;
             }
