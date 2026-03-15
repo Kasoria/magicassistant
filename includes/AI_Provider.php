@@ -26,10 +26,10 @@ class AI_Provider {
     private $current_agent_mode = null; // Track current agent mode for tool filtering
     private $current_page_context = null; // Track current page context for framework injection
     // Add proxy endpoints for AI
-    private $openai_proxy_url = 'https://proxy.magicplugins.io/api/proxy/openai';
-    private $anthropic_proxy_url = 'https://proxy.magicplugins.io/api/proxy/anthropic';
-    private $google_proxy_url = 'https://proxy.magicplugins.io/api/proxy/google';
-    private $openrouter_proxy_url = 'https://proxy.magicplugins.io/api/proxy/openrouter';
+    private $openai_proxy_url = 'https://api.openai.com/v1';
+    private $anthropic_proxy_url = 'https://api.anthropic.com/v1';
+    private $google_proxy_url = 'https://generativelanguage.googleapis.com/v1beta';
+    private $openrouter_proxy_url = 'https://openrouter.ai/api/v1';
     
     public function __construct() {
         add_action('rest_api_init', array($this, 'register_rest_routes'));
@@ -305,38 +305,6 @@ class AI_Provider {
             'permission_callback' => array($this, 'check_permissions'),
         ));
         
-        // LICENSE MANAGEMENT ENDPOINTS
-        register_rest_route('magicassistant/v1', '/license/debug', array(
-            'methods' => 'GET',
-            'callback' => array($this, 'debug_license_client'),
-            'permission_callback' => array($this, 'check_permissions'),
-        ));
-        
-        register_rest_route('magicassistant/v1', '/license', array(
-            'methods' => 'GET',
-            'callback' => array($this, 'get_license_status'),
-            'permission_callback' => array($this, 'check_permissions'),
-        ));
-        
-        register_rest_route('magicassistant/v1', '/license/activate', array(
-            'methods' => 'POST',
-            'callback' => array($this, 'activate_license'),
-            'permission_callback' => array($this, 'check_permissions'),
-        ));
-        
-        register_rest_route('magicassistant/v1', '/license/deactivate', array(
-            'methods' => 'POST',
-            'callback' => array($this, 'deactivate_license'),
-            'permission_callback' => array($this, 'check_permissions'),
-        ));
-
-        // Remote license deactivation (called by MagicDash)
-        register_rest_route('magicassistant/v2', '/license/remote-deactivate', array(
-            'methods' => 'POST',
-            'callback' => array($this, 'remote_deactivate_license'),
-            'permission_callback' => array($this, 'check_remote_deactivation_permission'),
-        ));
-
         // USERS ENDPOINT
         register_rest_route('magicassistant/v1', '/users', array(
             'methods' => 'GET',
@@ -1063,33 +1031,20 @@ class AI_Provider {
             // Get API key for the selected provider
             $api_key = $this->get_api_key($provider);
             
-            // Get license key for proxy request
-            $license_key = $this->get_license_key();
-            
-            // Prepare proxy request
-            $proxy_url = $this->settings['proxy_url'] ?? 'https://proxy.magicplugins.io';
-            
-            // Determine endpoint based on provider
+            // Determine endpoint and headers based on provider
             if ($provider === 'google') {
-                $proxy_endpoint = $proxy_url . '/api/proxy/google/images';
+                $google_model = $this->settings['google_model'] ?? 'gemini-2.0-flash';
+                $proxy_endpoint = $this->google_proxy_url . '/models/' . $google_model . ':generateContent?key=' . urlencode($api_key);
+                $headers = array(
+                    'Content-Type' => 'application/json',
+                );
             } else {
-                $proxy_endpoint = $proxy_url . '/api/proxy/openai/images';
-            }
-            
-            $headers = array(
-                'Content-Type' => 'application/json',
-                'X-Site-URL' => get_site_url(),
-            );
-            
-            // Add license key if available
-            if (!empty($license_key)) {
-                $headers['X-License-Key'] = $license_key;
-            }
-            
-            // Add user API key if available based on provider
-            $api_key_setting = $provider . '_api_key';
-            if (!empty($this->settings[$api_key_setting])) {
-                $headers['X-User-API-Key'] = $this->settings[$api_key_setting];
+                // OpenAI
+                $proxy_endpoint = $this->openai_proxy_url . '/images/generations';
+                $headers = array(
+                    'Content-Type' => 'application/json',
+                    'Authorization' => 'Bearer ' . $api_key,
+                );
             }
             
             $request_data = array(
@@ -1127,27 +1082,21 @@ class AI_Provider {
             $response_code = wp_remote_retrieve_response_code($response);
             $response_body = wp_remote_retrieve_body($response);
             
-            error_log('[MagicAssistant] Proxy response code: ' . $response_code);
-            error_log('[MagicAssistant] Proxy response body length: ' . strlen($response_body));
-            
+            error_log('[MagicAssistant] API response code: ' . $response_code);
+            error_log('[MagicAssistant] API response body length: ' . strlen($response_body));
+
             $result = json_decode($response_body, true);
 
             if ($response_code !== 200) {
-                $error_message = $result['error'] ?? $result['message'] ?? 'Image generation failed';
+                $error_message = $result['error']['message'] ?? $result['error'] ?? $result['message'] ?? 'Image generation failed';
                 error_log('[MagicAssistant] Generation failed with error: ' . $error_message);
                 return new WP_Error('generation_failed', $error_message, array('status' => $response_code));
             }
 
-            if (!$result['success']) {
-                $error_msg = $result['error'] ?? $result['message'] ?? 'Unknown error';
-                error_log('[MagicAssistant] Generation unsuccessful: ' . $error_msg);
-                return new WP_Error('generation_failed', $error_msg, array('status' => 500));
-            }
-            
             error_log('[MagicAssistant] Generation successful, processing images...');
-            
-            // Extract image URLs from response
-            $images = $result['data']['data'] ?? array();
+
+            // Extract image URLs from response (direct API response format)
+            $images = $result['data'] ?? array();
             
             if (empty($images)) {
                 return new WP_Error('no_images', 'No images generated', array('status' => 500));
@@ -3208,8 +3157,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
      */
     public function make_simple_ai_call($messages, $provider = 'openai', $max_tokens = 1024) {
         try {
-            // Use MagicProxy endpoint directly for simplicity
-            $proxy_url = 'https://proxy.magicplugins.io';
+            // Get API key for the provider
+            $api_key = $this->get_api_key($provider);
 
             // Map provider to model
             $model_map = array(
@@ -3221,38 +3170,62 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
             $model = isset($model_map[$provider]) ? $model_map[$provider] : 'gpt-4o-mini';
 
-            // Build request body based on provider
+            // Build request body and headers based on provider
             if ($provider === 'anthropic') {
-                $endpoint = $proxy_url . '/api/proxy/anthropic';
+                $endpoint = $this->anthropic_proxy_url . '/messages';
                 $body = array(
                     'model' => $model,
                     'max_tokens' => $max_tokens,
                     'messages' => $messages
                 );
-            } else {
-                // OpenAI-compatible format for openai, google, openrouter
-                if ($provider === 'google') {
-                    $endpoint = $proxy_url . '/api/proxy/google';
-                } elseif ($provider === 'openrouter') {
-                    $endpoint = $proxy_url . '/api/proxy/openrouter';
-                } else {
-                    $endpoint = $proxy_url . '/api/proxy/openai';
+                $headers = array(
+                    'Content-Type' => 'application/json',
+                    'x-api-key' => $api_key,
+                    'anthropic-version' => '2023-06-01',
+                );
+            } elseif ($provider === 'google') {
+                $endpoint = $this->google_proxy_url . '/models/' . $model . ':generateContent?key=' . urlencode($api_key);
+                // Convert messages to Google format
+                $google_contents = array();
+                foreach ($messages as $msg) {
+                    if ($msg['role'] === 'system') continue;
+                    $google_contents[] = array(
+                        'role' => $msg['role'] === 'assistant' ? 'model' : 'user',
+                        'parts' => array(array('text' => $msg['content']))
+                    );
                 }
                 $body = array(
+                    'contents' => $google_contents,
+                    'generationConfig' => array('maxOutputTokens' => $max_tokens)
+                );
+                $headers = array(
+                    'Content-Type' => 'application/json',
+                );
+            } elseif ($provider === 'openrouter') {
+                $endpoint = $this->openrouter_proxy_url . '/chat/completions';
+                $body = array(
                     'model' => $model,
                     'max_tokens' => $max_tokens,
                     'messages' => $messages
                 );
-            }
-
-            // Get license headers
-            $license_headers = $this->get_license_headers();
-            $headers = array(
-                'Content-Type' => 'application/json',
-                'Accept' => 'application/json'
-            );
-            foreach ($license_headers as $key => $value) {
-                $headers[strtolower($key)] = $value;
+                $headers = array(
+                    'Content-Type' => 'application/json',
+                    'Authorization' => 'Bearer ' . $api_key,
+                    'HTTP-Referer' => get_site_url(),
+                    'X-Title' => 'MagicAssistant',
+                );
+            } else {
+                // OpenAI
+                $endpoint = $this->openai_proxy_url . '/responses';
+                $body = array(
+                    'model' => $model,
+                    'max_output_tokens' => $max_tokens,
+                    'input' => $messages
+                );
+                $headers = array(
+                    'Content-Type' => 'application/json',
+                    'Authorization' => 'Bearer ' . $api_key,
+                );
             }
 
             // Make the request
@@ -3279,12 +3252,22 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
             // Extract text from response based on provider format
             if ($provider === 'anthropic') {
-                // Anthropic format
+                // Anthropic format: {content: [{type: 'text', text: '...'}]}
                 if (isset($data['content'][0]['text'])) {
                     return $data['content'][0]['text'];
                 }
+            } elseif ($provider === 'google') {
+                // Google format: {candidates: [{content: {parts: [{text: '...'}]}}]}
+                if (isset($data['candidates'][0]['content']['parts'][0]['text'])) {
+                    return $data['candidates'][0]['content']['parts'][0]['text'];
+                }
+            } elseif ($provider === 'openai') {
+                // OpenAI Responses API format: {output_text: '...'}
+                if (isset($data['output_text'])) {
+                    return $data['output_text'];
+                }
             } else {
-                // OpenAI-compatible format
+                // OpenRouter uses OpenAI chat completions format
                 if (isset($data['choices'][0]['message']['content'])) {
                     return $data['choices'][0]['message']['content'];
                 }
@@ -3372,81 +3355,65 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             }
 
             $request_data = array(
-                'action'   => 'openai_responses',
-                'data'     => array(
-                    'model'      => $this->settings['openai_model'] ?? 'gpt-4.1-mini',
-                    'input'      => $input_content,
-                    'store'      => false, // For zero data retention
-                    'reasoning'  => $this->get_reasoning_config(),
-                    'web_search_enabled' => $web_search_enabled,
-                ),
-                'site_url'  => get_site_url(),
-                'timestamp' => time(),
+                'model'      => $this->settings['openai_model'] ?? 'gpt-4.1-mini',
+                'input'      => $input_content,
+                'store'      => false, // For zero data retention
             );
+
+            // Add reasoning config if available
+            $reasoning_config = $this->get_reasoning_config();
+            if (!empty($reasoning_config)) {
+                $request_data['reasoning'] = $reasoning_config;
+            }
 
             // Only add tools if they exist (don't send empty array)
             if (!empty($tools_for_request)) {
-                $request_data['data']['tools'] = $tools_for_request;
+                $request_data['tools'] = $tools_for_request;
             }
-            
-            // Add max_tokens if specified (proxy will convert to max_output_tokens for OpenAI Responses API)
+
+            // Add web search as a tool if enabled
+            if ($web_search_enabled) {
+                if (!isset($request_data['tools'])) {
+                    $request_data['tools'] = array();
+                }
+                $request_data['tools'][] = array('type' => 'web_search_preview');
+            }
+
+            // Add max_output_tokens if specified
             if ($max_tokens !== null) {
-                $request_data['data']['max_tokens'] = intval($max_tokens);
+                $request_data['max_output_tokens'] = intval($max_tokens);
             }
-            
+
             // Add system message as instructions if present
             if (!empty($system_message)) {
-                $request_data['data']['instructions'] = $system_message;
+                $request_data['instructions'] = $system_message;
             }
-            
-            // Merge license headers so MagicProxy can track usage by site & license
-            $headers = array_merge( array( 'Content-Type' => 'application/json' ), $this->get_license_headers() );
 
-            if ( ! empty( $api_key ) ) {
-                $headers['X-User-Api-Key'] = $api_key;
-            }
-            
-            // Add web search header for proxy
-            if ( $web_search_enabled ) {
-                $headers['X-Web-Search-Enabled'] = 'true';
-            }
+            // Build headers for direct OpenAI API
+            $headers = array(
+                'Content-Type' => 'application/json',
+                'Authorization' => 'Bearer ' . $api_key,
+            );
 
 
             // Fixed 10-minute timeout for all content generation requests
             $timeout = 600;
             
-            // Detect long content requests and use streaming endpoint
-            $user_message = '';
-            if (!empty($request_data['data']['messages'])) {
-                foreach ($request_data['data']['messages'] as $msg) {
-                    if ($msg['role'] === 'user') {
-                        $user_message = $msg['content'];
-                        break;
-                    }
-                }
-            }
-            
-            // Check if streaming is enabled in settings AND it's a long content request
-            $streaming_enabled = $this->settings['streaming_enabled'] ?? false;
-            $is_long_content = $streaming_enabled ? $this->detect_long_content_request($user_message, $system_message) : false;
-            $proxy_url = $is_long_content ? $this->openai_proxy_url . '/stream' : $this->openai_proxy_url;
-            
-            if ($is_long_content) {
-                return $this->handle_streaming_response($proxy_url, $headers, $request_data, $timeout);
-            }
-            
+            // OpenAI Responses API endpoint
+            $openai_endpoint = $this->openai_proxy_url . '/responses';
+
             if ($is_streaming) {
                 $this->send_status_update("Sending request to OpenAI API...");
             }
-            
-            $response = wp_remote_post( $proxy_url, array(
+
+            $response = wp_remote_post( $openai_endpoint, array(
                 'headers' => $headers,
                 'body'    => wp_json_encode( $request_data ),
                 'timeout' => $timeout
             ) );
-            
+
             if (is_wp_error($response)) {
-                throw new Exception('OpenAI proxy request failed: ' . $response->get_error_message());
+                throw new Exception('OpenAI API request failed: ' . $response->get_error_message());
             }
             
             if ($is_streaming) {
@@ -3456,34 +3423,27 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $body = wp_remote_retrieve_body($response);
             $data = json_decode($body, true);
             
-            // Handle timeout or empty responses more gracefully
-            if ($data === null || (empty($data['success']) && empty($data['error']))) {
-                // Log the raw response for debugging
-                error_log('🚨 AI_Provider - FAILED RESPONSE DEBUG: ' . json_encode([
+            $response_code = wp_remote_retrieve_response_code($response);
+
+            // Handle timeout or empty responses
+            if ($data === null) {
+                error_log('AI_Provider - FAILED RESPONSE DEBUG: ' . json_encode([
                     'body_length' => strlen($body),
                     'body_preview' => substr($body, 0, 1000),
-                    'response_code' => wp_remote_retrieve_response_code($response),
-                    'response_message' => wp_remote_retrieve_response_message($response),
-                    'headers' => wp_remote_retrieve_headers($response),
-                    'data_null' => $data === null,
-                    'data_preview' => $data
+                    'response_code' => $response_code,
                 ]));
-                
-                // Check if it's a nginx/proxy timeout
+
                 if (strpos($body, '504 Gateway Time-out') !== false || strpos($body, '502 Bad Gateway') !== false) {
-                    throw new Exception('WEB SERVER TIMEOUT DETECTED: 504/502 Gateway timeout from web server/proxy. Check nginx/apache timeout settings. Response: ' . substr($body, 0, 200));
-                } elseif (strlen($body) < 200) {
-                    throw new Exception('SHORT RESPONSE DETECTED: Response too short (' . strlen($body) . ' chars). Possible connection drop. Response: ' . $body);
+                    throw new Exception('WEB SERVER TIMEOUT DETECTED: 504/502 Gateway timeout. Response: ' . substr($body, 0, 200));
                 } else {
-                    throw new Exception('INVALID RESPONSE DETECTED: Unknown response format. Length: ' . strlen($body) . '. Preview: ' . substr($body, 0, 300));
+                    throw new Exception('INVALID RESPONSE DETECTED: Cannot parse response. Length: ' . strlen($body) . '. Preview: ' . substr($body, 0, 300));
                 }
             }
-            
-            if (empty($data['success']) || isset($data['error'])) {
-                // Provide more specific error messages
-                $errorMessage = $data['error'] ?? $data['message'] ?? 'Unknown error';
-                
-                // Check for common error patterns
+
+            // Handle API errors (OpenAI returns {error: {message: '...', type: '...'}})
+            if (isset($data['error'])) {
+                $errorMessage = is_array($data['error']) ? ($data['error']['message'] ?? 'Unknown error') : $data['error'];
+
                 if (strpos($errorMessage, 'timeout') !== false || strpos($errorMessage, 'timed out') !== false) {
                     throw new Exception('The request timed out. Try reducing the content length or disabling web search.');
                 } elseif (strpos($errorMessage, 'rate limit') !== false) {
@@ -3491,26 +3451,27 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 } elseif (strpos($errorMessage, 'credit') !== false || strpos($errorMessage, 'quota') !== false) {
                     throw new Exception('API quota exceeded. Please check your account credits.');
                 } else {
-                    throw new Exception('OpenAI proxy error: ' . $errorMessage);
+                    throw new Exception('OpenAI API error: ' . $errorMessage);
                 }
             }
-            
-            $result = $data['data'];
-            $userKeyUsed = $data['userKeyUsed'] ?? ($data['user_key_used'] ?? false);
-            $credits = $data['credits'] ?? null;
-            
-            
+
+            // Direct API response - the result IS the data (no wrapper)
+            $result = $data;
+            $userKeyUsed = !empty($api_key);
+            $credits = null;
+
+
             // Accumulate usage
             if (isset($result['usage'])) {
                 $usage = $result['usage'];
                 $total_usage['input_tokens'] += $usage['input_tokens'] ?? 0;
                 $total_usage['output_tokens'] += $usage['output_tokens'] ?? 0;
                 $total_usage['total_tokens'] += $usage['total_tokens'] ?? 0;
-                
-                $model = $request_data['data']['model'];
+
+                $model = $request_data['model'];
                 $total_cost += $this->calculate_openai_cost($model, $usage);
             }
-            
+
             // Check if there are function calls to execute
             $function_calls = [];
             if (isset($result['output']) && is_array($result['output'])) {
@@ -3789,41 +3750,47 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
 
         $request_data = array(
-            'action'   => 'anthropic',
-            'data'     => array(
-                'model'      => $this->settings['anthropic_model'] ?? 'claude-sonnet-4-5-20250929',
-                'messages'   => $conversation,
-                'web_search_enabled' => $web_search_enabled,
-            ),
-            'site_url'  => get_site_url(),
-            'timestamp' => time(),
+            'model'      => $this->settings['anthropic_model'] ?? 'claude-sonnet-4-5-20250929',
+            'messages'   => $conversation,
+            'max_tokens' => $max_tokens ?? 8192,
         );
 
-        // Add system message if present (must be done before tools)
+        // Add system message if present
         if (!empty($system_message)) {
-            $request_data['data']['system'] = $system_message;
+            $request_data['system'] = $system_message;
         }
 
         // Only add tools if they exist (don't send empty array)
         if (!empty($tools)) {
-            $request_data['data']['tools'] = $tools;
+            $request_data['tools'] = $tools;
         }
 
-        // Add max_tokens if specified
-        if ($max_tokens !== null) {
-            $request_data['data']['max_tokens'] = intval($max_tokens);
+        // Add web search tool if enabled
+        if ($web_search_enabled) {
+            if (!isset($request_data['tools'])) {
+                $request_data['tools'] = array();
+            }
+            $request_data['tools'][] = array(
+                'type' => 'web_search',
+                'name' => 'web_search',
+            );
         }
 
-        // Merge license headers so MagicProxy can track usage
-        $headers = array_merge( array( 'Content-Type' => 'application/json' ), $this->get_license_headers() );
+        // Build headers for direct Anthropic API
+        $headers = array(
+            'Content-Type' => 'application/json',
+            'x-api-key' => $api_key,
+            'anthropic-version' => '2023-06-01',
+        );
 
-        if ( ! empty( $api_key ) ) {
-            $headers['X-User-Api-Key'] = $api_key;
-        }
-        
-        // Add web search header for proxy
-        if ( $web_search_enabled ) {
-            $headers['X-Web-Search-Enabled'] = 'true';
+        // Add beta header if web search tool is present
+        if (!empty($request_data['tools'])) {
+            foreach ($request_data['tools'] as $tool) {
+                if (isset($tool['type']) && $tool['type'] === 'web_search') {
+                    $headers['anthropic-beta'] = 'web-fetch-2025-09-10';
+                    break;
+                }
+            }
         }
 
         // Fixed 10-minute timeout for all content generation requests
@@ -3835,13 +3802,13 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
         $json_payload = wp_json_encode( $request_data );
 
-        $response = wp_remote_post( $this->anthropic_proxy_url, array(
+        $response = wp_remote_post( $this->anthropic_proxy_url . '/messages', array(
             'headers' => $headers,
             'body'    => $json_payload,
             'timeout' => $timeout
         ) );
         if (is_wp_error($response)) {
-            throw new Exception('Anthropic proxy request failed: ' . $response->get_error_message());
+            throw new Exception('Anthropic API request failed: ' . $response->get_error_message());
         }
         
         if ($is_streaming) {
@@ -3851,34 +3818,25 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
         
-        // Handle timeout or empty responses more gracefully
-        if ($data === null || (empty($data['success']) && empty($data['error']))) {
-            // Log comprehensive debugging information
-            error_log('🚨 AI_Provider - FAILED RESPONSE DEBUG (Anthropic): ' . json_encode([
+        // Handle timeout or empty responses
+        if ($data === null) {
+            error_log('AI_Provider - FAILED RESPONSE DEBUG (Anthropic): ' . json_encode([
                 'body_length' => strlen($body),
                 'body_preview' => substr($body, 0, 1000),
                 'response_code' => wp_remote_retrieve_response_code($response),
-                'response_message' => wp_remote_retrieve_response_message($response),
-                'headers' => wp_remote_retrieve_headers($response),
-                'data_null' => $data === null,
-                'data_preview' => $data
             ]));
-            
-            // Check if it's a nginx/proxy timeout
+
             if (strpos($body, '504 Gateway Time-out') !== false || strpos($body, '502 Bad Gateway') !== false) {
-                throw new Exception('WEB SERVER TIMEOUT DETECTED (Anthropic): 504/502 Gateway timeout from web server/proxy. Check nginx/apache timeout settings. Response: ' . substr($body, 0, 200));
-            } elseif (strlen($body) < 200) {
-                throw new Exception('SHORT RESPONSE DETECTED (Anthropic): Connection likely dropped. Response length: ' . strlen($body) . '. Response: ' . $body);
+                throw new Exception('WEB SERVER TIMEOUT DETECTED (Anthropic): 504/502 Gateway timeout. Response: ' . substr($body, 0, 200));
             } else {
-                throw new Exception('INVALID RESPONSE FORMAT (Anthropic): Cannot parse AI service response. Response length: ' . strlen($body) . '. Preview: ' . substr($body, 0, 200));
+                throw new Exception('INVALID RESPONSE FORMAT (Anthropic): Cannot parse response. Length: ' . strlen($body) . '. Preview: ' . substr($body, 0, 200));
             }
         }
-        
-        if (empty($data['success']) || isset($data['error'])) {
-            // Provide more specific error messages
-            $errorMessage = $data['error'] ?? $data['message'] ?? 'Unknown error';
-            
-            // Check for common error patterns
+
+        // Handle Anthropic API errors: {type: 'error', error: {type: '...', message: '...'}}
+        if (isset($data['type']) && $data['type'] === 'error') {
+            $errorMessage = is_array($data['error']) ? ($data['error']['message'] ?? 'Unknown error') : ($data['error'] ?? 'Unknown error');
+
             if (strpos($errorMessage, 'timeout') !== false || strpos($errorMessage, 'timed out') !== false) {
                 throw new Exception('The request timed out. Try reducing the content length or disabling web search.');
             } elseif (strpos($errorMessage, 'rate limit') !== false) {
@@ -3886,21 +3844,32 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             } elseif (strpos($errorMessage, 'credit') !== false || strpos($errorMessage, 'quota') !== false) {
                 throw new Exception('API quota exceeded. Please check your account credits.');
             } else {
-                throw new Exception('Anthropic proxy error: ' . $errorMessage);
+                throw new Exception('Anthropic API error: ' . $errorMessage);
             }
         }
-        $result       = $data['data'];
-        // NEW: detect if the proxy actually used the user-supplied API key
-        $userKeyUsed  = $data['userKeyUsed'] ?? ($data['user_key_used'] ?? false);
-        // Extract credits information from proxy response
-        $credits      = $data['credits'] ?? null;
-        $content      = $result['content']    ?? '';
-        $tool_calls   = $result['tool_calls'] ?? [];
+
+        // Direct API response - extract content and tool_use from content array
+        $result       = $data;
+        $userKeyUsed  = !empty($api_key);
+        $credits      = null;
+
+        // Extract text content and tool calls from Anthropic content array
+        $content = '';
+        $tool_calls = [];
+        if (isset($result['content']) && is_array($result['content'])) {
+            foreach ($result['content'] as $block) {
+                if (isset($block['type']) && $block['type'] === 'text') {
+                    $content .= $block['text'];
+                } elseif (isset($block['type']) && $block['type'] === 'tool_use') {
+                    $tool_calls[] = $block;
+                }
+            }
+        }
         $usage        = $result['usage']      ?? null;
         
         $cost = 0;
         if ($usage) {
-            $model = $request_data['data']['model'];
+            $model = $request_data['model'];
             $cost  = $this->calculate_anthropic_cost($model, $usage);
         }
         return array(
@@ -3920,15 +3889,12 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
         
         $model = $this->get_model_for_provider('google');
-        $license_key = $this->get_license_key();
-        
         // Check if using user's own API key
         $user_api_key = $this->settings['google_api_key'] ?? '';
         $userKeyUsed = !empty($user_api_key);
-        
-        // Get proxy URL (default to production proxy)
-        $proxy_url = $this->settings['proxy_url'] ?? 'https://proxy.magicplugins.io';
-        $endpoint = $proxy_url . '/api/proxy/google';
+
+        // Build Google API endpoint
+        $endpoint = $this->google_proxy_url . '/models/' . $model . ':generateContent?key=' . urlencode($user_api_key);
         
         // Extract system message to detect agent mode
         $system_message = '';
@@ -3954,42 +3920,57 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $tools = array();
         }
         
-        // Build request data
-        $request_data = array(
-            'data' => array(
-                'messages' => $messages,
-                'model' => $model,
-                'temperature' => 0.7,
-                'max_tokens' => $max_tokens ?? 8192
-            )
-        );
-        
-        // Add tools if provided or auto-retrieved
-        // Explicitly check: only add if tools exist AND array has elements
-        if (is_array($tools) && count($tools) > 0) {
-            $request_data['data']['tools'] = $tools;
+        // Convert messages to Google Gemini format
+        $google_contents = array();
+        $system_instruction = '';
+        foreach ($messages as $msg) {
+            if ($msg['role'] === 'system') {
+                if (!empty($system_instruction)) {
+                    $system_instruction .= "\n\n" . $msg['content'];
+                } else {
+                    $system_instruction = $msg['content'];
+                }
+                continue;
+            }
+            $google_role = ($msg['role'] === 'assistant') ? 'model' : 'user';
+            $google_contents[] = array(
+                'role' => $google_role,
+                'parts' => array(array('text' => $msg['content']))
+            );
         }
-        
-        // Prepare headers
+
+        $request_data = array(
+            'contents' => $google_contents,
+            'generationConfig' => array(
+                'temperature' => 0.7,
+                'maxOutputTokens' => $max_tokens ?? 8192,
+            ),
+        );
+
+        // Add system instruction if present
+        if (!empty($system_instruction)) {
+            $request_data['systemInstruction'] = array(
+                'parts' => array(array('text' => $system_instruction))
+            );
+        }
+
+        // Add tools if provided or auto-retrieved
+        if (is_array($tools) && count($tools) > 0) {
+            $request_data['tools'] = $tools;
+        }
+
+        // Add web search (Google Search grounding) if enabled
+        if ($web_search_enabled) {
+            if (!isset($request_data['tools'])) {
+                $request_data['tools'] = array();
+            }
+            $request_data['tools'][] = array('googleSearch' => new \stdClass());
+        }
+
+        // Prepare headers for direct Google API
         $headers = array(
             'Content-Type' => 'application/json',
-            'X-Site-URL' => get_site_url(),
         );
-        
-        // Add license key if available
-        if (!empty($license_key)) {
-            $headers['X-License-Key'] = $license_key;
-        }
-        
-        // Add user API key if available
-        if (!empty($user_api_key)) {
-            $headers['X-User-API-Key'] = $user_api_key;
-        }
-        
-        // Add web search header if enabled
-        if ($web_search_enabled) {
-            $headers['X-Web-Search-Enabled'] = 'true';
-        }
         
         // Make request to proxy
         $response = wp_remote_post($endpoint, array(
@@ -4007,21 +3988,35 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $result = json_decode($response_body, true);
         
         if ($response_code !== 200) {
-            $error_message = $result['error'] ?? 'Unknown error occurred';
+            $error_message = isset($result['error']['message']) ? $result['error']['message'] : ($result['error'] ?? 'Unknown error occurred');
             throw new Exception('Google API error: ' . $error_message);
         }
-        
-        if (!$result['success']) {
-            throw new Exception($result['error'] ?? 'Unknown error');
+
+        $credits = null;
+
+        // Extract content from Google Gemini response format
+        // {candidates: [{content: {parts: [{text: '...'}]}}], usageMetadata: {...}}
+        $content = '';
+        $tool_calls = array();
+        if (isset($result['candidates'][0]['content']['parts'])) {
+            foreach ($result['candidates'][0]['content']['parts'] as $part) {
+                if (isset($part['text'])) {
+                    $content .= $part['text'];
+                } elseif (isset($part['functionCall'])) {
+                    $tool_calls[] = $part['functionCall'];
+                }
+            }
         }
-        
-        $data = $result['data'] ?? array();
-        $credits = $result['credits'] ?? array();
-        
-        // Extract content, tool calls, and usage
-        $content = $data['content'] ?? '';
-        $tool_calls = $data['tool_calls'] ?? array();
-        $usage = $data['usage'] ?? array();
+
+        // Convert Google usage metadata to standard format
+        $usage = array();
+        if (isset($result['usageMetadata'])) {
+            $usage = array(
+                'input_tokens' => $result['usageMetadata']['promptTokenCount'] ?? 0,
+                'output_tokens' => $result['usageMetadata']['candidatesTokenCount'] ?? 0,
+                'total_tokens' => $result['usageMetadata']['totalTokenCount'] ?? 0,
+            );
+        }
         $cost = 0;
         
         // Calculate cost based on tokens if using proxy key
@@ -4087,48 +4082,38 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $model = $this->settings['openrouter_model'] ?? 'openai/gpt-4.1-mini';
 
         $request_data = array(
-            'action'   => 'openrouter',
-            'data'     => array(
-                'model'      => $model,
-                'messages'   => $conversation,
-                'web_search_enabled' => $web_search_enabled,
-            ),
-            'site_url'  => get_site_url(),
-            'timestamp' => time(),
+            'model'      => $model,
+            'messages'   => $conversation,
         );
 
         // Add max_tokens if specified
         if ($max_tokens !== null) {
-            $request_data['data']['max_tokens'] = intval($max_tokens);
+            $request_data['max_tokens'] = intval($max_tokens);
         }
 
         // Only include tools if model supports them AND we're using default system message
         if ($this->openrouter_model_supports_tools($model) && $is_using_default_message) {
             $tools_for_openrouter = $this->get_mcp_tools_for_openai(); // OpenRouter uses OpenAI-style tools
             if (!empty($tools_for_openrouter)) {
-                $request_data['data']['tools'] = $tools_for_openrouter;
+                $request_data['tools'] = $tools_for_openrouter;
             }
         }
-        
+
         if (!empty($system_message)) {
             // For OpenRouter, we add system message to the conversation array at the beginning
-            array_unshift($request_data['data']['messages'], array(
+            array_unshift($request_data['messages'], array(
                 'role' => 'system',
                 'content' => $system_message
             ));
         }
-        
-        // Merge license headers so MagicProxy can track usage
-        $headers = array_merge( array( 'Content-Type' => 'application/json' ), $this->get_license_headers() );
 
-        if ( ! empty( $api_key ) ) {
-            $headers['X-User-Api-Key'] = $api_key;
-        }
-        
-        // Add web search header for proxy
-        if ( $web_search_enabled ) {
-            $headers['X-Web-Search-Enabled'] = 'true';
-        }
+        // Build headers for direct OpenRouter API
+        $headers = array(
+            'Content-Type' => 'application/json',
+            'Authorization' => 'Bearer ' . $api_key,
+            'HTTP-Referer' => get_site_url(),
+            'X-Title' => 'MagicAssistant',
+        );
 
         if ($is_streaming) {
             $this->send_status_update("Sending request to OpenRouter API...");
@@ -4136,14 +4121,14 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
         $json_payload = wp_json_encode( $request_data );
 
-        $response = wp_remote_post( $this->openrouter_proxy_url, array(
+        $response = wp_remote_post( $this->openrouter_proxy_url . '/chat/completions', array(
             'headers' => $headers,
             'body'    => $json_payload,
             'timeout' => 600
         ) );
-        
+
         if (is_wp_error($response)) {
-            throw new Exception('OpenRouter proxy request failed: ' . $response->get_error_message());
+            throw new Exception('OpenRouter API request failed: ' . $response->get_error_message());
         }
         
         if ($is_streaming) {
@@ -4153,59 +4138,49 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
         
-        // Handle timeout or empty responses more gracefully
-        if ($data === null || (empty($data['success']) && empty($data['error']))) {
-            // Log comprehensive debugging information
-            error_log('🚨 AI_Provider - FAILED RESPONSE DEBUG (OpenRouter): ' . json_encode([
+        // Handle timeout or empty responses
+        if ($data === null) {
+            error_log('AI_Provider - FAILED RESPONSE DEBUG (OpenRouter): ' . json_encode([
                 'body_length' => strlen($body),
                 'body_preview' => substr($body, 0, 1000),
                 'response_code' => wp_remote_retrieve_response_code($response),
-                'response_message' => wp_remote_retrieve_response_message($response),
-                'headers' => wp_remote_retrieve_headers($response),
-                'data_null' => $data === null,
-                'data_preview' => $data
             ]));
-            
-            // Check if it's a nginx/proxy timeout
+
             if (strpos($body, '504 Gateway Time-out') !== false || strpos($body, '502 Bad Gateway') !== false) {
-                throw new Exception('WEB SERVER TIMEOUT DETECTED (OpenRouter): 504/502 Gateway timeout from web server/proxy. Check nginx/apache timeout settings. Response: ' . substr($body, 0, 200));
-            } elseif (strlen($body) < 200) {
-                throw new Exception('SHORT RESPONSE DETECTED (OpenRouter): Connection likely dropped. Response length: ' . strlen($body) . '. Response: ' . $body);
+                throw new Exception('WEB SERVER TIMEOUT DETECTED (OpenRouter): 504/502 Gateway timeout. Response: ' . substr($body, 0, 200));
             } else {
-                throw new Exception('INVALID RESPONSE FORMAT (OpenRouter): Cannot parse AI service response. Response length: ' . strlen($body) . '. Preview: ' . substr($body, 0, 200));
+                throw new Exception('INVALID RESPONSE FORMAT (OpenRouter): Cannot parse response. Length: ' . strlen($body) . '. Preview: ' . substr($body, 0, 200));
             }
         }
-        
-        if (empty($data['success']) || isset($data['error'])) {
-            throw new Exception('OpenRouter proxy error: ' . ($data['error'] ?? 'Unknown error'));
+
+        // Handle OpenRouter API errors
+        if (isset($data['error'])) {
+            $errorMessage = is_array($data['error']) ? ($data['error']['message'] ?? 'Unknown error') : $data['error'];
+            throw new Exception('OpenRouter API error: ' . $errorMessage);
         }
-        
-        $result       = $data['data'];
-        $userKeyUsed  = $data['userKeyUsed'] ?? ($data['user_key_used'] ?? false);
-        $credits      = $data['credits'] ?? null;
-        
-        // OpenRouter returns responses in OpenAI chat completions format
+
+        // Direct API response - OpenRouter uses OpenAI chat completions format
+        $result       = $data;
+        $userKeyUsed  = !empty($api_key);
+        $credits      = null;
+
         // The content should be in choices[0].message.content
         $content = '';
         $tool_calls = [];
-        
+
         if (isset($result['choices']) && !empty($result['choices'])) {
             $first_choice = $result['choices'][0];
             $message = $first_choice['message'] ?? [];
             $content = $message['content'] ?? '';
             $tool_calls = $message['tool_calls'] ?? [];
-        } else {
-            // Fallback to direct content access if choices structure not found
-            $content = $result['content'] ?? '';
-            $tool_calls = $result['tool_calls'] ?? [];
         }
-        
+
         $usage        = $result['usage']      ?? null;
         $cost = 0;
         
         if ($usage) {
             // OpenRouter uses OpenAI-style usage reporting
-            $model = $request_data['data']['model'];
+            $model = $request_data['model'];
             $cost  = $this->calculate_openrouter_cost($model, $usage);
         }
         
@@ -4742,36 +4717,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
      * This includes both credit and request limit information based on the user's tier
      */
     private function add_limit_information_to_settings($settings) {
-        // Get the license key from licensing client
-        $licensing_client = $this->get_licensing_client();
-        if (!$licensing_client) {
-            return $settings;
-        }
-
-        $license_key = $licensing_client->getLicenseKey();
-        if (empty($license_key)) {
-            return $settings;
-        }
-        
-        // Get comprehensive limits from MagicProxy
-        $comprehensive_limits = $this->get_comprehensive_limits_from_magicproxy($license_key);
-        if ($comprehensive_limits) {
-            $settings['license_limits'] = array(
-                'tier' => $comprehensive_limits['tier'],
-                'type' => $comprehensive_limits['type']
-            );
-            
-            if ($comprehensive_limits['type'] === 'credits' && isset($comprehensive_limits['credits'])) {
-                // Credit-based tier information
-                $settings['license_limits']['credits'] = $comprehensive_limits['credits'];
-            } elseif ($comprehensive_limits['type'] === 'requests' && isset($comprehensive_limits['requests'])) {
-                // Request-based tier information
-                $settings['license_limits']['requests'] = $comprehensive_limits['requests'];
-            }
-        }
-        
-                 return $settings;
-     }
+        return $settings;
+    }
     
     public function save_settings($request) {
         $data = $request->get_json_params();
@@ -6508,17 +6455,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
      */
     private function generate_session_id() {
         return 'session_' . uniqid() . '_' . time();
-    }
-    
-    /**
-     * Get license key from licensing client
-     */
-    private function get_license_key() {
-        $licensing_client = $this->get_licensing_client();
-        if (!$licensing_client) {
-            return '';
-        }
-        return $licensing_client->getLicenseKey();
     }
     
     /**
@@ -8610,35 +8546,39 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     }
 
     /**
-     * Debug PageSpeed proxy connection
+     * Debug PageSpeed API connection
      */
     public function debug_pagespeed_connection($request) {
         if (!$this->mcp_server) {
-            return new WP_Error('mcp_error', 'MCP server not available', array('status' => 500));
+            return new \WP_Error('mcp_error', 'MCP server not available', array('status' => 500));
         }
-        
+
         try {
-            // Get PageSpeed service instance
             $pagespeed_service = new PageSpeed_Service($this);
-            
+
             if (!$pagespeed_service->is_available()) {
-                return new WP_Error('service_error', 'PageSpeed service not available', array('status' => 500));
+                return new \WP_Error('service_error', 'PageSpeed service not available', array('status' => 500));
             }
-            
-            // Get test URL from request params
-            $test_url = $request->get_param('url') ?: null;
-            
-            // Run debug tests
-            $debug_results = $pagespeed_service->debug_pagespeed_connection($test_url);
-            
+
+            $test_url = $request->get_param('url') ?: home_url();
+
+            // Run a real lightweight PageSpeed request as a connectivity test
+            $result = $pagespeed_service->handle_pagespeed_analysis(array(
+                'url'      => $test_url,
+                'strategy' => 'mobile',
+                'category' => array('performance'),
+            ));
+
             return array(
-                'success' => true,
-                'debug_results' => $debug_results,
-                'timestamp' => current_time('mysql')
+                'success'       => true,
+                'api'           => 'Google PageSpeed Insights API (direct)',
+                'test_url'      => $test_url,
+                'has_scores'    => !empty($result['scores']),
+                'timestamp'     => current_time('mysql'),
             );
-            
+
         } catch (\Exception $e) {
-            return new WP_Error('debug_error', 'Debug failed: ' . $e->getMessage(), array('status' => 500));
+            return new \WP_Error('debug_error', 'Debug failed: ' . $e->getMessage(), array('status' => 500));
         }
     }
 
@@ -8821,565 +8761,16 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         return $transformed;
     }
 
-    /**
-     * Get license status
-     */
-    public function get_license_status($request) {
-        $licensing_client = $this->get_licensing_client();
-
-        if (!$licensing_client) {
-            return new WP_Error('license_client_error', 'License client not available', array('status' => 500));
-        }
-
-        try {
-            $is_active = $licensing_client->isActive();
-            $license_key = $licensing_client->getLicenseKey();
-            $tier = $licensing_client->getTier();
-
-            $status = array(
-                'is_active' => $is_active,
-                'license_key' => $this->mask_license_key($license_key),
-                'site_name' => get_bloginfo('name'),
-                'site_url' => get_site_url(),
-                'product_name' => 'MagicAssistant'
-            );
-
-            // Get activation date from stored option
-            $last_validated = get_option('magicassistant_license_last_validated', '');
-            if ($is_active && !empty($last_validated)) {
-                $timestamp = strtotime($last_validated);
-                $status['activated_at'] = \MagicAssistant\Admin::format_date($timestamp, true);
-                $status['activated_at_raw'] = $last_validated;
-            }
-
-            // Use tier from MagicDash first, fallback to MagicProxy
-            if (!empty($tier)) {
-                $status['tier'] = $tier;
-            } else {
-                // Fallback: Get tier from MagicProxy using the license key
-                $proxy_tier = $this->get_tier_from_magicproxy($license_key);
-                if (!empty($proxy_tier)) {
-                    $status['tier'] = $proxy_tier;
-                }
-            }
-
-            // Get DataForSEO balance from MagicProxy
-            $dataforseo_balance = $this->get_dataforseo_balance_from_magicproxy($license_key);
-            if ($dataforseo_balance !== null) {
-                $status['dataForSEOBalance'] = $dataforseo_balance;
-            }
-
-            // Fetch comprehensive limit information from MagicProxy (credits or requests)
-            $comprehensive_limits = $this->get_comprehensive_limits_from_magicproxy($license_key);
-            if ($comprehensive_limits) {
-                $status['limit_type'] = $comprehensive_limits['type'];
-
-                if ($comprehensive_limits['type'] === 'credits' && isset($comprehensive_limits['credits'])) {
-                    // Credit-based tier (starter, pro, expert)
-                    $credits = $comprehensive_limits['credits'];
-                    if (isset($credits['remaining'])) {
-                        $status['credits_remaining'] = intval($credits['remaining']);
-                    }
-                    if (isset($credits['limit'])) {
-                        $status['credit_limit'] = intval($credits['limit']);
-                    }
-                } elseif ($comprehensive_limits['type'] === 'requests' && isset($comprehensive_limits['requests'])) {
-                    // Request-based tier (free, byok, lifetime)
-                    $status['request_limits'] = $comprehensive_limits['requests'];
-                }
-            } else {
-                // Fallback to legacy credit fetching for backward compatibility
-                $credits = $this->get_credits_from_magicproxy($license_key);
-                if ($credits && isset($credits['remaining'])) {
-                    $status['credits_remaining'] = intval($credits['remaining']);
-                    if (isset($credits['limit'])) {
-                        $status['credit_limit'] = intval($credits['limit']);
-                    }
-                }
-            }
-
-            // Always include current_credits from the DB if present
-            if ($this->db) {
-                $settings = $this->db->get_all_settings();
-                if (isset($settings['current_credits'])) {
-                    $status['current_credits'] = $settings['current_credits'];
-                }
-            }
-
-            return array(
-                'success' => true,
-                'data' => $status
-            );
-        } catch (Exception $e) {
-            error_log('MagicAssistant License Status Error: ' . $e->getMessage());
-            return new WP_Error('license_status_error', 'Failed to get license status: ' . $e->getMessage(), array('status' => 500));
-        }
-    }
-    
-    /**
-     * Activate license
-     */
-    public function activate_license($request) {
-        $licensing_client = $this->get_licensing_client();
-
-        if (!$licensing_client) {
-            return new WP_Error('license_client_error', 'License client not available', array('status' => 500));
-        }
-
-        $data = $request->get_json_params();
-        $license_key = sanitize_text_field($data['license_key'] ?? '');
-
-        if (empty($license_key)) {
-            return new WP_Error('invalid_license_key', 'License key is required', array('status' => 400));
-        }
-
-        try {
-            // Activate the license using MagicPlugins_Core
-            $result = $licensing_client->activate($license_key);
-
-            if ($result === true) {
-                // Get the updated license info
-                $tier = $licensing_client->getTier();
-                $stored_license_key = $licensing_client->getLicenseKey();
-
-                // Get activation date from stored option
-                $last_validated = get_option('magicassistant_license_last_validated', current_time('mysql'));
-                $timestamp = strtotime($last_validated);
-                $activated_at_formatted = \MagicAssistant\Admin::format_date($timestamp, true);
-
-                // Fallback: Get tier from MagicProxy if not from MagicDash
-                if (empty($tier)) {
-                    $tier = $this->get_tier_from_magicproxy($stored_license_key);
-                }
-
-                // Get DataForSEO balance from MagicProxy
-                $dataforseo_balance = $this->get_dataforseo_balance_from_magicproxy($stored_license_key);
-
-                $response_data = array(
-                    'is_active' => true,
-                    'license_key' => $this->mask_license_key($stored_license_key),
-                    'site_name' => get_bloginfo('name'),
-                    'site_url' => get_site_url(),
-                    'activated_at' => $activated_at_formatted,
-                    'activated_at_raw' => $last_validated,
-                    'tier' => $tier,
-                    'product_name' => 'MagicAssistant'
-                );
-
-                if ($dataforseo_balance !== null) {
-                    $response_data['dataForSEOBalance'] = $dataforseo_balance;
-                }
-
-                return array(
-                    'success' => true,
-                    'message' => 'License activated successfully',
-                    'data' => $response_data
-                );
-            } else {
-                // Handle WP_Error or other error responses
-                $error_message = 'Failed to activate license';
-
-                if (is_wp_error($result)) {
-                    $error_messages = $result->get_error_messages();
-                    if (!empty($error_messages)) {
-                        $error_message = $error_messages[0];
-                    }
-                }
-
-                return new WP_Error('activation_failed', $error_message, array('status' => 400));
-            }
-        } catch (Exception $e) {
-            error_log('MagicAssistant License Activation Error: ' . $e->getMessage());
-            return new WP_Error('activation_error', 'License activation failed: ' . $e->getMessage(), array('status' => 400));
-        }
-    }
-    
-    /**
-     * Deactivate license
-     */
-    public function deactivate_license($request) {
-        $licensing_client = $this->get_licensing_client();
-
-        if (!$licensing_client) {
-            return new WP_Error('license_client_error', 'License client not available', array('status' => 500));
-        }
-
-        try {
-            // Deactivate the license using MagicPlugins_Core
-            $result = $licensing_client->deactivate();
-
-            if ($result === true) {
-                return array(
-                    'success' => true,
-                    'message' => 'License deactivated successfully'
-                );
-            } else {
-                // Handle WP_Error or other error responses
-                $error_message = 'Failed to deactivate license';
-
-                if (is_wp_error($result)) {
-                    $error_messages = $result->get_error_messages();
-                    if (!empty($error_messages)) {
-                        $error_message = $error_messages[0];
-                    }
-                }
-
-                return new WP_Error('deactivation_failed', $error_message, array('status' => 400));
-            }
-        } catch (Exception $e) {
-            error_log('MagicAssistant License Deactivation Error: ' . $e->getMessage());
-            return new WP_Error('deactivation_error', 'License deactivation failed: ' . $e->getMessage(), array('status' => 400));
-        }
-    }
-
-    /**
-     * Check permission for remote license deactivation
-     * Validates HMAC signature from MagicDash
-     */
-    public function check_remote_deactivation_permission($request) {
-        $license_key = $request->get_param('licenseKey');
-        $timestamp = $request->get_param('timestamp');
-        $signature = $request->get_param('signature');
-
-        if (empty($license_key) || empty($timestamp) || empty($signature)) {
-            return new WP_Error('missing_params', 'Missing required parameters', array('status' => 400));
-        }
-
-        // Check timestamp is within 5 minutes
-        $current_time = time();
-        if (abs($current_time - intval($timestamp)) > 300) {
-            return new WP_Error('expired_request', 'Request has expired', array('status' => 401));
-        }
-
-        // Verify the license key matches what's stored locally
-        $stored_license_key = get_option('magicassistant_license_key', '');
-        if (empty($stored_license_key) || $stored_license_key !== $license_key) {
-            return new WP_Error('invalid_license', 'License key does not match', array('status' => 401));
-        }
-
-        // Verify HMAC signature
-        // The signature is created using: HMAC-SHA256(licenseKey + timestamp + siteUrl, licenseKey)
-        $site_url = home_url();
-        $expected_signature = hash_hmac('sha256', $license_key . $timestamp . $site_url, $license_key);
-
-        if (!hash_equals($expected_signature, $signature)) {
-            return new WP_Error('invalid_signature', 'Invalid signature', array('status' => 401));
-        }
-
-        return true;
-    }
-
-    /**
-     * Remote license deactivation (called by MagicDash)
-     */
-    public function remote_deactivate_license($request) {
-        $licensing_client = $this->get_licensing_client();
-
-        if (!$licensing_client) {
-            return new WP_Error('license_client_error', 'License client not available', array('status' => 500));
-        }
-
-        try {
-            // Deactivate the license
-            $result = $licensing_client->deactivate();
-
-            if ($result === true) {
-                error_log('MagicAssistant: License remotely deactivated by MagicDash');
-                return array(
-                    'success' => true,
-                    'message' => 'License deactivated successfully'
-                );
-            } else {
-                $error_message = 'Failed to deactivate license';
-                if (is_wp_error($result)) {
-                    $error_messages = $result->get_error_messages();
-                    if (!empty($error_messages)) {
-                        $error_message = $error_messages[0];
-                    }
-                }
-                return new WP_Error('deactivation_failed', $error_message, array('status' => 400));
-            }
-        } catch (Exception $e) {
-            error_log('MagicAssistant Remote Deactivation Error: ' . $e->getMessage());
-            return new WP_Error('deactivation_error', 'License deactivation failed: ' . $e->getMessage(), array('status' => 400));
-        }
-    }
-
-    /**
-     * Debug license client availability
-     */
-    public function debug_license_client($request) {
-        global $mat_licensing_client;
-
-        $debug_info = array(
-            'global_client_available' => !empty($mat_licensing_client),
-            'global_client_class' => $mat_licensing_client ? get_class($mat_licensing_client) : null,
-            'magic_assistant_function_exists' => function_exists('magic_assistant'),
-            'matlic_function_exists' => function_exists('MATLIC'),
-            'magicplugins_core_class_exists' => class_exists('MagicPlugins_Core'),
-        );
-
-        if (function_exists('magic_assistant')) {
-            $instance = magic_assistant();
-            $debug_info['magic_assistant_instance'] = !empty($instance);
-            if ($instance) {
-                $debug_info['has_get_licensing_client_method'] = method_exists($instance, 'get_licensing_client');
-                if (method_exists($instance, 'get_licensing_client')) {
-                    $client = $instance->get_licensing_client();
-                    $debug_info['instance_client_available'] = !empty($client);
-                    $debug_info['instance_client_class'] = $client ? get_class($client) : null;
-                    if ($client) {
-                        $debug_info['license_is_active'] = $client->isActive();
-                        $debug_info['license_tier'] = $client->getTier();
-                    }
-                }
-            }
-        }
-
-        if (function_exists('MATLIC')) {
-            $client = MATLIC();
-            $debug_info['matlic_client_available'] = !empty($client);
-            $debug_info['matlic_client_class'] = $client ? get_class($client) : null;
-        }
-
-        return array(
-            'success' => true,
-            'debug_info' => $debug_info
-        );
-    }
-    
-    /**
-     * Get licensing client wrapper (compatibility layer for MagicPlugins_Core)
-     *
-     * Returns an object with isActive(), getLicenseKey(), getTier(), activate(), deactivate() methods
-     * that internally use MagicPlugins_Core static methods.
-     */
-    private function get_licensing_client() {
-        if (!class_exists('MagicPlugins_Core')) {
-            return null;
-        }
-
-        // Return a compatibility wrapper object
-        return new class {
-            public function isActive() {
-                return \MagicPlugins_Core::is_license_active('magicassistant');
-            }
-
-            public function getLicenseKey() {
-                return \MagicPlugins_Core::get_license_key('magicassistant');
-            }
-
-            public function getTier() {
-                return \MagicPlugins_Core::get_license_tier('magicassistant');
-            }
-
-            public function activate($license_key, $auto_connect = true) {
-                \MagicPlugins_Core::set_current_plugin('magicassistant');
-                return \MagicPlugins_Core::activate_license($license_key, $auto_connect);
-            }
-
-            public function deactivate() {
-                \MagicPlugins_Core::set_current_plugin('magicassistant');
-                return \MagicPlugins_Core::deactivate_license();
-            }
-        };
-    }
-    
-    /**
-     * Mask a license key for display
-     */
-    private function mask_license_key($license_key) {
-        if (empty($license_key)) {
-            return '';
-        }
-        
-        $length = strlen($license_key);
-        if ($length <= 10) {
-            return str_repeat('X', $length);
-        }
-        
-        return substr($license_key, 0, 5) . str_repeat('X', $length - 10) . substr($license_key, -5);
-    }
 
     public function get_license_headers( $debug = false ) {
-        // Build headers containing license information for MagicProxy
-        $headers = array();
-        $licensing_client = $this->get_licensing_client();
-
-        if ( $licensing_client ) {
-            // Get license key from MagicPlugins_Core
-            $license_key = $licensing_client->getLicenseKey();
-            if ( ! empty( $license_key ) ) {
-                $headers['X-License-Key'] = $license_key;
-            }
-
-            // Get license status from MagicPlugins_Core
-            $is_active = $licensing_client->isActive();
-            $headers['X-License-Status'] = $is_active ? 'active' : 'inactive';
-
-            // Get tier from MagicPlugins_Core (stored from MagicDash response)
-            $tier = $licensing_client->getTier();
-            if ( ! empty( $tier ) ) {
-                $headers['X-License-Tier'] = $tier;
-            }
-        }
-
-        // Basic site information – always useful for MagicProxy analytics
-        $headers['X-Site-Url'] = esc_url_raw( get_site_url() );
-
-        return $headers;
+        return array();
     }
 
     /**
-     * Get license tier from MagicProxy
-     * @param string $license_key
-     * @return string|null
+     * Legacy proxy functions removed - API calls are now made directly to providers.
+     * get_tier_from_magicproxy, get_credits_from_magicproxy, get_dataforseo_balance_from_magicproxy
+     * are no longer needed.
      */
-    private function get_tier_from_magicproxy( $license_key ) {
-        if ( empty( $license_key ) ) {
-            return null;
-        }
-
-        try {
-            // Make request to MagicProxy to get license tier information
-            $response = wp_remote_get( 'https://proxy.magicplugins.io/api/proxy/license-tier', array(
-                'headers' => array(
-                    'X-License-Key' => $license_key,
-                    'Content-Type' => 'application/json',
-                ),
-                'timeout' => 10,
-            ) );
-
-            if ( is_wp_error( $response ) ) {
-                return null;
-            }
-
-            $response_code = wp_remote_retrieve_response_code( $response );
-            $response_body = wp_remote_retrieve_body( $response );
-
-            if ( $response_code !== 200 ) {
-                error_log( 'MagicAssistant License Tier Error: HTTP ' . $response_code . ' - ' . $response_body );
-                return null;
-            }
-
-            $data = json_decode( $response_body, true );
-
-            if ( json_last_error() !== JSON_ERROR_NONE ) {
-                return null;
-            }
-
-            if ( isset( $data['tier'] ) && ! empty( $data['tier'] ) ) {
-                return sanitize_text_field( $data['tier'] );
-            }
-
-            return null;
-        } catch ( Exception $e ) {
-            return null;
-        }
-    }
-
-    /**
-     * Get remaining credits information for this license from MagicProxy
-     *
-     * @param string $license_key
-     * @return array|null Array with keys 'remaining' and optionally 'limit', or null on failure
-     */
-    private function get_credits_from_magicproxy( $license_key ) {
-        if ( empty( $license_key ) ) {
-            return null;
-        }
-
-        try {
-            // NOTE: Adjust the endpoint URL if the MagicProxy credit summary endpoint changes
-            $url = 'https://proxy.magicplugins.io/api/proxy/license-credits';
-
-            $response = wp_remote_get( $url, array(
-                'headers' => array(
-                    'X-License-Key' => $license_key,
-                    'Content-Type'   => 'application/json',
-                ),
-                'timeout' => 10,
-            ) );
-
-            if ( is_wp_error( $response ) ) {
-                return null;
-            }
-
-            $code = wp_remote_retrieve_response_code( $response );
-            $body = wp_remote_retrieve_body( $response );
-
-            if ( $code !== 200 ) {
-                error_log( 'MagicAssistant Credit Info Error: HTTP ' . $code . ' - ' . $body );
-                return null;
-            }
-
-            $data = json_decode( $body, true );
-
-            if ( json_last_error() !== JSON_ERROR_NONE || ! is_array( $data ) ) {
-                return null;
-            }
-
-            if ( isset( $data['credits_remaining'] ) || isset( $data['remaining'] ) ) {
-                return array(
-                    'remaining' => $data['credits_remaining'] ?? $data['remaining'],
-                    'limit'     => $data['credit_limit'] ?? $data['limit'] ?? null,
-                );
-            }
-
-            return null;
-        } catch ( Exception $e ) {
-            return null;
-        }
-    }
-
-    /**
-     * Get DataForSEO balance information for this license from MagicProxy
-     *
-     * @param string $license_key
-     * @return float|null Balance amount or null on failure
-     */
-    private function get_dataforseo_balance_from_magicproxy( $license_key ) {
-        if ( empty( $license_key ) ) {
-            return null;
-        }
-
-        try {
-            $response = wp_remote_get( 'https://proxy.magicplugins.io/api/proxy/license-info', array(
-                'headers' => array(
-                    'X-License-Key' => $license_key,
-                ),
-                'timeout' => 10,
-            ) );
-
-            if ( is_wp_error( $response ) ) {
-                return null;
-            }
-
-            $response_code = wp_remote_retrieve_response_code( $response );
-            if ( $response_code !== 200 ) {
-                return null;
-            }
-
-            $body = wp_remote_retrieve_body( $response );
-            $data = json_decode( $body, true );
-
-            if ( json_last_error() !== JSON_ERROR_NONE || ! is_array( $data ) ) {
-                return null;
-            }
-
-            // Debug: Log the full response to see what we're getting
-            error_log( 'DataForSEO proxy response: ' . print_r( $data, true ) );
-
-            // Check for DataForSEO balance in the response
-            if ( isset( $data['dataForSEO']['available'] ) ) {
-                return floatval( $data['dataForSEO']['available'] );
-            }
-
-            return null;
-        } catch ( Exception $e ) {
-            return null;
-        }
-    }
 
     /**
      * Strip out consecutive duplicate messages (by role & trimmed content)
@@ -10346,128 +9737,10 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     }
 
     /**
-     * Get comprehensive limit information for this license from MagicProxy
-     * This includes both credit limits (for paid tiers) and request limits (for free/BYOK/lifetime tiers)
-     *
-     * @param string $license_key
-     * @return array|null Array with comprehensive limit information, or null on failure
+     * Legacy proxy functions removed - get_comprehensive_limits_from_magicproxy and
+     * get_request_limits_from_magicproxy are no longer needed since API calls go directly
+     * to providers.
      */
-    private function get_comprehensive_limits_from_magicproxy( $license_key ) {
-        if ( empty( $license_key ) ) {
-            return null;
-        }
-
-        try {
-            // Get tier information first to determine what type of limits to fetch
-            $tier = $this->get_tier_from_magicproxy( $license_key );
-            if ( empty( $tier ) ) {
-                return null;
-            }
-
-            $limit_info = array(
-                'tier' => $tier,
-                'type' => 'unknown'
-            );
-
-            // Determine if this is a credit-based tier or request-based tier
-            $credit_based_tiers = array( 'starter', 'pro', 'expert' );
-            $request_based_tiers = array( 'free', 'byok', 'lifetime' );
-
-            if ( in_array( $tier, $credit_based_tiers ) ) {
-                // For credit-based tiers, fetch credit information
-                $limit_info['type'] = 'credits';
-                $credits = $this->get_credits_from_magicproxy( $license_key );
-                if ( $credits ) {
-                    $limit_info['credits'] = $credits;
-                }
-            } elseif ( in_array( $tier, $request_based_tiers ) ) {
-                // For request-based tiers, fetch request limit information
-                $limit_info['type'] = 'requests';
-                $request_limits = $this->get_request_limits_from_magicproxy( $license_key );
-                if ( $request_limits ) {
-                    $limit_info['requests'] = $request_limits;
-                }
-            }
-
-            return $limit_info;
-        } catch ( Exception $e ) {
-            error_log( 'MagicAssistant Comprehensive Limits Error: ' . $e->getMessage() );
-            return null;
-        }
-    }
-
-    /**
-     * Get request limit information for this license from MagicProxy
-     * This is used for free, BYOK, and lifetime tiers that use request limits instead of credits
-     *
-     * @param string $license_key
-     * @return array|null Array with request limit information, or null on failure
-     */
-    private function get_request_limits_from_magicproxy( $license_key ) {
-        if ( empty( $license_key ) ) {
-            return null;
-        }
-
-        try {
-            // Use a new endpoint for request limits or enhance the existing credits endpoint
-            $url = 'https://proxy.magicplugins.io/api/proxy/license-limits';
-
-            $response = wp_remote_get( $url, array(
-                'headers' => array(
-                    'X-License-Key' => $license_key,
-                    'Content-Type'   => 'application/json',
-                ),
-                'timeout' => 10,
-            ) );
-
-            if ( is_wp_error( $response ) ) {
-                return null;
-            }
-
-            $code = wp_remote_retrieve_response_code( $response );
-            $body = wp_remote_retrieve_body( $response );
-
-            if ( $code !== 200 ) {
-                error_log( 'MagicAssistant Request Limits Error: HTTP ' . $code . ' - ' . $body );
-                return null;
-            }
-
-            $data = json_decode( $body, true );
-
-            if ( json_last_error() !== JSON_ERROR_NONE || ! is_array( $data ) ) {
-                return null;
-            }
-
-            // Format request limit information
-            if ( isset( $data['requestLimits'] ) ) {
-                return array(
-                    'hourly' => array(
-                        'limit' => $data['requestLimits']['hourly']['limit'] ?? 0,
-                        'used' => $data['requestLimits']['hourly']['used'] ?? 0,
-                        'remaining' => $data['requestLimits']['hourly']['remaining'] ?? 0,
-                        'resetTime' => $data['requestLimits']['hourly']['resetTime'] ?? null
-                    ),
-                    'daily' => array(
-                        'limit' => $data['requestLimits']['daily']['limit'] ?? 0,
-                        'used' => $data['requestLimits']['daily']['used'] ?? 0,
-                        'remaining' => $data['requestLimits']['daily']['remaining'] ?? 0,
-                        'resetTime' => $data['requestLimits']['daily']['resetTime'] ?? null
-                    ),
-                    'monthly' => array(
-                        'limit' => $data['requestLimits']['monthly']['limit'] ?? 0,
-                        'used' => $data['requestLimits']['monthly']['used'] ?? 0,
-                        'remaining' => $data['requestLimits']['monthly']['remaining'] ?? 0,
-                        'resetTime' => $data['requestLimits']['monthly']['resetTime'] ?? null
-                    )
-                );
-            }
-
-            return null;
-        } catch ( Exception $e ) {
-            error_log( 'MagicAssistant Request Limits Exception: ' . $e->getMessage() );
-            return null;
-        }
-    }
 
     public function save_unsplash_image($request) {
         $data = $request->get_json_params();
@@ -10549,46 +9822,25 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             update_post_meta($attachment_id, '_unsplash_id', $unsplash_id);
         }
 
-        // Notify MagicProxy about the download for tracking (MagicProxy will handle Unsplash API auth)
-        if (!empty($download_location)) {
-            $magicproxy_url = 'https://proxy.magicplugins.io/api/proxy/unsplash/download';
-            $max_retries = 3;
-            $retry_count = 0;
-            $notification_success = false;
-
-            while ($retry_count < $max_retries && !$notification_success) {
-                $response = wp_remote_post($magicproxy_url, array(
-                    'timeout' => 10,
-                    'blocking' => true,
-                    'headers' => array(
-                        'Content-Type' => 'application/json',
-                    ),
-                    'body' => json_encode(array(
-                        'download_location' => $download_location,
-                        'unsplash_id' => $unsplash_id,
-                        'photographer' => $photographer,
-                        'site_url' => get_site_url(),
-                        'plugin_version' => defined('MAGICASSISTANT_VERSION') ? MAGICASSISTANT_VERSION : '1.0.0',
-                        'retry_attempt' => $retry_count + 1
-                    ))
-                ));
-
-                if (is_wp_error($response)) {
-                    $retry_count++;
-                    if ($retry_count < $max_retries) {
-                        sleep(1);
-                    }
-                } else {
-                    $response_code = wp_remote_retrieve_response_code($response);
-                    if ($response_code >= 200 && $response_code < 300) {
-                        $notification_success = true;
-                    } else {
-                        $retry_count++;
-                        if ($retry_count < $max_retries) {
-                            sleep(1);
-                        }
-                    }
+        // Notify Unsplash about the download for tracking (required by Unsplash API terms)
+        if (!empty($unsplash_id)) {
+            $unsplash_access_key = '';
+            if ($this->db) {
+                $encrypted_key = $this->db->get_setting('unsplash_access_key');
+                if (!empty($encrypted_key)) {
+                    $unsplash_access_key = $this->db->decrypt_api_key($encrypted_key);
                 }
+            }
+            if (!empty($unsplash_access_key)) {
+                $download_endpoint = 'https://api.unsplash.com/photos/' . urlencode($unsplash_id) . '/download';
+                wp_remote_get($download_endpoint, array(
+                    'timeout' => 10,
+                    'blocking' => false,
+                    'headers' => array(
+                        'Authorization' => 'Client-ID ' . $unsplash_access_key,
+                        'Accept' => 'application/json',
+                    ),
+                ));
             }
         }
 
@@ -10703,48 +9955,25 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             return new WP_Error('featured_image_failed', 'Failed to set featured image', array('status' => 500));
         }
 
-        // Notify MagicProxy about the download for tracking (for Unsplash images)
-        if (!empty($download_location)) {
-            $magicproxy_url = 'https://proxy.magicplugins.io/api/proxy/unsplash/download';
-            $max_retries = 3;
-            $retry_count = 0;
-            $notification_success = false;
-
-            while ($retry_count < $max_retries && !$notification_success) {
-                $response = wp_remote_post($magicproxy_url, array(
-                    'timeout' => 10,
-                    'blocking' => true,
-                    'headers' => array(
-                        'Content-Type' => 'application/json',
-                    ),
-                    'body' => json_encode(array(
-                        'download_location' => $download_location,
-                        'unsplash_id' => $unsplash_id,
-                        'photographer' => $photographer,
-                        'site_url' => get_site_url(),
-                        'plugin_version' => defined('MAGICASSISTANT_VERSION') ? MAGICASSISTANT_VERSION : '1.0.0',
-                        'context' => 'featured_image',
-                        'post_id' => $post_id,
-                        'retry_attempt' => $retry_count + 1
-                    ))
-                ));
-
-                if (is_wp_error($response)) {
-                    $retry_count++;
-                    if ($retry_count < $max_retries) {
-                        sleep(1);
-                    }
-                } else {
-                    $response_code = wp_remote_retrieve_response_code($response);
-                    if ($response_code >= 200 && $response_code < 300) {
-                        $notification_success = true;
-                    } else {
-                        $retry_count++;
-                        if ($retry_count < $max_retries) {
-                            sleep(1);
-                        }
-                    }
+        // Notify Unsplash about the download for tracking (required by Unsplash API terms)
+        if (!empty($unsplash_id)) {
+            $unsplash_access_key = '';
+            if ($this->db) {
+                $encrypted_key = $this->db->get_setting('unsplash_access_key');
+                if (!empty($encrypted_key)) {
+                    $unsplash_access_key = $this->db->decrypt_api_key($encrypted_key);
                 }
+            }
+            if (!empty($unsplash_access_key)) {
+                $download_endpoint = 'https://api.unsplash.com/photos/' . urlencode($unsplash_id) . '/download';
+                wp_remote_get($download_endpoint, array(
+                    'timeout' => 10,
+                    'blocking' => false,
+                    'headers' => array(
+                        'Authorization' => 'Client-ID ' . $unsplash_access_key,
+                        'Accept' => 'application/json',
+                    ),
+                ));
             }
         }
 

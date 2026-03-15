@@ -11,10 +11,10 @@
  * Plugin Name:       MagicAssistant
  * Plugin URI:        https://magicplugins.io
  * Description:       Your personal AI assistant for WordPress websites.
- * Version:           1.3.7
+ * Version:           2.0
  * Requires PHP:      7.4
  * Author:            Christian Wenterodt
- * Author URI:        https://magicplugins.io
+ * Author URI:        https://chrispump.me
  * Text Domain:       magic-assistant
  * Domain Path:       /languages
  * License:           GPL v2 or later
@@ -24,19 +24,11 @@
 if (!defined('ABSPATH')) exit;
 
 // Define plugin constants
-define('MAGIC_ASSISTANT_VERSION', '1.3.7');
+define('MAGIC_ASSISTANT_VERSION', '2.0');
 define('MAGIC_ASSISTANT_PLUGIN_FILE', __FILE__);
 define('MAGIC_ASSISTANT_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('MAGIC_ASSISTANT_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('MAGIC_ASSISTANT_PLUGIN_BASENAME', plugin_basename(__FILE__));
-
-// Load Composer autoloader
-require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'vendor/autoload.php';
-
-// Load MagicPlugins Core (unified licensing + connection)
-if (!class_exists('MagicPlugins_Core')) {
-    require_once MAGIC_ASSISTANT_PLUGIN_PATH . 'includes/class-magicplugins-core.php';
-}
 
 class MagicAssistant {
 
@@ -54,17 +46,6 @@ class MagicAssistant {
   }
 
   public function init() {
-    // Initialize MagicPlugins Core (unified licensing + connection)
-    // This enables auto-registration when a connection already exists from another plugin
-    \MagicPlugins_Core::init(array(
-        'plugin_name' => 'MagicAssistant',
-        'plugin_slug' => 'magicassistant',
-        'plugin_version' => MAGIC_ASSISTANT_VERSION,
-        'plugin_file' => MAGIC_ASSISTANT_PLUGIN_FILE,
-        'settings_prefix' => 'magicassistant_license',
-        'text_domain' => 'magic-assistant',
-    ));
-
     // Initialize database
     $this->db = new MagicAssistant\DB();
 
@@ -184,42 +165,6 @@ function MATDFS() {
  */
 function MATPS() {
   return $GLOBALS['magic_assistant']->get_pagespeed_service();
-}
-
-/**
- * Check if MagicAssistant license is active
- *
- * @return bool
- */
-function mat_is_license_active() {
-  if (!class_exists('MagicPlugins_Core')) {
-    return false;
-  }
-  return MagicPlugins_Core::is_license_active('magicassistant');
-}
-
-/**
- * Get MagicAssistant license key
- *
- * @return string
- */
-function mat_get_license_key() {
-  if (!class_exists('MagicPlugins_Core')) {
-    return '';
-  }
-  return MagicPlugins_Core::get_license_key('magicassistant');
-}
-
-/**
- * Get MagicAssistant license tier
- *
- * @return string
- */
-function mat_get_license_tier() {
-  if (!class_exists('MagicPlugins_Core')) {
-    return '';
-  }
-  return MagicPlugins_Core::get_license_tier('magicassistant');
 }
 
 // Register login event tracker

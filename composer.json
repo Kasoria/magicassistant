@@ -19,8 +19,7 @@
     ],
     "homepage": "https://magicplugins.io",
     "require": {
-        "php": ">=7.4",
-        "yahnis-elsts/plugin-update-checker": "^5.4"
+        "php": ">=7.4"
     },
     "autoload": {
         "psr-4": {

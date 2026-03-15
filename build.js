@@ -29,9 +29,8 @@ const includeFiles = [
   'languages',
   'uninstall.php',
   'dist',
-  'vendor',
-  'licensing',
-  'release.json'
+  'readme.txt',
+  'LICENSE'
 ];
 
 // Files and directories to exclude from the build

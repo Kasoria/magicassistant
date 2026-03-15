@@ -1,7 +1,7 @@
 <?php
 /**
  * DataForSEO integration for MagicAssistant
- * Routes all SEO API calls through magicplugins.io proxy
+ * Calls the DataForSEO API directly with user-provided credentials (Basic Auth).
  *
  * @package MagicAssistant
  */
@@ -11,12 +11,56 @@ namespace MagicAssistant;
 if (!defined('ABSPATH')) exit;
 
 class DataForSEO {
-    
-    private $proxy_url = 'https://proxy.magicplugins.io/api/proxy/dataforseo';
-    private $pagespeed_proxy_url = 'https://proxy.magicplugins.io/api/proxy/pagespeed';
+
+    private $api_base_url = 'https://api.dataforseo.com/v3';
     private $mcp_server;
     private $ai_provider;
     private $timeout = 30;
+
+    /**
+     * Map action names to DataForSEO API endpoints and whether they use POST.
+     * Endpoints under /content_generation/ do NOT get the .ai suffix.
+     */
+    private $endpoint_map = array(
+        'serp_analysis'                  => '/serp/google/organic/live/advanced',
+        'keyword_difficulty'             => '/keywords_data/google_ads/search_volume/live',
+        'domain_analysis'                => null, // resolved dynamically
+        'competitor_analysis'            => '/dataforseo_labs/google/competitors_domain/live',
+        'technical_audit'                => null, // resolved dynamically
+        'get_locations'                  => '/serp/google/locations', // GET, special
+        'content_generate'               => '/content_generation/generate/live',
+        'content_generate_text'          => '/content_generation/generate_text/live',
+        'content_generate_meta_tags'     => '/content_generation/generate_meta_tags/live',
+        'content_generate_sub_topics'    => '/content_generation/generate_sub_topics/live',
+        'content_paraphrase'             => '/content_generation/paraphrase/live',
+        'content_check_grammar'          => '/content_generation/check_grammar/live',
+        'content_text_summary'           => '/content_generation/text_summary/live',
+        'content_grammar_languages'      => '/content_generation/check_grammar/languages',
+        'content_grammar_rules'          => '/content_generation/grammar_rules',
+        'content_summary_languages'      => '/content_generation/text_summary/languages',
+        'ai_keyword_locations_languages' => '/ai_optimization/ai_keyword_data/locations_and_languages', // GET
+        'ai_keyword_search_volume'       => '/ai_optimization/ai_keyword_data/keywords_search_volume/live',
+        'chatgpt_models'                 => '/ai_optimization/chat_gpt/llm_responses/models', // GET
+        'chatgpt_llm_responses'          => '/ai_optimization/chat_gpt/llm_responses/live',
+        'claude_models'                  => '/ai_optimization/claude/llm_responses/models', // GET
+        'claude_llm_responses'           => '/ai_optimization/claude/llm_responses/live',
+        'gemini_models'                  => '/ai_optimization/gemini/llm_responses/models', // GET
+        'gemini_llm_responses'           => '/ai_optimization/gemini/llm_responses/live',
+        'perplexity_models'              => '/ai_optimization/perplexity/llm_responses/models', // GET
+        'perplexity_llm_responses'       => '/ai_optimization/perplexity/llm_responses/live',
+    );
+
+    /**
+     * Actions that use GET instead of POST
+     */
+    private $get_actions = array(
+        'get_locations',
+        'ai_keyword_locations_languages',
+        'chatgpt_models',
+        'claude_models',
+        'gemini_models',
+        'perplexity_models',
+    );
     
     public function __construct() {
         // Will be initialized by the main plugin class
@@ -618,7 +662,325 @@ class DataForSEO {
     }
     
     /**
-     * Make request to magicplugins.io proxy
+     * Get DataForSEO credentials from user settings
+     *
+     * @return array{login: string, key: string}
+     * @throws \Exception if credentials are not configured
+     */
+    private function get_dataforseo_credentials() {
+        if (!$this->ai_provider || !$this->ai_provider->get_db()) {
+            throw new \Exception('DataForSEO API credentials not configured. Please add your DataForSEO login and API key in Settings.');
+        }
+
+        $encrypted_login_id = $this->ai_provider->get_db()->get_setting('dataforseo_login_id');
+        $encrypted_key      = $this->ai_provider->get_db()->get_setting('dataforseo_api_key');
+
+        if (empty($encrypted_login_id) || empty($encrypted_key)) {
+            throw new \Exception('DataForSEO API credentials not configured. Please add your DataForSEO login and API key in Settings.');
+        }
+
+        $login = $this->ai_provider->get_db()->decrypt_api_key($encrypted_login_id);
+        $api_key = $this->ai_provider->get_db()->decrypt_api_key($encrypted_key);
+
+        if (empty($login) || empty($api_key)) {
+            throw new \Exception('DataForSEO API credentials could not be decrypted. Please re-enter your DataForSEO login and API key in Settings.');
+        }
+
+        return array('login' => $login, 'key' => $api_key);
+    }
+
+    /**
+     * Build the full DataForSEO API URL for a given endpoint path.
+     * Content-generation endpoints do not get the .ai suffix; all others do.
+     */
+    private function build_api_url($endpoint_path) {
+        $suffix = (strpos($endpoint_path, '/content_generation/') !== false) ? '' : '.ai';
+        return $this->api_base_url . $endpoint_path . $suffix;
+    }
+
+    /**
+     * Resolve the endpoint and request body for a given action + args.
+     *
+     * @return array{url: string, body: array|null, method: string}
+     */
+    private function resolve_request($action, $args) {
+        $method = in_array($action, $this->get_actions, true) ? 'GET' : 'POST';
+
+        // Actions with dynamic endpoint resolution
+        if ($action === 'domain_analysis') {
+            return $this->resolve_domain_analysis_request($args);
+        }
+        if ($action === 'technical_audit') {
+            return $this->resolve_technical_audit_request($args);
+        }
+        if ($action === 'status') {
+            return array('url' => null, 'body' => null, 'method' => 'INTERNAL');
+        }
+
+        $endpoint_path = $this->endpoint_map[$action] ?? null;
+        if (!$endpoint_path) {
+            throw new \Exception('Unknown DataForSEO action: ' . $action);
+        }
+
+        // Special handling: get_locations uses the base URL without .ai suffix override
+        if ($action === 'get_locations') {
+            return array(
+                'url'    => $this->api_base_url . $endpoint_path . '.ai',
+                'body'   => null,
+                'method' => 'GET',
+            );
+        }
+
+        // Build request body per action
+        $request_body = $this->build_request_body($action, $args);
+        $url = $this->build_api_url($endpoint_path);
+
+        return array('url' => $url, 'body' => $request_body, 'method' => $method);
+    }
+
+    /**
+     * Build the request body (array of task objects) for POST actions.
+     */
+    private function build_request_body($action, $args) {
+        switch ($action) {
+            case 'serp_analysis':
+                return array(array(
+                    'keyword'       => $args['keyword'],
+                    'location_code' => $args['location_code'] ?? 2840,
+                    'language_code' => $args['language_code'] ?? 'en',
+                    'device'        => $args['device'] ?? 'desktop',
+                    'os'            => ($args['device'] ?? 'desktop') === 'mobile' ? 'android' : 'windows',
+                ));
+
+            case 'keyword_difficulty':
+                return array(array(
+                    'keywords'      => $args['keywords'],
+                    'location_code' => $args['location_code'] ?? 2840,
+                    'language_code' => $args['language_code'] ?? 'en',
+                ));
+
+            case 'competitor_analysis':
+                $domain = preg_replace('/^(https?:\/\/)?(www\.)?/', '', rtrim($args['domain'] ?? '', '/'));
+                return array(array(
+                    'target'        => $domain,
+                    'location_code' => $args['location_code'] ?? 2840,
+                    'item_types'    => array('organic'),
+                    'limit'         => min($args['limit'] ?? 10, 100),
+                ));
+
+            case 'content_generate':
+                return array(array_filter(array(
+                    'text'             => $args['text'] ?? '',
+                    'creativity_index' => $args['creativity_index'] ?? 0.5,
+                    'max_new_tokens'   => $args['max_new_tokens'] ?? 100,
+                    'max_tokens'       => $args['max_tokens'] ?? 8192,
+                    'tag'              => $args['tag'] ?? null,
+                ), function($v) { return $v !== null; }));
+
+            case 'content_generate_text':
+                return array(array_filter(array(
+                    'topic'            => $args['topic'] ?? '',
+                    'word_count'       => $args['word_count'] ?? 100,
+                    'creativity_index' => $args['creativity_index'] ?? 0.5,
+                    'sub_topics'       => $args['sub_topics'] ?? null,
+                    'meta_keywords'    => $args['meta_keywords'] ?? null,
+                    'avoid_words'      => $args['avoid_words'] ?? null,
+                    'tag'              => $args['tag'] ?? null,
+                ), function($v) { return $v !== null; }));
+
+            case 'content_generate_meta_tags':
+                return array(array_filter(array(
+                    'content' => $args['content'] ?? '',
+                    'tag'     => $args['tag'] ?? null,
+                ), function($v) { return $v !== null; }));
+
+            case 'content_generate_sub_topics':
+                return array(array_filter(array(
+                    'topic' => $args['topic'] ?? '',
+                    'tag'   => $args['tag'] ?? null,
+                ), function($v) { return $v !== null; }));
+
+            case 'content_paraphrase':
+                return array(array_filter(array(
+                    'text'             => $args['text'] ?? '',
+                    'creativity_index' => $args['creativity_index'] ?? 0.5,
+                    'tag'              => $args['tag'] ?? null,
+                ), function($v) { return $v !== null; }));
+
+            case 'content_check_grammar':
+                return array(array_filter(array(
+                    'text'          => $args['text'] ?? '',
+                    'language_code' => $args['language_code'] ?? 'en',
+                    'tag'           => $args['tag'] ?? null,
+                ), function($v) { return $v !== null; }));
+
+            case 'content_text_summary':
+                return array(array_filter(array(
+                    'text'          => $args['text'] ?? '',
+                    'language_code' => $args['language_code'] ?? 'en',
+                    'tag'           => $args['tag'] ?? null,
+                ), function($v) { return $v !== null; }));
+
+            case 'content_grammar_languages':
+            case 'content_grammar_rules':
+            case 'content_summary_languages':
+                return array(array());
+
+            case 'ai_keyword_search_volume':
+                return array(array(
+                    'keywords'      => $args['keywords'] ?? array(),
+                    'location_code' => $args['location_code'],
+                    'language_code' => $args['language_code'],
+                ));
+
+            case 'chatgpt_llm_responses':
+                return array(array_filter(array(
+                    'user_prompt'      => $args['user_prompt'],
+                    'model_name'       => $args['model_name'] ?? 'gpt-4o-mini',
+                    'max_output_tokens' => $args['max_output_tokens'] ?? 8192,
+                    'temperature'      => $args['temperature'] ?? 0.94,
+                    'web_search'       => $args['web_search'] ?? false,
+                    'system_message'   => $args['system_message'] ?? null,
+                ), function($v) { return $v !== null; }));
+
+            case 'claude_llm_responses':
+                return array(array_filter(array(
+                    'user_prompt'      => $args['user_prompt'],
+                    'model_name'       => $args['model_name'] ?? 'claude-sonnet-4-5-20250929',
+                    'max_output_tokens' => $args['max_output_tokens'] ?? 8192,
+                    'temperature'      => $args['temperature'] ?? 0.94,
+                    'web_search'       => $args['web_search'] ?? false,
+                    'system_message'   => $args['system_message'] ?? null,
+                ), function($v) { return $v !== null; }));
+
+            case 'gemini_llm_responses':
+                $body = array_filter(array(
+                    'user_prompt'      => $args['user_prompt'],
+                    'model_name'       => $args['model_name'] ?? 'gemini-1.5-flash',
+                    'max_output_tokens' => $args['max_output_tokens'] ?? 8192,
+                    'temperature'      => $args['temperature'] ?? 1.3,
+                    'web_search'       => $args['web_search'] ?? false,
+                    'system_message'   => $args['system_message'] ?? null,
+                    'top_p'            => $args['top_p'] ?? null,
+                ), function($v) { return $v !== null; });
+                return array($body);
+
+            case 'perplexity_llm_responses':
+                $body = array_filter(array(
+                    'user_prompt'                  => $args['user_prompt'],
+                    'model_name'                   => $args['model_name'] ?? 'sonar',
+                    'max_output_tokens'            => $args['max_output_tokens'] ?? 8192,
+                    'temperature'                  => $args['temperature'] ?? 0.77,
+                    'system_message'               => $args['system_message'] ?? null,
+                    'web_search_country_iso_code'  => $args['web_search_country_iso_code'] ?? null,
+                    'top_p'                        => $args['top_p'] ?? null,
+                ), function($v) { return $v !== null; });
+                return array($body);
+
+            default:
+                // For simple actions, wrap args directly
+                return array($args);
+        }
+    }
+
+    /**
+     * Resolve domain analysis request (multiple sub-types)
+     */
+    private function resolve_domain_analysis_request($args) {
+        $domain = preg_replace('/^(https?:\/\/)?(www\.)?/', '', rtrim($args['domain'] ?? '', '/'));
+        $analysis_type = strtolower($args['analysis_type'] ?? 'overview');
+
+        switch ($analysis_type) {
+            case 'backlinks':
+                $endpoint = '/backlinks/overview/live';
+                $request_body = array(array(
+                    'target'               => $domain,
+                    'internal_list_limit'  => 10,
+                    'include_subdomains'   => true,
+                    'backlinks_status_type' => 'live',
+                ));
+                break;
+
+            case 'organic_keywords':
+                $endpoint = '/dataforseo_labs/google/ranked_keywords/live';
+                $request_body = array(array(
+                    'target'        => $domain,
+                    'location_code' => $args['location_code'] ?? 2840,
+                    'language_code' => $args['language_code'] ?? 'en',
+                    'item_types'    => array('organic'),
+                    'limit'         => 1000,
+                    'filters'       => array(array('position', '<=', 100)),
+                ));
+                break;
+
+            case 'overview':
+            default:
+                $endpoint = '/dataforseo_labs/google/ranked_keywords/live';
+                $request_body = array(array(
+                    'target'                   => $domain,
+                    'location_code'            => $args['location_code'] ?? 2840,
+                    'language_code'            => $args['language_code'] ?? 'en',
+                    'item_types'               => array('organic'),
+                    'include_clickstream_data'  => true,
+                    'limit'                    => 1000,
+                ));
+                break;
+        }
+
+        return array(
+            'url'    => $this->build_api_url($endpoint),
+            'body'   => $request_body,
+            'method' => 'POST',
+        );
+    }
+
+    /**
+     * Resolve technical audit request (multiple sub-types)
+     */
+    private function resolve_technical_audit_request($args) {
+        $audit_type = strtolower($args['audit_type'] ?? 'lighthouse');
+        $is_mobile  = ($args['device'] ?? 'desktop') === 'mobile';
+
+        switch ($audit_type) {
+            case 'page_speed':
+                $endpoint = '/on_page/page_screenshot/live';
+                $request_body = array(array(
+                    'url'              => $args['url'],
+                    'accept_language'  => 'en-US,en;q=0.9',
+                    'browser_preset'   => $is_mobile ? 'mobile' : 'desktop',
+                ));
+                break;
+
+            case 'crawl':
+                $endpoint = '/on_page/instant_pages/live';
+                $request_body = array(array(
+                    'url'               => $args['url'],
+                    'custom_user_agent' => 'Mozilla/5.0 (compatible; DataForSEO/1.0)',
+                    'browser_preset'    => $is_mobile ? 'mobile' : 'desktop',
+                ));
+                break;
+
+            case 'lighthouse':
+            default:
+                $endpoint = '/on_page/lighthouse/live/json';
+                $request_body = array(array(
+                    'url'           => $args['url'],
+                    'for_mobile'    => $is_mobile,
+                    'categories'    => array('performance', 'accessibility', 'best_practices', 'seo'),
+                    'language_code' => 'en',
+                ));
+                break;
+        }
+
+        return array(
+            'url'    => $this->build_api_url($endpoint),
+            'body'   => $request_body,
+            'method' => 'POST',
+        );
+    }
+
+    /**
+     * Make request directly to DataForSEO API with Basic Auth
      */
     private function make_proxy_request($action, $args) {
         // EXTRA CLEANING: For competitor analysis, completely remove any language-related keys
@@ -627,76 +989,67 @@ class DataForSEO {
             foreach ($language_keys as $key) {
                 unset($args[$key]);
             }
-            
-            // Debug logging for competitor analysis
         }
-        
-        // Prepare request data
-        $request_data = array(
-            'action' => $action,
-            'data' => $args,
-            'site_url' => get_site_url(),
-            'plugin_version' => MAGIC_ASSISTANT_VERSION,
-            'timestamp' => time()
+
+        // Handle status action locally
+        if ($action === 'status') {
+            return array('status' => 'operational', 'timestamp' => time());
+        }
+
+        // Get credentials
+        $credentials = $this->get_dataforseo_credentials();
+        $auth_header = 'Basic ' . base64_encode($credentials['login'] . ':' . $credentials['key']);
+
+        // Resolve endpoint, body, and method
+        $request_info = $this->resolve_request($action, $args);
+        $url    = $request_info['url'];
+        $body   = $request_info['body'];
+        $method = $request_info['method'];
+
+        $headers = array(
+            'Content-Type'  => 'application/json',
+            'Authorization' => $auth_header,
+            'User-Agent'    => 'MagicAssistant/' . MAGIC_ASSISTANT_VERSION,
         );
-        
-        // Add site authentication
-        $request_data['auth'] = $this->generate_request_auth($request_data);
-        
-        // Merge license headers (needed by MagicProxy for verification)
-        $license_headers = $this->get_license_headers();
-        
-        if ($this->ai_provider && $this->ai_provider->get_db()) {
-            $encrypted_login_id = $this->ai_provider->get_db()->get_setting('dataforseo_login_id');
-            $encrypted_key = $this->ai_provider->get_db()->get_setting('dataforseo_api_key');
-            
-            if ($encrypted_login_id && $encrypted_key) {
-                $user_login_id = $this->ai_provider->get_db()->decrypt_api_key($encrypted_login_id);
-                $user_key = $this->ai_provider->get_db()->decrypt_api_key($encrypted_key);
-                
-                if (!empty($user_login_id) && !empty($user_key)) {
-                    $license_headers['X-User-Dataforseo-Login'] = $user_login_id;
-                    $license_headers['X-User-Dataforseo-Key'] = $user_key;
-                }
-            }
+
+        if ($method === 'GET') {
+            $response = wp_remote_get($url, array(
+                'headers'   => $headers,
+                'timeout'   => $this->timeout,
+                'sslverify' => true,
+            ));
+        } else {
+            $response = wp_remote_post($url, array(
+                'headers'   => $headers,
+                'body'      => wp_json_encode($body),
+                'timeout'   => $this->timeout,
+                'sslverify' => true,
+            ));
         }
-        
-        $response = wp_remote_post($this->proxy_url, array(
-            'headers' => array_merge(
-                array(
-                    'Content-Type' => 'application/json',
-                    'User-Agent'   => 'MagicAssistant/' . MAGIC_ASSISTANT_VERSION,
-                ),
-                $license_headers
-            ),
-            'body'     => wp_json_encode($request_data),
-            'timeout'  => $this->timeout,
-            'sslverify'=> true
-        ));
-        
+
         if (is_wp_error($response)) {
-            throw new \Exception('DataForSEO proxy request failed: ' . $response->get_error_message());
+            throw new \Exception('DataForSEO API request failed: ' . $response->get_error_message());
         }
-        
+
         $status_code = wp_remote_retrieve_response_code($response);
-        $body = wp_remote_retrieve_body($response);
-        
+        $response_body = wp_remote_retrieve_body($response);
+
         if ($status_code !== 200) {
-            // Log detailed error information for debugging
-            throw new \Exception('DataForSEO proxy returned error: HTTP ' . $status_code . (strlen($body) > 0 ? ' - ' . substr($body, 0, 200) : ''));
+            throw new \Exception('DataForSEO API returned error: HTTP ' . $status_code . (strlen($response_body) > 0 ? ' - ' . substr($response_body, 0, 200) : ''));
         }
-        
-        $data = json_decode($body, true);
-        
+
+        $data = json_decode($response_body, true);
+
         if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new \Exception('Invalid JSON response from DataForSEO proxy');
+            throw new \Exception('Invalid JSON response from DataForSEO API');
         }
-        
-        if (isset($data['error'])) {
-            throw new \Exception('DataForSEO API error: ' . $data['error']);
+
+        // DataForSEO returns {status_code, status_message, tasks: [...]}
+        if (isset($data['status_code']) && $data['status_code'] !== 20000) {
+            throw new \Exception('DataForSEO API error: ' . ($data['status_message'] ?? 'Unknown error'));
         }
-        
-        return $data['data'] ?? $data;
+
+        return $data;
     }
     
     /**
@@ -725,25 +1078,6 @@ class DataForSEO {
         throw $last_exception;
     }
     
-    /**
-     * Generate authentication signature for requests
-     */
-    private function generate_request_auth($request_data) {
-        // Create a unique identifier for this site
-        $site_identifier = hash('sha256', home_url() . get_option('siteurl'));
-        
-        // Create signature using site data
-        $signature_data = array(
-            'site_id' => $site_identifier,
-            'timestamp' => $request_data['timestamp'],
-            'action' => $request_data['action']
-        );
-        
-        return array(
-            'site_id' => $site_identifier,
-            'signature' => hash_hmac('sha256', wp_json_encode($signature_data), $site_identifier)
-        );
-    }
     
     /**
      * Check if DataForSEO integration is available
@@ -1707,73 +2041,4 @@ class DataForSEO {
         return $location_map[$location] ?? 2840; // Default to US if not found
     }
 
-    /**
-     * Build headers containing license information (mirrors AI_Provider::get_license_headers)
-     */
-    private function get_license_headers( $debug = false ) {
-        $headers = array();
-
-        // Attempt to get licensing client using same logic as AI_Provider
-        $licensing_client = null;
-
-        // Prefer AI_Provider instance if available - use get_license_headers directly if possible
-        if ( $this->ai_provider && method_exists( $this->ai_provider, 'get_license_headers' ) ) {
-            // AI_Provider has a public get_license_headers method - use it directly
-            return $this->ai_provider->get_license_headers( $debug );
-        }
-
-        // Fallback: get licensing client via reflection
-        if ( $this->ai_provider ) {
-            try {
-                $ref = new \ReflectionClass( $this->ai_provider );
-                if ( $ref->hasMethod( 'get_licensing_client' ) ) {
-                    $method = $ref->getMethod( 'get_licensing_client' );
-                    $method->setAccessible( true );
-                    $licensing_client = $method->invoke( $this->ai_provider );
-                }
-            } catch ( \Exception $e ) {
-                // ignore reflection errors
-            }
-        }
-
-        // Fallback: use global helpers
-        if ( ! $licensing_client && function_exists( 'MATLIC' ) ) {
-            $licensing_client = MATLIC();
-        }
-
-        if ( ! $licensing_client && function_exists( 'magic_assistant' ) ) {
-            $instance = magic_assistant();
-            if ( $instance && method_exists( $instance, 'get_licensing_client' ) ) {
-                $licensing_client = $instance->get_licensing_client();
-            }
-        }
-
-        if ( $licensing_client ) {
-            // Use the new anonymous class API (getLicenseKey, isActive, getTier)
-            // NOT the old settings() API which no longer exists
-            if ( method_exists( $licensing_client, 'getLicenseKey' ) ) {
-                $license_key = $licensing_client->getLicenseKey();
-                if ( ! empty( $license_key ) ) {
-                    $headers['X-License-Key'] = $license_key;
-                }
-            }
-
-            if ( method_exists( $licensing_client, 'isActive' ) ) {
-                $is_active = $licensing_client->isActive();
-                $headers['X-License-Status'] = $is_active ? 'active' : 'inactive';
-            }
-
-            if ( method_exists( $licensing_client, 'getTier' ) ) {
-                $tier = $licensing_client->getTier();
-                if ( ! empty( $tier ) ) {
-                    $headers['X-License-Tier'] = $tier;
-                }
-            }
-        }
-
-        // Always send site URL for analytics (use get_site_url for consistency with proxy)
-        $headers['X-Site-Url'] = esc_url_raw( get_site_url() );
-
-        return $headers;
-    }
 } 

@@ -1,128 +1,130 @@
 === MagicAssistant ===
-Contributors: christianwenterodt
-Tags: ai, assistant, artificial-intelligence, chatbot, automation
-Requires at least: 5.0
-Tested up to: 6.4
+Contributors: chrispump
+Tags: ai, assistant, chatbot, seo, content
+Requires at least: 6.0
+Tested up to: 6.9
+Stable tag: 2.0
 Requires PHP: 7.4
-Stable tag: 1.0.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Your personal AI assistant for WordPress websites.
+AI-powered WordPress assistant with multi-provider chat, SEO analysis, image generation and MCP tools.
 
 == Description ==
 
-MagicAssistant is a powerful AI-powered WordPress plugin that provides intelligent assistance for website management, content creation, and administrative tasks. 
+MagicAssistant is an AI-powered WordPress plugin that provides an intelligent chat interface for website management, content creation, SEO analysis and more. Connect your own API keys and use the AI models of your choice.
 
-**Key Features:**
+**Core Features:**
 
-* AI-powered chat interface for website assistance
-* Multi-provider AI support (OpenAI, Anthropic, OpenRouter)
-* SEO analysis and optimization tools
-* Website analytics and performance insights
-* Security monitoring and recommendations
-* Automated content suggestions
-* Website data extraction and analysis
-* User-friendly admin interface with dark/light mode
+* **AI Chat Interface** - Conversational AI assistant with streaming responses, chat history and session management
+* **Multi-Provider Support** - Connect to OpenAI (GPT-4o, o1, o3), Anthropic (Claude), Google (Gemini) and OpenRouter (hundreds of models)
+* **Tool Calling / MCP** - AI can execute WordPress actions: create posts, query the database, manage content and more via Model Context Protocol
+* **SEO Analysis** - SERP analysis, keyword difficulty, domain analysis and competitor research via DataForSEO
+* **PageSpeed Insights** - Google PageSpeed performance analysis with Core Web Vitals tracking
+* **Image Generation** - Generate images with DALL-E 3 and Google Gemini directly from the chat
+* **Image Search** - Search and insert Unsplash images
+* **Knowledge Base** - Upload documents and scrape URLs to give the AI context about your business
+* **Custom AI Agents** - Create specialized agents with custom system prompts and tool configurations
+* **Chatbots** - Build and embed AI chatbots on your frontend
+* **Content Mode** - Generate blog posts, meta tags and content with granular settings
+* **Public Sharing** - Share chat conversations via public links
+* **Dark Mode** - Full dark and light theme support
+* **Internationalization** - Fully translatable
 
-**AI Providers Supported:**
-* OpenAI (GPT-4, GPT-3.5)
-* Anthropic (Claude)
-* OpenRouter (Various models)
+**Supported AI Providers:**
 
-**Perfect for:**
-* Website administrators
-* Content creators
-* SEO professionals
-* WordPress developers
-* Business owners
+* OpenAI (GPT-4o, GPT-4o-mini, o1, o3, DALL-E 3)
+* Anthropic (Claude Sonnet, Claude Opus, Claude Haiku)
+* Google (Gemini 2.5 Pro, Gemini 2.5 Flash)
+* OpenRouter (access to hundreds of models)
 
-The plugin integrates seamlessly with WordPress and provides a comprehensive AI assistant that understands your website's context and can help with various administrative and creative tasks.
+**Optional Integrations (bring your own API keys):**
+
+* DataForSEO - SEO and keyword analysis
+* Google PageSpeed Insights - Performance monitoring
+* Unsplash - Image search
 
 == Installation ==
 
-1. Upload the plugin files to the `/wp-content/plugins/magicassistant` directory, or install the plugin through the WordPress plugins screen directly.
-2. Activate the plugin through the 'Plugins' screen in WordPress.
-3. Go to MagicAssistant in your admin menu to configure the plugin.
-4. Add your AI provider API keys in the settings.
-5. Start using your AI assistant!
+1. Upload the `magicassistant` folder to `/wp-content/plugins/`
+2. Activate the plugin through the Plugins menu
+3. Navigate to MagicPlugins > MagicAssistant
+4. Add your AI provider API key(s) in Settings
+5. Start chatting with your AI assistant
 
 == Frequently Asked Questions ==
 
-= What AI providers are supported? =
-
-MagicAssistant supports OpenAI, Anthropic (Claude), and OpenRouter, giving you access to multiple AI models.
-
 = Do I need my own API keys? =
 
-Yes, you'll need API keys from your chosen AI provider(s). The plugin also offers a proxy service for users who prefer not to manage their own keys.
+Yes. You need at least one AI provider API key (OpenAI, Anthropic, Google or OpenRouter). Optional services like DataForSEO, Unsplash and PageSpeed also require their own keys.
+
+= Which AI provider should I use? =
+
+All providers work well. OpenAI and Anthropic are the most popular. OpenRouter gives you access to hundreds of models with a single API key. Google Gemini offers generous free tiers.
 
 = Is my data secure? =
 
-Yes, all data is processed securely. API keys are encrypted and stored safely. The plugin follows WordPress security best practices.
+API keys are encrypted at rest using AES-256-CBC. Chat data stays in your WordPress database. API calls go directly from your server to the provider - no intermediary services.
 
-= What WordPress version is required? =
+= What is MCP / Tool Calling? =
 
-MagicAssistant requires WordPress 5.0 or higher and PHP 7.4 or higher.
+Model Context Protocol allows the AI to perform actions in WordPress - like creating posts, querying data or managing content. You control which tools are available and the AI asks for confirmation before executing actions.
 
-= Can I use this on multiple sites? =
+= Can I embed a chatbot on my frontend? =
 
-Yes, with appropriate licensing you can use MagicAssistant across multiple websites.
+Yes. Create a chatbot in the Chatbots section, configure its appearance and behavior, then embed it on any page.
 
 == Screenshots ==
 
-1. Main AI chat interface
-2. Settings and configuration panel
+1. AI chat interface with streaming responses
+2. Settings panel with multi-provider configuration
 3. SEO analysis dashboard
-4. Analytics and insights view
-5. Security monitoring panel
+4. Knowledge base management
+5. Custom AI agents
+6. Chatbot builder
 
 == Changelog ==
 
-= 1.0.3 =
-* Added web search functionality to AI chat
-* Improved tooltips on chat action buttons
-* Fixed Anthropic tool calling issues
-* Enhanced OpenRouter model filtering
-* Performance optimizations
+= 2.0 =
+* Open source release - all features free, no license required
+* Direct API connections - calls go straight to AI providers (no proxy)
+* Added Google Gemini as a native AI provider
+* Users provide their own API keys for all services
+* Removed MagicDash dependency
+* Removed custom update checker (now on WordPress.org)
+* Added GPL-2.0 license
 
-= 1.0.2 =
-* Bug fixes and stability improvements
-* Enhanced error handling
-* UI/UX improvements
+= 1.3.7 =
+* Bug fixes and performance improvements
 
-= 1.0.1 =
-* Initial bug fixes
-* Improved compatibility
+= 1.3.6 =
+* Transition to custom dashboard system
+* UI improvements
+
+= 1.3.5 =
+* MCP Server improvements
+* New AI tools for WordPress management
 
 = 1.0.0 =
 * Initial release
-* AI chat interface
-* Multi-provider support
-* SEO tools
-* Analytics dashboard
-* Security monitoring
 
 == Upgrade Notice ==
 
-= 1.0.3 =
-This update includes important bug fixes and new web search functionality. Update recommended for all users.
+= 2.0 =
+Major update: all features are now free and open source. API calls go directly to providers. You must configure your own API keys in Settings.
 
 == Privacy Policy ==
 
-MagicAssistant processes data locally on your WordPress site. When using AI features, data is sent to your chosen AI provider according to their privacy policies.
+MagicAssistant processes data locally on your WordPress site. When using AI features, data is sent directly to your configured AI provider.
 
 **External Services:**
-This plugin connects to the following external services when certain features are used:
 
-- **MagicPlugins Proxy Service** (proxy.magicplugins.io): Optional proxy service for AI providers, image services, and SEO tools. Used only when enabled by user. Data is processed according to the MagicPlugins Privacy Policy.
-- **AI Providers**: When using AI features, your content is sent to your chosen provider (OpenAI, Anthropic, or OpenRouter) according to their terms.
-- **Unsplash**: When using image search features, requests are sent to Unsplash via our proxy service.
-- **DataForSEO**: When using SEO analysis features, website data is sent to DataForSEO via our proxy service.
-- **PageSpeed Services**: When using performance analysis, your site URL is sent to PageSpeed APIs via our proxy service.
+* **OpenAI** (api.openai.com) - When using OpenAI models for chat or image generation. [Privacy Policy](https://openai.com/privacy/)
+* **Anthropic** (api.anthropic.com) - When using Claude models. [Privacy Policy](https://www.anthropic.com/privacy)
+* **Google** (generativelanguage.googleapis.com) - When using Gemini models. [Privacy Policy](https://policies.google.com/privacy)
+* **OpenRouter** (openrouter.ai) - When using OpenRouter models. [Privacy Policy](https://openrouter.ai/privacy)
+* **DataForSEO** (api.dataforseo.com) - When using SEO analysis features. [Privacy Policy](https://dataforseo.com/privacy-policy)
+* **Unsplash** (api.unsplash.com) - When searching for images. [Privacy Policy](https://unsplash.com/privacy)
+* **Google PageSpeed** (googleapis.com) - When running performance analysis. [Privacy Policy](https://policies.google.com/privacy)
 
-All external service usage requires user action (clicking buttons, enabling features) and no data is sent automatically or without user consent.
-
-== Support ==
-
-For support, please visit: https://magicplugins.io
+All external service usage requires explicit user action. No data is sent automatically.

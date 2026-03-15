@@ -7,9 +7,7 @@ if (!defined('ABSPATH')) exit;
 /**
  * Unsplash Service Class
  *
- * Provides helper functions to query the Unsplash API THROUGH MagicProxy. All
- * credentials are handled by MagicProxy, so this class only needs to forward
- * requests and return decoded JSON responses.
+ * Calls the Unsplash API directly using the user's own access key.
  */
 class Unsplash_Service {
 
@@ -17,11 +15,37 @@ class Unsplash_Service {
     private $db;
     private $timeout = 30;
 
-    private $proxy_url = 'https://proxy.magicplugins.io/api/proxy/unsplash';
+    private $api_base_url = 'https://api.unsplash.com';
 
     public function __construct($ai_provider = null) {
         $this->ai_provider = $ai_provider;
         $this->db          = $ai_provider ? $ai_provider->get_db() : null;
+    }
+
+    /**
+     * Get the user's Unsplash access key from settings
+     *
+     * @return string
+     * @throws \Exception if no key is configured
+     */
+    private function get_unsplash_access_key() {
+        if (!$this->db) {
+            throw new \Exception('Unsplash access key not configured. Please add your Unsplash access key in Settings.');
+        }
+
+        $encrypted_key = $this->db->get_setting('unsplash_access_key');
+
+        if (empty($encrypted_key)) {
+            throw new \Exception('Unsplash access key not configured. Please add your Unsplash access key in Settings.');
+        }
+
+        $access_key = $this->db->decrypt_api_key($encrypted_key);
+
+        if (empty($access_key)) {
+            throw new \Exception('Unsplash access key could not be decrypted. Please re-enter your Unsplash access key in Settings.');
+        }
+
+        return $access_key;
     }
 
     /**
@@ -36,51 +60,42 @@ class Unsplash_Service {
             throw new \Exception('query parameter required');
         }
 
-        $payload = array(
-            'action'    => 'search',
-            'data'      => array(
-                'query'       => $args['query'],
-                'per_page'    => isset($args['per_page']) ? intval($args['per_page']) : 10,
-                'orientation' => isset($args['orientation']) ? sanitize_text_field($args['orientation']) : 'landscape',
-            ),
-            'site_url'  => get_site_url(),
-            'timestamp' => time(),
+        $access_key = $this->get_unsplash_access_key();
+
+        $query_params = array(
+            'query'       => $args['query'],
+            'per_page'    => isset($args['per_page']) ? intval($args['per_page']) : 10,
+            'orientation' => isset($args['orientation']) ? sanitize_text_field($args['orientation']) : 'landscape',
         );
 
-        // Merge license headers so proxy can verify usage
-        $headers = array('Content-Type' => 'application/json');
-        if ($this->ai_provider && method_exists($this->ai_provider, 'get_license_headers')) {
-            $headers = array_merge($headers, $this->ai_provider->get_license_headers());
-        }
+        $url = $this->api_base_url . '/search/photos?' . http_build_query($query_params);
 
-        $response = wp_remote_post($this->proxy_url, array(
-            'headers'  => $headers,
-            'body'     => wp_json_encode($payload),
-            'timeout'  => $this->timeout,
-            'sslverify'=> true,
+        $response = wp_remote_get($url, array(
+            'headers'   => array(
+                'Authorization' => 'Client-ID ' . $access_key,
+                'Accept'        => 'application/json',
+            ),
+            'timeout'   => $this->timeout,
+            'sslverify' => true,
         ));
 
         if (is_wp_error($response)) {
-            throw new \Exception('Unsplash proxy request failed: ' . $response->get_error_message());
+            throw new \Exception('Unsplash API request failed: ' . $response->get_error_message());
         }
 
         $status = wp_remote_retrieve_response_code($response);
         $body   = wp_remote_retrieve_body($response);
 
         if ($status !== 200) {
-            throw new \Exception('Unsplash proxy error HTTP ' . $status . ' - ' . substr($body, 0, 200));
+            throw new \Exception('Unsplash API error HTTP ' . $status . ' - ' . substr($body, 0, 200));
         }
 
         $data = json_decode($body, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new \Exception('Invalid JSON response from Unsplash proxy');
+            throw new \Exception('Invalid JSON response from Unsplash API');
         }
 
-        if (isset($data['error'])) {
-            throw new \Exception('Unsplash API error: ' . $data['error']);
-        }
-
-        return $data['data'] ?? $data;
+        return $data;
     }
 
     /**
@@ -91,53 +106,44 @@ class Unsplash_Service {
      * @throws \Exception
      */
     public function get_random_images($args = array()) {
-        $payload = array(
-            'action'    => 'random',
-            'data'      => array(
-                'count'       => isset($args['count']) ? max(1, min(30, intval($args['count']))) : 1,
-                'orientation' => isset($args['orientation']) ? sanitize_text_field($args['orientation']) : 'landscape',
-            ),
-            'site_url'  => get_site_url(),
-            'timestamp' => time(),
+        $access_key = $this->get_unsplash_access_key();
+
+        $query_params = array(
+            'count'       => isset($args['count']) ? max(1, min(30, intval($args['count']))) : 1,
+            'orientation' => isset($args['orientation']) ? sanitize_text_field($args['orientation']) : 'landscape',
         );
 
         if (!empty($args['query'])) {
-            $payload['data']['query'] = sanitize_text_field($args['query']);
+            $query_params['query'] = sanitize_text_field($args['query']);
         }
 
-        // License headers
-        $headers = array('Content-Type' => 'application/json');
-        if ($this->ai_provider && method_exists($this->ai_provider, 'get_license_headers')) {
-            $headers = array_merge($headers, $this->ai_provider->get_license_headers());
-        }
+        $url = $this->api_base_url . '/photos/random?' . http_build_query($query_params);
 
-        $response = wp_remote_post($this->proxy_url, array(
-            'headers'  => $headers,
-            'body'     => wp_json_encode($payload),
-            'timeout'  => $this->timeout,
-            'sslverify'=> true,
+        $response = wp_remote_get($url, array(
+            'headers'   => array(
+                'Authorization' => 'Client-ID ' . $access_key,
+                'Accept'        => 'application/json',
+            ),
+            'timeout'   => $this->timeout,
+            'sslverify' => true,
         ));
 
         if (is_wp_error($response)) {
-            throw new \Exception('Unsplash proxy request failed: ' . $response->get_error_message());
+            throw new \Exception('Unsplash API request failed: ' . $response->get_error_message());
         }
 
         $status = wp_remote_retrieve_response_code($response);
         $body   = wp_remote_retrieve_body($response);
 
         if ($status !== 200) {
-            throw new \Exception('Unsplash proxy error HTTP ' . $status . ' - ' . substr($body, 0, 200));
+            throw new \Exception('Unsplash API error HTTP ' . $status . ' - ' . substr($body, 0, 200));
         }
 
         $data = json_decode($body, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new \Exception('Invalid JSON response from Unsplash proxy');
+            throw new \Exception('Invalid JSON response from Unsplash API');
         }
 
-        if (isset($data['error'])) {
-            throw new \Exception('Unsplash API error: ' . $data['error']);
-        }
-
-        return $data['data'] ?? $data;
+        return $data;
     }
-} 
+}

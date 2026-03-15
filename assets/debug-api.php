@@ -176,86 +176,56 @@ function handle_ai_chat() {
         exit;
     }
     
-    // Prepare request for proxy based on provider
+    // Prepare request for direct API call based on provider
     if ($provider === 'anthropic') {
-        $proxy_url = 'https://proxy.magicplugins.io/api/proxy/anthropic';
+        $proxy_url = 'https://api.anthropic.com/v1/messages';
         $request_data = array(
-            'action' => 'anthropic',
-            'data' => array(
-                'model' => 'claude-sonnet-4-5-20250929',
-                'messages' => array(
-                    array('role' => 'user', 'content' => $message)
-                ),
-                'temperature' => 0.7,
-                'max_tokens' => 800
+            'model' => 'claude-sonnet-4-5-20250929',
+            'messages' => array(
+                array('role' => 'user', 'content' => $message)
             ),
-            'site_url' => (isset($_SERVER['HTTP_HOST']) ? 'https://' . $_SERVER['HTTP_HOST'] : ''),
-            'timestamp' => time(),
+            'temperature' => 0.7,
+            'max_tokens' => 800
         );
     } elseif ($provider === 'openrouter') {
-        $proxy_url = 'https://proxy.magicplugins.io/api/proxy/openrouter';
+        $proxy_url = 'https://openrouter.ai/api/v1/chat/completions';
         $request_data = array(
-            'action' => 'openrouter',
-            'data' => array(
-                'model' => 'openai/gpt-4o-mini',
-                'messages' => array(
-                    array('role' => 'user', 'content' => $message)
-                ),
-                'temperature' => 0.7,
-                'max_tokens' => 800,
-                'store' => false,
-                'web_search_enabled' => false
+            'model' => 'openai/gpt-4o-mini',
+            'messages' => array(
+                array('role' => 'user', 'content' => $message)
             ),
-            'site_url' => (isset($_SERVER['HTTP_HOST']) ? 'https://' . $_SERVER['HTTP_HOST'] : ''),
-            'timestamp' => time(),
+            'temperature' => 0.7,
+            'max_tokens' => 800,
+            'store' => false,
+            'web_search_enabled' => false
         );
     } else {
         // OpenAI - use new Responses API format
-        $proxy_url = 'https://proxy.magicplugins.io/api/proxy/openai';
+        $proxy_url = 'https://api.openai.com/v1/responses';
         $request_data = array(
-            'action' => 'openai_responses',
-            'data' => array(
-                'model' => 'gpt-4o-mini',
-                'input' => array(
-                    array('role' => 'user', 'content' => $message)
-                ),
-                'store' => false,
-                'web_search_enabled' => false
+            'model' => 'gpt-4o-mini',
+            'input' => array(
+                array('role' => 'user', 'content' => $message)
             ),
+            'store' => false,
+            'web_search_enabled' => false
+        );
             'site_url' => (isset($_SERVER['HTTP_HOST']) ? 'https://' . $_SERVER['HTTP_HOST'] : ''),
             'timestamp' => time(),
         );
     }
     $headers = array('Content-Type: application/json');
+
+    // Set provider-specific auth headers for direct API calls
     if (!empty($api_key)) {
-        $headers[] = 'X-User-Api-Key: ' . $api_key;
-    }
-    
-    // Add debug API identifier header
-    $headers[] = 'X-Debug-Api: true';
-    
-    // Try to get license headers from database for authentication with proxy
-    try {
-        $license_headers = get_license_headers_for_debug();
-        if (!empty($license_headers)) {
-            foreach ($license_headers as $key => $value) {
-                $headers[] = $key . ': ' . $value;
-            }
+        if ($provider === 'anthropic') {
+            $headers[] = 'x-api-key: ' . $api_key;
+            $headers[] = 'anthropic-version: 2023-06-01';
+        } elseif ($provider === 'openrouter') {
+            $headers[] = 'Authorization: Bearer ' . $api_key;
         } else {
-            // Fallback: Try to use a hardcoded license key for debugging
-            $fallback_license_key = getenv('MAGICASSISTANT_LICENSE_KEY');
-            if (!empty($fallback_license_key)) {
-                $headers[] = 'X-License-Key: ' . $fallback_license_key;
-                $headers[] = 'X-License-Status: active';
-            }
-        }
-    } catch (Exception $e) {
-        // Continue without license headers if database access fails
-        // Fallback: Try to use a hardcoded license key for debugging
-        $fallback_license_key = getenv('MAGICASSISTANT_LICENSE_KEY');
-        if (!empty($fallback_license_key)) {
-            $headers[] = 'X-License-Key: ' . $fallback_license_key;
-            $headers[] = 'X-License-Status: active';
+            // OpenAI
+            $headers[] = 'Authorization: Bearer ' . $api_key;
         }
     }
     // Use cURL for the request with extended timeout and detailed logging
@@ -712,11 +682,11 @@ function get_wp_content_dir() {
 }
 
 /**
- * Test connectivity to the proxy server
+ * Test general internet connectivity
  */
 function test_proxy_connectivity() {
-    $test_url = 'https://proxy.magicplugins.io/api/proxy/status';
-    
+    $test_url = 'https://api.openai.com';
+
     $ch = curl_init($test_url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
@@ -724,17 +694,17 @@ function test_proxy_connectivity() {
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_NOBODY, true); // HEAD request only
-    
+
     $start_time = microtime(true);
     curl_exec($ch);
     $end_time = microtime(true);
-    
+
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $curl_error = curl_error($ch);
     curl_close($ch);
-    
+
     $response_time = round($end_time - $start_time, 2);
-    
+
     if (!empty($curl_error)) {
         return array(
             'success' => false,
@@ -742,18 +712,19 @@ function test_proxy_connectivity() {
             'response_time' => $response_time
         );
     }
-    
-    if ($http_code >= 200 && $http_code < 400) {
+
+    // Any response (even 401/404) means connectivity is working
+    if ($http_code > 0) {
         return array(
             'success' => true,
             'http_code' => $http_code,
             'response_time' => $response_time
         );
     }
-    
+
     return array(
         'success' => false,
-        'error' => 'HTTP ' . $http_code,
+        'error' => 'No response received',
         'response_time' => $response_time
     );
 }

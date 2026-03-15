@@ -6,163 +6,285 @@ if (!defined('ABSPATH')) exit;
 
 /**
  * PageSpeed Service Class
- * 
- * Handles PageSpeed Insights API requests through MagicProxy
- * Ensures data is saved ONLY to 'pagespeed_data' database key
- * Filters out base64 images and filmstrip data to prevent large data storage
+ *
+ * Handles PageSpeed Insights API requests directly to Google's public API.
+ * Ensures data is saved ONLY to 'pagespeed_data' database key.
+ * Filters out base64 images and filmstrip data to prevent large data storage.
  */
 class PageSpeed_Service {
-    
+
     private $ai_provider;
     private $db;
     private $timeout = 75;
-    
+
     public function __construct($ai_provider = null) {
         $this->ai_provider = $ai_provider;
         $this->db = $ai_provider ? $ai_provider->get_db() : null;
     }
-    
+
     /**
      * Check if PageSpeed service is available
      */
     public function is_available() {
-        // Check if we have the necessary components
         return $this->ai_provider && $this->db;
     }
-    
+
     /**
      * Handle PageSpeed analysis request
      * This method ensures data is saved ONLY to pagespeed_data, never to seo_data
      */
     public function handle_pagespeed_analysis($args) {
         try {
-            // Set default URL to home URL if not provided
             if (empty($args['url'])) {
                 $args['url'] = home_url();
             }
-            
-            // Validate URL format
+
             if (!filter_var($args['url'], FILTER_VALIDATE_URL)) {
                 throw new \Exception('Invalid URL format: ' . $args['url']);
             }
-            
-            // Add default parameters if missing
+
             $args = array_merge(array(
                 'strategy' => 'mobile',
                 'category' => array('performance', 'accessibility', 'best-practices', 'seo'),
                 'locale' => 'en'
             ), $args);
-            
-            // Make PageSpeed request through MagicProxy
-            $result = $this->make_pagespeed_request($args);
-            
-            if (!$result || isset($result['error'])) {
-                throw new \Exception($result['error'] ?? 'PageSpeed analysis failed');
+
+            // Make PageSpeed request directly to Google API
+            $raw_google_data = $this->make_pagespeed_request($args);
+
+            if (!$raw_google_data || isset($raw_google_data['error'])) {
+                throw new \Exception($raw_google_data['error']['message'] ?? 'PageSpeed analysis failed');
             }
-            
+
+            // Transform Google's raw response into the processed format
+            $result = $this->transform_google_response($raw_google_data);
+
             // Process and filter the results to remove base64 data
             $processed_result = $this->process_and_filter_pagespeed_data($result);
-            
+
             // Save data ONLY to pagespeed_data (never to seo_data)
             $this->save_pagespeed_data_to_db($processed_result, $args);
-            
+
             return $processed_result;
-            
+
         } catch (\Exception $e) {
             throw new \Exception('PageSpeed analysis failed: ' . $e->getMessage());
         }
     }
-    
+
     /**
-     * Make PageSpeed request through MagicProxy
+     * Make PageSpeed request directly to Google PageSpeed Insights API
      */
     private function make_pagespeed_request($args) {
         if (!$this->ai_provider || !$this->db) {
             throw new \Exception('PageSpeed service not properly initialized');
         }
-        
-        $proxy_url = 'https://magicplugins.io/wp-json/magicproxy/v1/pagespeed';
 
-        $site_url = get_site_url();
-        $site_id = parse_url($site_url, PHP_URL_HOST);
-        $timestamp = time();
-        
-        // Create signature for authentication
-        $signature_data = array(
-            'site_id' => $site_id,
-            'timestamp' => $timestamp,
-            'action' => 'analyze'
+        $query_params = array(
+            'url'      => $args['url'],
+            'strategy' => $args['strategy'] ?? 'mobile',
         );
-        $signature = hash_hmac('sha256', wp_json_encode($signature_data), $site_id);
-        
-        $request_data = array(
-            'action' => 'analyze',
-            'data' => $args,
-            'auth' => array(
-                'site_id' => $site_id,
-                'signature' => $signature
-            ),
-            'site_url' => $site_url,
-            'timestamp' => $timestamp
-        );
-        
-        // Debug logging for troubleshooting
-        if (function_exists('error_log')) {
+
+        // Add optional Google API key for higher rate limits
+        if ($this->db) {
+            $encrypted_key = $this->db->get_setting('google_api_key');
+            if (!empty($encrypted_key)) {
+                $api_key = $this->db->decrypt_api_key($encrypted_key);
+                if (!empty($api_key)) {
+                    $query_params['key'] = $api_key;
+                }
+            }
         }
-        
-        $response = wp_remote_post($proxy_url, array(
+
+        // Build URL with categories appended separately (multiple category params)
+        $base_url = 'https://www.googleapis.com/pagespeedonline/v5/runPagespeed?' . http_build_query($query_params);
+
+        $categories = $args['category'] ?? array('performance', 'accessibility', 'best-practices', 'seo');
+        foreach ($categories as $category) {
+            $base_url .= '&category=' . urlencode($category);
+        }
+
+        $response = wp_remote_get($base_url, array(
             'headers' => array(
-                'Content-Type' => 'application/json',
-                'User-Agent' => 'MagicAssistant/1.0'
+                'User-Agent' => 'MagicAssistant/1.0',
             ),
-            'body' => wp_json_encode($request_data),
-            'timeout' => $this->timeout
+            'timeout' => $this->timeout,
         ));
-        
+
         if (is_wp_error($response)) {
-            throw new \Exception('PageSpeed proxy request failed: ' . $response->get_error_message());
+            throw new \Exception('Google PageSpeed API request failed: ' . $response->get_error_message());
         }
-        
+
         $status_code = wp_remote_retrieve_response_code($response);
         $body = wp_remote_retrieve_body($response);
-        
-        // Debug logging for troubleshooting
-        if (function_exists('error_log')) {
-        }
-        
+
         if ($status_code !== 200) {
-            $error_message = "PageSpeed proxy returned HTTP {$status_code}";
+            $error_message = "Google PageSpeed API returned HTTP {$status_code}";
             if (!empty($body)) {
                 $decoded_body = json_decode($body, true);
-                if (json_last_error() === JSON_ERROR_NONE && isset($decoded_body['message'])) {
-                    $error_message .= ': ' . $decoded_body['message'];
+                if (json_last_error() === JSON_ERROR_NONE && isset($decoded_body['error']['message'])) {
+                    $error_message .= ': ' . $decoded_body['error']['message'];
                 } else {
                     $error_message .= ': ' . substr($body, 0, 200);
                 }
             }
             throw new \Exception($error_message);
         }
-        
+
         $result = json_decode($body, true);
-        
+
         if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new \Exception('Invalid JSON response from PageSpeed proxy: ' . json_last_error_msg());
+            throw new \Exception('Invalid JSON response from Google PageSpeed API: ' . json_last_error_msg());
         }
-        
-        if (!isset($result['success']) || !$result['success']) {
-            $error_message = 'PageSpeed proxy request failed';
-            if (isset($result['message'])) {
-                $error_message .= ': ' . $result['message'];
-            }
-            if (isset($result['error'])) {
-                $error_message .= ' (Error: ' . $result['error'] . ')';
-            }
-            throw new \Exception($error_message);
-        }
-        
-        return $result['data'] ?? array();
+
+        return $result;
     }
-    
+
+    /**
+     * Transform Google's raw PageSpeed API response into the format expected by
+     * process_and_filter_pagespeed_data (same structure the proxy used to return).
+     */
+    private function transform_google_response($data) {
+        $lighthouse  = $data['lighthouseResult'] ?? array();
+        $categories  = $lighthouse['categories'] ?? array();
+        $audits      = $lighthouse['audits'] ?? array();
+
+        // Scores
+        $scores = array();
+        foreach ($categories as $key => $category) {
+            $scores[$key] = array(
+                'score' => round(($category['score'] ?? 0) * 100),
+                'title' => $category['title'] ?? $key,
+            );
+        }
+
+        // Core Web Vitals
+        $vital_metrics = array(
+            'largest-contentful-paint'  => 'LCP',
+            'first-input-delay'         => 'FID',
+            'cumulative-layout-shift'   => 'CLS',
+            'first-contentful-paint'    => 'FCP',
+            'interaction-to-next-paint' => 'INP',
+        );
+
+        $core_web_vitals = array();
+        foreach ($vital_metrics as $audit_id => $short_name) {
+            if (isset($audits[$audit_id])) {
+                $audit = $audits[$audit_id];
+                $core_web_vitals[$short_name] = array(
+                    'value'        => $audit['numericValue'] ?? null,
+                    'displayValue' => $audit['displayValue'] ?? 'N/A',
+                    'score'        => $audit['score'] ?? null,
+                    'title'        => $audit['title'] ?? $audit_id,
+                );
+            }
+        }
+
+        // Opportunities
+        $opportunity_ids = array(
+            'render-blocking-resources', 'unused-css-rules', 'unused-javascript', 'modern-image-formats',
+            'uses-optimized-images', 'uses-webp-images', 'uses-responsive-images', 'efficiently-encode-images',
+            'offscreen-images', 'unminified-css', 'unminified-javascript', 'enable-text-compression',
+            'uses-long-cache-ttl', 'total-byte-weight', 'legacy-javascript', 'server-response-time',
+            'uses-rel-preconnect', 'uses-rel-preload', 'font-display', 'third-party-summary',
+            'third-party-facades', 'largest-contentful-paint-element', 'prioritize-lcp-image',
+            'uses-passive-event-listeners', 'non-composited-animations', 'unsized-images',
+        );
+
+        $opportunities = array();
+        foreach ($opportunity_ids as $id) {
+            if (isset($audits[$id]) && isset($audits[$id]['score']) && $audits[$id]['score'] < 1) {
+                $audit = $audits[$id];
+                $item = array(
+                    'id'           => $id,
+                    'title'        => $audit['title'] ?? $id,
+                    'description'  => $audit['description'] ?? '',
+                    'score'        => $audit['score'],
+                    'displayValue' => $audit['displayValue'] ?? '',
+                );
+                if (isset($audit['details']['overallSavingsMs'])) {
+                    $item['overallSavingsMs'] = $audit['details']['overallSavingsMs'];
+                }
+                if (isset($audit['details']['overallSavingsBytes'])) {
+                    $item['overallSavingsBytes'] = $audit['details']['overallSavingsBytes'];
+                }
+                $opportunities[] = $item;
+            }
+        }
+
+        // Diagnostics
+        $diagnostic_patterns = array(
+            'mainthread-work-breakdown', 'bootup-time', 'uses-long-cache-ttl', 'total-byte-weight',
+            'dom-size', 'critical-request-chains', 'user-timings', 'network-requests', 'network-rtt',
+            'network-server-latency', 'main-thread-tasks', 'metrics', 'resource-summary',
+            'third-party-summary', 'timing-budget', 'performance-budget',
+        );
+
+        $diagnostics = array();
+        foreach ($audits as $id => $audit) {
+            $is_informative = in_array($id, $diagnostic_patterns, true)
+                || !isset($audit['score'])
+                || in_array($audit['scoreDisplayMode'] ?? '', array('informative', 'notApplicable'), true);
+
+            if ($is_informative) {
+                $diag = array(
+                    'id'               => $id,
+                    'title'            => $audit['title'] ?? $id,
+                    'description'      => $audit['description'] ?? '',
+                    'score'            => $audit['score'] ?? null,
+                    'displayValue'     => $audit['displayValue'] ?? '',
+                    'scoreDisplayMode' => $audit['scoreDisplayMode'] ?? 'numeric',
+                );
+                if (isset($audit['numericValue'])) {
+                    $diag['numericValue'] = $audit['numericValue'];
+                }
+                $diagnostics[] = $diag;
+            }
+        }
+
+        // Processed audits (safe values, no base64)
+        $processed_audits = array();
+        foreach ($audits as $id => $audit) {
+            $processed_audits[$id] = array(
+                'title'            => $audit['title'] ?? $id,
+                'description'      => $audit['description'] ?? '',
+                'score'            => $audit['score'] ?? null,
+                'displayValue'     => $audit['displayValue'] ?? '',
+                'scoreDisplayMode' => $audit['scoreDisplayMode'] ?? 'numeric',
+            );
+            if (isset($audit['numericValue'])) {
+                $processed_audits[$id]['numericValue'] = $audit['numericValue'];
+            }
+        }
+
+        // Determine strategy
+        $strategy = 'mobile';
+        if (isset($lighthouse['configSettings']['emulatedFormFactor'])) {
+            $strategy = $lighthouse['configSettings']['emulatedFormFactor'];
+        }
+
+        return array(
+            'url'                       => $data['id'] ?? '',
+            'strategy'                  => $strategy,
+            'scores'                    => $scores,
+            'core_web_vitals'           => $core_web_vitals,
+            'opportunities'             => $opportunities,
+            'diagnostics'               => $diagnostics,
+            'audits'                    => $processed_audits,
+            'loading_experience'        => $data['loadingExperience'] ?? array(),
+            'origin_loading_experience' => $data['originLoadingExperience'] ?? array(),
+            'lighthouse'                => array(
+                'requestedUrl'      => $lighthouse['requestedUrl'] ?? '',
+                'finalUrl'          => $lighthouse['finalUrl'] ?? '',
+                'lighthouseVersion' => $lighthouse['lighthouseVersion'] ?? '',
+                'fetchTime'         => $lighthouse['fetchTime'] ?? '',
+                'environment'       => $lighthouse['environment'] ?? array(),
+                'runWarnings'       => array_slice($lighthouse['runWarnings'] ?? array(), 0, 10),
+            ),
+            'analysis_timestamp'        => $data['analysisUTCTimestamp'] ?? null,
+        );
+    }
+
     /**
      * Process and filter PageSpeed data to remove base64 images and large binary content
      */
@@ -170,7 +292,7 @@ class PageSpeed_Service {
         if (!is_array($raw_data)) {
             return array();
         }
-        
+
         // Create a clean structure for PageSpeed data
         $processed = array(
             'url' => $raw_data['url'] ?? '',
@@ -187,7 +309,7 @@ class PageSpeed_Service {
             'timestamp' => time(),
             'analysisTimestamp' => $raw_data['analysis_timestamp'] ?? null
         );
-        
+
         // Extract and clean scores
         if (isset($raw_data['scores']) && is_array($raw_data['scores'])) {
             foreach ($raw_data['scores'] as $category => $score_data) {
@@ -199,8 +321,8 @@ class PageSpeed_Service {
                 }
             }
         }
-        
-        // Extract and clean Core Web Vitals (no base64 data here typically)
+
+        // Extract and clean Core Web Vitals
         if (isset($raw_data['core_web_vitals']) && is_array($raw_data['core_web_vitals'])) {
             foreach ($raw_data['core_web_vitals'] as $metric => $vital_data) {
                 if (is_array($vital_data)) {
@@ -213,8 +335,8 @@ class PageSpeed_Service {
                 }
             }
         }
-        
-        // Extract and clean opportunities (filter out any base64 content)
+
+        // Extract and clean opportunities
         if (isset($raw_data['opportunities']) && is_array($raw_data['opportunities'])) {
             foreach ($raw_data['opportunities'] as $opportunity) {
                 if (is_array($opportunity)) {
@@ -225,20 +347,19 @@ class PageSpeed_Service {
                         'score' => isset($opportunity['score']) ? floatval($opportunity['score']) : null,
                         'displayValue' => sanitize_text_field($opportunity['displayValue'] ?? '')
                     );
-                    
-                    // Add savings information if available (excluding any base64 data)
+
                     if (isset($opportunity['overallSavingsMs'])) {
                         $clean_opportunity['overallSavingsMs'] = intval($opportunity['overallSavingsMs']);
                     }
                     if (isset($opportunity['overallSavingsBytes'])) {
                         $clean_opportunity['overallSavingsBytes'] = intval($opportunity['overallSavingsBytes']);
                     }
-                    
+
                     $processed['opportunities'][] = $clean_opportunity;
                 }
             }
         }
-        
+
         // Extract and clean diagnostics
         if (isset($raw_data['diagnostics']) && is_array($raw_data['diagnostics'])) {
             foreach ($raw_data['diagnostics'] as $diagnostic) {
@@ -251,17 +372,16 @@ class PageSpeed_Service {
                         'displayValue' => sanitize_text_field($diagnostic['displayValue'] ?? ''),
                         'scoreDisplayMode' => sanitize_text_field($diagnostic['scoreDisplayMode'] ?? 'numeric')
                     );
-                    
-                    // Add numericValue if available
+
                     if (isset($diagnostic['numericValue'])) {
                         $clean_diagnostic['numericValue'] = floatval($diagnostic['numericValue']);
                     }
-                    
+
                     $processed['diagnostics'][] = $clean_diagnostic;
                 }
             }
         }
-        
+
         // Extract essential audits data (heavily filtered to exclude base64 content)
         if (isset($raw_data['audits']) && is_array($raw_data['audits'])) {
             foreach ($raw_data['audits'] as $audit_id => $audit_data) {
@@ -273,66 +393,62 @@ class PageSpeed_Service {
                         'displayValue' => sanitize_text_field($audit_data['displayValue'] ?? ''),
                         'scoreDisplayMode' => sanitize_text_field($audit_data['scoreDisplayMode'] ?? 'numeric')
                     );
-                    
-                    // Add numericValue if available
+
                     if (isset($audit_data['numericValue'])) {
                         $clean_audit['numericValue'] = floatval($audit_data['numericValue']);
                     }
-                    
-                    // Filter details to exclude base64 data
+
                     if (isset($audit_data['details']) && is_array($audit_data['details'])) {
                         $clean_audit['details'] = $this->filter_base64_from_array($audit_data['details']);
                     }
-                    
+
                     $processed['audits'][$audit_id] = $clean_audit;
                 }
             }
         }
-        
-        // Extract loading experience data (filter out any potential base64 content)
+
+        // Extract loading experience data
         if (isset($raw_data['loading_experience']) && is_array($raw_data['loading_experience'])) {
             $processed['loadingExperience'] = $this->filter_base64_from_array($raw_data['loading_experience']);
         }
-        
+
         if (isset($raw_data['origin_loading_experience']) && is_array($raw_data['origin_loading_experience'])) {
             $processed['originLoadingExperience'] = $this->filter_base64_from_array($raw_data['origin_loading_experience']);
         }
-        
+
         // Extract lighthouse metadata (exclude large data like filmstrip)
         if (isset($raw_data['lighthouse']) && is_array($raw_data['lighthouse'])) {
-            $lighthouse = $raw_data['lighthouse'];
+            $lh = $raw_data['lighthouse'];
             $processed['lighthouse'] = array(
-                'requestedUrl' => sanitize_url($lighthouse['requestedUrl'] ?? ''),
-                'finalUrl' => sanitize_url($lighthouse['finalUrl'] ?? ''),
-                'lighthouseVersion' => sanitize_text_field($lighthouse['lighthouseVersion'] ?? ''),
-                'fetchTime' => sanitize_text_field($lighthouse['fetchTime'] ?? ''),
-                'environment' => isset($lighthouse['environment']) && is_array($lighthouse['environment']) 
-                    ? array_map('sanitize_text_field', $lighthouse['environment']) 
+                'requestedUrl' => sanitize_url($lh['requestedUrl'] ?? ''),
+                'finalUrl' => sanitize_url($lh['finalUrl'] ?? ''),
+                'lighthouseVersion' => sanitize_text_field($lh['lighthouseVersion'] ?? ''),
+                'fetchTime' => sanitize_text_field($lh['fetchTime'] ?? ''),
+                'environment' => isset($lh['environment']) && is_array($lh['environment'])
+                    ? array_map('sanitize_text_field', $lh['environment'])
                     : array(),
-                'runWarnings' => isset($lighthouse['runWarnings']) && is_array($lighthouse['runWarnings'])
-                    ? array_map('sanitize_text_field', array_slice($lighthouse['runWarnings'], 0, 10))
+                'runWarnings' => isset($lh['runWarnings']) && is_array($lh['runWarnings'])
+                    ? array_map('sanitize_text_field', array_slice($lh['runWarnings'], 0, 10))
                     : array()
             );
         }
-        
+
         return $processed;
     }
-    
+
     /**
      * Recursively filter base64 image data and large binary content from arrays
      */
     private function filter_base64_from_array($data) {
         if (!is_array($data)) {
             if (is_string($data)) {
-                // Filter out base64 image data, filmstrip frames, and other large binary content
-                if (preg_match('/^data:image\/[^;]+;base64,/', $data) || 
+                if (preg_match('/^data:image\/[^;]+;base64,/', $data) ||
                     (strlen($data) > 10000 && base64_decode($data, true) !== false)) {
                     return '[FILTERED: Base64 image/binary data removed]';
                 }
-                // Filter out specific filmstrip/screenshot fields
-                if (strpos($data, 'data:image/') === 0 || 
+                if (strpos($data, 'data:image/') === 0 ||
                     (strlen($data) > 5000 && (
-                        strpos($data, 'screenshot') !== false || 
+                        strpos($data, 'screenshot') !== false ||
                         strpos($data, 'filmstrip') !== false ||
                         preg_match('/^[A-Za-z0-9+\/]{1000,}={0,2}$/', $data)
                     ))) {
@@ -341,28 +457,25 @@ class PageSpeed_Service {
             }
             return $data;
         }
-        
+
         $filtered = array();
         foreach ($data as $key => $value) {
-            // Skip known problematic keys that contain base64 data but keep essential ones
             $skip_keys = array('screenshot', 'filmstrip', 'thumbnails');
             if (in_array($key, $skip_keys)) {
                 continue;
             }
-            
-            // Special handling for details arrays
+
             if ($key === 'details' && is_array($value)) {
                 $filtered_details = array();
                 foreach ($value as $detail_key => $detail_value) {
-                    // Keep essential detail fields but filter out large data
                     if (is_string($detail_value) && (
-                        strlen($detail_value) > 5000 || 
+                        strlen($detail_value) > 5000 ||
                         preg_match('/^data:image/', $detail_value) ||
                         (strlen($detail_value) > 1000 && base64_decode($detail_value, true) !== false)
                     )) {
-                        continue; // Skip large binary data
+                        continue;
                     }
-                    
+
                     if (is_array($detail_value)) {
                         $filtered_details[$detail_key] = $this->filter_base64_from_array($detail_value);
                     } else {
@@ -376,10 +489,10 @@ class PageSpeed_Service {
                 $filtered[$key] = $this->filter_base64_from_array($value);
             }
         }
-        
+
         return $filtered;
     }
-    
+
     /**
      * Save PageSpeed data to database - ONLY to pagespeed_data, never to seo_data
      */
@@ -387,10 +500,9 @@ class PageSpeed_Service {
         if (!$this->ai_provider || !$this->ai_provider->get_db()) {
             return false;
         }
-        
+
         $user_id = get_current_user_id();
-        
-        // Ensure we're saving to the correct database key
+
         $pagespeed_data = array(
             'url' => $args['url'] ?? '',
             'strategy' => $args['strategy'] ?? 'mobile',
@@ -404,18 +516,16 @@ class PageSpeed_Service {
             'lighthouse' => $result['lighthouse'] ?? array(),
             'lastUpdated' => current_time('mysql'),
             'timestamp' => time(),
-            'filtered' => true, // Flag to indicate base64 data was filtered
+            'filtered' => true,
             'data_source' => 'google_pagespeed_insights'
         );
-        
+
         // Save ONLY to pagespeed_data - this is critical!
         $this->db->save_user_setting('pagespeed_data', $pagespeed_data, $user_id);
-        
-        // IMPORTANT: Do NOT save to seo_data to prevent base64 pollution
-        
+
         return true;
     }
-    
+
     /**
      * Get stored PageSpeed data
      */
@@ -423,14 +533,14 @@ class PageSpeed_Service {
         if (!$this->db) {
             return array();
         }
-        
+
         if (!$user_id) {
             $user_id = get_current_user_id();
         }
-        
+
         return $this->db->get_user_setting('pagespeed_data', $user_id, array());
     }
-    
+
     /**
      * Clear PageSpeed data
      */
@@ -438,229 +548,11 @@ class PageSpeed_Service {
         if (!$this->db) {
             return false;
         }
-        
+
         if (!$user_id) {
             $user_id = get_current_user_id();
         }
-        
+
         return $this->db->delete_setting('pagespeed_data', $user_id);
     }
-    
-    /**
-     * Debug PageSpeed proxy connection and identify issues
-     */
-    public function debug_pagespeed_connection($test_url = null) {
-        $debug_info = array(
-            'proxy_url' => 'https://magicplugins.io/wp-json/magicproxy/v1/pagespeed',
-            'test_url' => $test_url ?: home_url(),
-            'site_url' => get_site_url(),
-            'site_id' => parse_url(get_site_url(), PHP_URL_HOST),
-            'timestamp' => time(),
-            'tests' => array()
-        );
-        
-        // Test 1: Basic proxy connectivity
-        $debug_info['tests']['basic_connectivity'] = $this->test_basic_proxy_connectivity();
-        
-        // Test 2: Test endpoint specifically
-        $debug_info['tests']['test_endpoint'] = $this->test_proxy_test_endpoint();
-        
-        // Test 3: PageSpeed test endpoint
-        $debug_info['tests']['pagespeed_test_endpoint'] = $this->test_pagespeed_test_endpoint($test_url);
-        
-        // Test 4: Full PageSpeed request with authentication
-        $debug_info['tests']['full_pagespeed_request'] = $this->test_full_pagespeed_request($test_url);
-        
-        return $debug_info;
-    }
-    
-    /**
-     * Test basic proxy connectivity
-     */
-    private function test_basic_proxy_connectivity() {
-        $test_url = 'https://magicplugins.io/wp-json/magicproxy/v1/status';
-        
-        $response = wp_remote_get($test_url, array(
-            'timeout' => 10,
-            'headers' => array(
-                'User-Agent' => 'MagicAssistant/Debug'
-            )
-        ));
-        
-        if (is_wp_error($response)) {
-            return array(
-                'success' => false,
-                'error' => 'Request failed: ' . $response->get_error_message(),
-                'url' => $test_url
-            );
-        }
-        
-        $status_code = wp_remote_retrieve_response_code($response);
-        $body = wp_remote_retrieve_body($response);
-        
-        return array(
-            'success' => $status_code === 200,
-            'status_code' => $status_code,
-            'response_body' => substr($body, 0, 500),
-            'url' => $test_url
-        );
-    }
-    
-    /**
-     * Test proxy test endpoint
-     */
-    private function test_proxy_test_endpoint() {
-        $test_url = 'https://magicplugins.io/wp-json/magicproxy/v1/test';
-        
-        $response = wp_remote_get($test_url, array(
-            'timeout' => 10,
-            'headers' => array(
-                'Content-Type' => 'application/json',
-                'User-Agent' => 'MagicAssistant/Debug'
-            )
-        ));
-        
-        if (is_wp_error($response)) {
-            return array(
-                'success' => false,
-                'error' => 'Request failed: ' . $response->get_error_message(),
-                'url' => $test_url
-            );
-        }
-        
-        $status_code = wp_remote_retrieve_response_code($response);
-        $body = wp_remote_retrieve_body($response);
-        
-        return array(
-            'success' => $status_code === 200,
-            'status_code' => $status_code,
-            'response_body' => substr($body, 0, 500),
-            'url' => $test_url
-        );
-    }
-    
-    /**
-     * Test PageSpeed test endpoint  
-     */
-    private function test_pagespeed_test_endpoint($test_url = null) {
-        $url_to_test = $test_url ?: 'https://example.com';
-        $endpoint_url = 'https://magicplugins.io/wp-json/magicproxy/v1/test-pagespeed?url=' . urlencode($url_to_test);
-        
-        $response = wp_remote_get($endpoint_url, array(
-            'timeout' => 30,
-            'headers' => array(
-                'User-Agent' => 'MagicAssistant/Debug'
-            )
-        ));
-        
-        if (is_wp_error($response)) {
-            return array(
-                'success' => false,
-                'error' => 'Request failed: ' . $response->get_error_message(),
-                'url' => $endpoint_url,
-                'test_url' => $url_to_test
-            );
-        }
-        
-        $status_code = wp_remote_retrieve_response_code($response);
-        $body = wp_remote_retrieve_body($response);
-        
-        $decoded_response = null;
-        if ($status_code === 200 && !empty($body)) {
-            $decoded_response = json_decode($body, true);
-        }
-        
-        return array(
-            'success' => $status_code === 200,
-            'status_code' => $status_code,
-            'response_body' => substr($body, 0, 1000),
-            'decoded_response' => $decoded_response,
-            'url' => $endpoint_url,
-            'test_url' => $url_to_test
-        );
-    }
-    
-    /**
-     * Test full PageSpeed request with authentication
-     */
-    private function test_full_pagespeed_request($test_url = null) {
-        try {
-            $url_to_test = $test_url ?: home_url();
-            $proxy_url = 'https://magicplugins.io/wp-json/magicproxy/v1/pagespeed';
-
-            $site_url = get_site_url();
-            $site_id = parse_url($site_url, PHP_URL_HOST);
-            $timestamp = time();
-            
-            // Create signature for authentication
-            $signature_data = array(
-                'site_id' => $site_id,
-                'timestamp' => $timestamp,
-                'action' => 'analyze'
-            );
-            $signature = hash_hmac('sha256', wp_json_encode($signature_data), $site_id);
-            
-            $request_data = array(
-                'action' => 'analyze',
-                'data' => array(
-                    'url' => $url_to_test,
-                    'strategy' => 'mobile',
-                    'category' => array('performance'),
-                    'locale' => 'en'
-                ),
-                'auth' => array(
-                    'site_id' => $site_id,
-                    'signature' => $signature
-                ),
-                'site_url' => $site_url,
-                'timestamp' => $timestamp
-            );
-            
-            $response = wp_remote_post($proxy_url, array(
-                'headers' => array(
-                    'Content-Type' => 'application/json',
-                    'User-Agent' => 'MagicAssistant/Debug'
-                ),
-                'body' => wp_json_encode($request_data),
-                'timeout' => 30
-            ));
-            
-            if (is_wp_error($response)) {
-                return array(
-                    'success' => false,
-                    'error' => 'Request failed: ' . $response->get_error_message(),
-                    'request_data' => $request_data,
-                    'url' => $proxy_url,
-                    'test_url' => $url_to_test
-                );
-            }
-            
-            $status_code = wp_remote_retrieve_response_code($response);
-            $body = wp_remote_retrieve_body($response);
-            
-            $decoded_response = null;
-            if (!empty($body)) {
-                $decoded_response = json_decode($body, true);
-            }
-            
-            return array(
-                'success' => $status_code === 200,
-                'status_code' => $status_code,
-                'response_body' => substr($body, 0, 1000),
-                'decoded_response' => $decoded_response,
-                'request_data' => $request_data,
-                'signature_data' => $signature_data,
-                'calculated_signature' => $signature,
-                'url' => $proxy_url,
-                'test_url' => $url_to_test
-            );
-            
-        } catch (\Exception $e) {
-            return array(
-                'success' => false,
-                'error' => 'Exception: ' . $e->getMessage(),
-                'test_url' => $test_url ?: home_url()
-            );
-        }
-    }
-} 
+}

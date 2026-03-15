@@ -178,7 +178,6 @@ class Admin {
       'currentPost' => $current_post_info,
       'initialTab' => $this->get_initial_tab(),
       'tourCompleted' => array(
-        'license' => (bool) get_user_meta(get_current_user_id(), 'mat_tour_completed_license', true),
         'dashboard' => (bool) get_user_meta(get_current_user_id(), 'mat_tour_completed_dashboard', true),
         'settings' => (bool) get_user_meta(get_current_user_id(), 'mat_tour_completed_settings', true),
         'firstVisit' => (bool) get_user_meta(get_current_user_id(), 'mat_tour_first_visit_complete', true)

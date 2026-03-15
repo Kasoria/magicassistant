@@ -6,9 +6,7 @@ import Analytics from './Analytics'
 import SEO from './SEO'
 import AIAgents from './AIAgents'
 import Security from './Security'
-import License from './License'
 import { ToastProvider } from './Toast'
-import { startLicenseTour, shouldShowLicenseTour, markLicenseTourCompleted } from '../utils/tour'
 
 const navigationItems = [
   {
@@ -67,7 +65,6 @@ const AdminApp = () => {
   const [isSavingSettings, setIsSavingSettings] = useState(false)
   const [dashboardData, setDashboardData] = useState(null)
   const [dashboardLoading, setDashboardLoading] = useState(true)
-  const [licenseData, setLicenseData] = useState(null)
   const [tourDriver, setTourDriver] = useState(null)
 
   // Initialize settings from WordPress
@@ -82,9 +79,6 @@ const AdminApp = () => {
       
       // Load dashboard data
       loadDashboardData(data)
-      
-      // Load license data
-      loadLicenseData(data)
       
       // Initialize dark mode
       const serverTheme = data.savedTheme
@@ -159,85 +153,8 @@ const AdminApp = () => {
     }
   }, [sidebarOpen])
 
-  // Initialize tour when on dashboard for first-time visitors or via URL parameter
-  useEffect(() => {
-    if (licenseData && adminData && activeTab === 'dashboard') {
-      const urlParams = new URLSearchParams(window.location.search)
-      const isDirectVisit = !urlParams.get('tab') || urlParams.get('tab') === 'dashboard'
-      const forceTour = urlParams.get('tour') === 'license' || urlParams.get('start_tour') === '1'
-      
-      // Start tour if it's a direct visit and should show, OR if forced via URL parameter
-      if ((isDirectVisit && shouldShowLicenseTour(licenseData)) || forceTour) {
-        console.log('Starting license tour...')
-        
-        // Small delay to ensure DOM is ready
-        const timer = setTimeout(() => {
-          try {
-            const driver = startLicenseTour({
-              onComplete: () => {
-                console.log('Tour completed')
-                markLicenseTourCompleted()
-                setTourDriver(null)
-              },
-              onSkip: () => {
-                console.log('Tour skipped')
-                setTourDriver(null)
-              }
-            })
-            setTourDriver(driver)
-            console.log('Tour driver created:', driver)
-          } catch (error) {
-            console.error('Failed to start tour:', error)
-          }
-        }, 1000)
-        
-        return () => clearTimeout(timer)
-      }
-    }
-  }, [licenseData, adminData, activeTab])
 
 
-  // Add tour event listeners
-  useEffect(() => {
-    const handleTourCompleted = (event) => {
-      if (event.detail.tourType === 'license') {
-        markLicenseTourCompleted()
-        setTourDriver(null)
-      }
-    }
-
-    const handleForceTourStart = (event) => {
-      console.log('Force tour start event received:', event.detail)
-      if (event.detail.tourType === 'license' && event.detail.forced) {
-        console.log('Forcing tour start...')
-        try {
-          const driver = startLicenseTour({
-            onComplete: () => {
-              console.log('Forced tour completed')
-              markLicenseTourCompleted()
-              setTourDriver(null)
-            },
-            onSkip: () => {
-              console.log('Forced tour skipped')
-              setTourDriver(null)
-            }
-          })
-          setTourDriver(driver)
-          console.log('Forced tour driver created:', driver)
-        } catch (error) {
-          console.error('Failed to force start tour:', error)
-        }
-      }
-    }
-
-    window.addEventListener('tourCompleted', handleTourCompleted)
-    window.addEventListener('forceTourStart', handleForceTourStart)
-    
-    return () => {
-      window.removeEventListener('tourCompleted', handleTourCompleted)
-      window.removeEventListener('forceTourStart', handleForceTourStart)
-    }
-  }, [])
 
   const loadSettings = async (data) => {
     try {
@@ -307,26 +224,6 @@ const AdminApp = () => {
     }
     
     setDashboardLoading(false)
-  }
-
-  const loadLicenseData = async (data) => {
-    if (!data) return
-
-    try {
-      const response = await fetch(`${data.restUrl}license`, {
-        headers: {
-          'X-WP-Nonce': data.nonces.wp_rest,
-        },
-      })
-
-      const result = await response.json()
-      
-      if (result.success) {
-        setLicenseData(result.data)
-      }
-    } catch (error) {
-      console.error('Failed to load license data:', error)
-    }
   }
 
   const formatCurrency = (amount) => {
@@ -503,8 +400,6 @@ Please start by asking me about the product details so you can create descriptio
         return <Security adminData={adminData} />
       case 'analytics':
         return <Analytics adminData={adminData} />
-      case 'license':
-        return <License adminData={adminData} licenseData={licenseData} onLicenseDataChange={setLicenseData} />
       case 'settings':
         return (
           <Settings 
@@ -965,38 +860,6 @@ Please start by asking me about the product details so you can create descriptio
                     {!sidebarCollapsed && 'Help'}
                   </a>
                 </li>
-                <li>
-                  <button
-                    data-tour="license-tab"
-                    onClick={() => {
-                      setActiveTab('license')
-                      // Close mobile sidebar when navigating
-                      if (window.innerWidth < 1024) {
-                        setSidebarOpen(false)
-                      }
-                      // Update URL to reflect the current tab
-                      const url = new URL(window.location)
-                      url.searchParams.set('tab', 'license')
-                      window.history.pushState({}, '', url)
-                    }}
-                    className={`flex items-center w-full ${sidebarCollapsed ? 'justify-center p-2' : 'p-3'} text-sm font-medium rounded-lg transition-colors duration-150 ${
-                      activeTab === 'license'
-                        ? 'bg-brand-accent text-brand-dark dark:bg-brand-accent dark:text-brand-dark font-bold'
-                        : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
-                    }`}
-                    title={sidebarCollapsed ? 'License' : undefined}
-                  >
-                    <svg
-                      className={`w-6 h-6 ${sidebarCollapsed ? '' : 'mr-3'} text-gray-500 dark:text-gray-400`}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 13v3h3v3h3v2l2 2h5v-4L12.74 8.74C12.91 8.19 13 7.6 13 7c0-3.31-2.69-6-6-6S1 3.69 1 7a6.005 6.005 0 0 0 8.47 5.47L10 13ZM6 7a1 1 0 1 1 0-2a1 1 0 0 1 0 2Z" />
-                    </svg>
-                    {!sidebarCollapsed && 'License'}
-                  </button>
-                </li>
               </ul>
             </div>
           </nav>
@@ -1020,7 +883,6 @@ Please start by asking me about the product details so you can create descriptio
                   {activeTab === 'agents' && 'Create and manage AI agents with custom personalities and knowledge.'}
                   {activeTab === 'seo' && 'Monitor your website\'s SEO performance and keyword rankings.'}
                   {activeTab === 'analytics' && 'View insights about your AI assistant usage and performance.'}
-                  {activeTab === 'license' && 'Manage your MagicAssistant license activation and status.'}
                   {activeTab === 'settings' && 'Configure your MagicAssistant preferences and settings.'}
                 </p>
               </div>
