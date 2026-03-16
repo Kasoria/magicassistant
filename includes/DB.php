@@ -989,7 +989,9 @@ class DB {
             'anthropic_api_key',
             'google_api_key',
             'openrouter_api_key',
-            'surecart_license_key', // SureCart license key for debug view access
+            'unsplash_access_key',
+            'dataforseo_api_key',
+            'dataforseo_login_id',
             'api_key' // Generic fallback
         );
         
