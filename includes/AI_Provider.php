@@ -4708,6 +4708,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'openrouter_api_key' => $this->db ? $this->db->has_api_key('openrouter_api_key') : false,
             'dataforseo_login_id' => $this->db ? ($this->db->has_api_key('dataforseo_login_id') ? $this->db->decrypt_api_key($this->db->get_setting('dataforseo_login_id')) : null) : null,
             'dataforseo_api_key' => $this->db ? $this->db->has_api_key('dataforseo_api_key') : false,
+            'unsplash_access_key' => $this->db ? $this->db->has_api_key('unsplash_access_key') : false,
             'enable_create_tools' => isset($this->settings['enable_create_tools']) ? (bool) $this->settings['enable_create_tools'] : true,
             'enable_update_tools' => isset($this->settings['enable_update_tools']) ? (bool) $this->settings['enable_update_tools'] : true,
             'enable_delete_tools' => isset($this->settings['enable_delete_tools']) ? (bool) $this->settings['enable_delete_tools'] : false,
@@ -4795,10 +4796,14 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
         if (isset($data['dataforseo_api_key']) && !empty($data['dataforseo_api_key'])) {
             $api_key = sanitize_text_field($data['dataforseo_api_key']);
-            // Let save_setting handle the encryption
             $this->db->save_setting('dataforseo_api_key', $api_key);
         }
-        
+
+        if (isset($data['unsplash_access_key']) && !empty($data['unsplash_access_key'])) {
+            $api_key = sanitize_text_field($data['unsplash_access_key']);
+            $this->db->save_setting('unsplash_access_key', $api_key);
+        }
+
         if (isset($data['complete_data_removal'])) {
             $this->db->save_setting('complete_data_removal', (bool) $data['complete_data_removal']);
         }
@@ -5622,7 +5627,12 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         $key_name = $provider . '_api_key';
         
-        if (!in_array($key_name, ['openai_api_key', 'anthropic_api_key', 'google_api_key', 'openrouter_api_key', 'dataforseo_api_key'])) {
+        // Unsplash uses 'access_key' not 'api_key'
+        if ($provider === 'unsplash') {
+            $key_name = 'unsplash_access_key';
+        }
+
+        if (!in_array($key_name, ['openai_api_key', 'anthropic_api_key', 'google_api_key', 'openrouter_api_key', 'dataforseo_api_key', 'unsplash_access_key'])) {
             return new WP_Error('invalid_provider', 'Invalid provider', array('status' => 400));
         }
         

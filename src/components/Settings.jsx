@@ -154,6 +154,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
       else if (provider === 'anthropic') settingsKey = 'anthropic_api_key'
       else if (provider === 'google') settingsKey = 'google_api_key'
       else if (provider === 'openrouter') settingsKey = 'openrouter_api_key'
+      else if (provider === 'unsplash') settingsKey = 'unsplash_access_key'
       else if (provider === 'debug_view') settingsKey = 'debug_view_password'
       
       // For debug view password, also save the enabled state
@@ -1322,6 +1323,48 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                   </div>
                 )}
               </div>
+            </div>
+
+            {/* Unsplash API Key */}
+            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
+              <h5 className="font-medium text-brand-dark dark:text-white">Unsplash API Key (Optional)</h5>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
+                Required for image search features. Get a free key at <a href="https://unsplash.com/developers" target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">unsplash.com/developers</a>.
+              </p>
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <TextInput
+                    id="unsplash-access-key"
+                    type="password"
+                    placeholder="Enter Unsplash Access Key"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    sizing="sm"
+                  />
+                </div>
+                <Button
+                  onClick={() => handleApiKeySubmit('unsplash')}
+                  disabled={!apiKey.trim() || isSavingSettings}
+                  size="sm"
+                >
+                  {isSavingSettings ? 'Saving...' : 'Save'}
+                </Button>
+              </div>
+              {settings?.unsplash_access_key && (
+                <div className="flex items-center justify-between mt-2">
+                  <p className="text-sm text-green-600 dark:text-green-400">
+                    ✓ Unsplash API key configured
+                  </p>
+                  <Button
+                    size="xs"
+                    className="bg-red-600 hover:bg-red-700 focus:ring-red-300 dark:bg-red-500 dark:hover:bg-red-600 dark:focus:ring-red-900"
+                    onClick={() => handleDeleteApiKeyClick('unsplash')}
+                    disabled={isSavingSettings}
+                  >
+                    Delete Key
+                  </Button>
+                </div>
+              )}
             </div>
 
             {/* Agent Mode Section */}
