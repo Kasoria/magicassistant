@@ -63,13 +63,13 @@ class Public_Share {
      */
     private function display_shared_conversation($share_id) {
         if (!$this->db) {
-            wp_die(__('Service not available', 'magic-assistant'), 503);
+            wp_die(esc_html__('Service not available', 'magic-assistant'), 503);
         }
         
         $conversation = $this->db->get_shared_conversation($share_id);
         
         if (!$conversation) {
-            wp_die(__('Shared conversation not found or has expired', 'magic-assistant'), 404);
+            wp_die(esc_html__('Shared conversation not found or has expired', 'magic-assistant'), 404);
         }
         
         // Set headers

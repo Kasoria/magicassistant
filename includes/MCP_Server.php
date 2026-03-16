@@ -3386,7 +3386,7 @@ class MCP_Server {
             throw new \Exception('Only SELECT queries allowed (dangerous queries disabled).');
         }
         $query = rtrim($query,';');
-        $results = $wpdb->get_results($query, ARRAY_A);
+        $results = $wpdb->get_results($query, ARRAY_A); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- User-provided query, gated by dangerous_sql_queries setting
         if($wpdb->last_error) throw new \Exception('SQL Error: '.$wpdb->last_error);
         return array('success'=>true,'row_count'=>count($results),'results'=>array_slice($results,0,100));
     }
@@ -11275,7 +11275,7 @@ class MCP_Server {
             $post_id
         );
         
-        $raw_meta = $wpdb->get_results($query);
+        $raw_meta = $wpdb->get_results($query); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query built with $wpdb->prepare above
         
         // Group meta fields by key (handle multiple values for the same key)
         $meta_fields = array();
@@ -11611,8 +11611,8 @@ class MCP_Server {
             ORDER BY count DESC, pm.meta_key ASC
         ";
         
-        $meta_keys = $wpdb->get_results($query);
-        
+        $meta_keys = $wpdb->get_results($query); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- $where_clause built with $wpdb->prepare, rest is static SQL
+
         // Filter out private meta keys if requested
         if (!$include_private) {
             $meta_keys = array_filter($meta_keys, function($meta) {

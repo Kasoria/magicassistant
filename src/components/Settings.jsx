@@ -917,7 +917,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                     size="sm"
                     color="warning"
                     onClick={handleResetAllTours}
-                    disabled={isResettingTour}
+                    disabled={false}
                     className="w-full"
                   >
                     Reset All

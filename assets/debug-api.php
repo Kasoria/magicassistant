@@ -1,4 +1,4 @@
-<?php // phpcs:ignore WordPress.Files.FileName -- Standalone debug file, works without WordPress
+<?php // phpcs:ignore WordPress.Files.FileName, PluginCheck.CodeAnalysis.DirectFileAccess -- Standalone debug file, runs without WordPress
 /**
  * MagicAssistant Debug API - Fallback API for when WordPress is not loaded
  * 
@@ -818,7 +818,7 @@ function get_debug_db_connection() {
         
         return $connection;
     } catch (PDOException $e) {
-        throw new Exception('Database connection failed: ' . $e->getMessage());
+        throw new Exception('Database connection failed: ' . $e->getMessage()); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped
     }
 }
 

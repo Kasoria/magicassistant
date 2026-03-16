@@ -8296,7 +8296,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         header('Content-Length: ' . strlen($log_content));
         
         // Output the file content
-        echo $log_content;
+        echo $log_content; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Raw file download, not HTML context
         exit;
     }
 

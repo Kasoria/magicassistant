@@ -268,7 +268,7 @@ class DB {
 
             if (!empty($columns_to_add)) {
                 $sql = "ALTER TABLE {$this->chatbots_table} " . implode(', ', $columns_to_add);
-                $result = $wpdb->query($sql);
+                $result = $wpdb->query($sql); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.SchemaChange -- Static DDL migration, no user input
 
                 if ($result !== false) {
                     $this->save_setting('chatbot_header_migration_version', 1);
@@ -301,7 +301,7 @@ class DB {
 
             if (!empty($columns_to_add)) {
                 $sql = "ALTER TABLE {$this->chat_history_table} " . implode(', ', $columns_to_add);
-                $result = $wpdb->query($sql);
+                $result = $wpdb->query($sql); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.SchemaChange -- Static DDL migration, no user input
 
                 if ($result !== false) {
                     $this->save_setting('provider_override_migration_version', 1);
