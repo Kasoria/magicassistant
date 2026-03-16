@@ -1054,10 +1054,11 @@ class DB {
         $key = hash('sha256', (defined('AUTH_SALT') ? AUTH_SALT : 'mat_default_salt') . (defined('SECURE_AUTH_SALT') ? SECURE_AUTH_SALT : 'mat_secure_salt'));
         
         // Decode the base64 data
-        $data = base64_decode($encrypted_api_key);
-        
+        $data = base64_decode($encrypted_api_key, true);
+
         if ($data === false || strlen($data) < 16) {
-            return '';
+            // Not valid base64/encrypted - return as plain text (legacy unencrypted value)
+            return $encrypted_api_key;
         }
         
         // Extract IV and encrypted data
@@ -1066,8 +1067,13 @@ class DB {
         
         // Decrypt the API key
         $decrypted = openssl_decrypt($encrypted, 'AES-256-CBC', $key, 0, $iv);
-        
-        return $decrypted !== false ? $decrypted : '';
+
+        if ($decrypted !== false) {
+            return $decrypted;
+        }
+
+        // Decryption failed - might be a legacy plain text value
+        return $encrypted_api_key;
     }
     
     /**
