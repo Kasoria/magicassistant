@@ -3956,12 +3956,35 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
 
         // Add tools if provided or auto-retrieved
+        // Google requires tools wrapped in { functionDeclarations: [...] } format
         if (is_array($tools) && count($tools) > 0) {
-            $request_data['tools'] = $tools;
+            $function_declarations = array();
+            foreach ($tools as $tool) {
+                // Convert from OpenAI format to Google format
+                $declaration = array(
+                    'name' => $tool['name'] ?? ($tool['function']['name'] ?? ''),
+                    'description' => $tool['description'] ?? ($tool['function']['description'] ?? ''),
+                );
+                $params = $tool['parameters'] ?? ($tool['function']['parameters'] ?? null);
+                if ($params) {
+                    $declaration['parameters'] = $params;
+                }
+                $function_declarations[] = $declaration;
+            }
+            $request_data['tools'] = array(
+                array('functionDeclarations' => $function_declarations)
+            );
+            // Add tool config for function calling behavior
+            $request_data['toolConfig'] = array(
+                'functionCallingConfig' => array(
+                    'mode' => 'AUTO'
+                )
+            );
         }
 
         // Add web search (Google Search grounding) if enabled
-        if ($web_search_enabled) {
+        // Note: Google does not allow mixing function calling with built-in tools
+        if ($web_search_enabled && empty($tools)) {
             if (!isset($request_data['tools'])) {
                 $request_data['tools'] = array();
             }
@@ -4096,7 +4119,20 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         if ($this->openrouter_model_supports_tools($model) && $is_using_default_message) {
             $tools_for_openrouter = $this->get_mcp_tools_for_openai(); // OpenRouter uses OpenAI-style tools
             if (!empty($tools_for_openrouter)) {
-                $request_data['tools'] = $tools_for_openrouter;
+                // OpenRouter expects { type: 'function', function: { name, description, parameters } }
+                $request_data['tools'] = array_map(function($tool) {
+                    if (isset($tool['function'])) {
+                        return $tool; // Already in correct format
+                    }
+                    return array(
+                        'type' => 'function',
+                        'function' => array(
+                            'name' => $tool['name'],
+                            'description' => $tool['description'] ?? '',
+                            'parameters' => $tool['parameters'] ?? array('type' => 'object'),
+                        ),
+                    );
+                }, $tools_for_openrouter);
             }
         }
 
