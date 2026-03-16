@@ -94,7 +94,13 @@ class Public_Share {
         $description = esc_attr(wp_trim_words(wp_strip_all_tags($conversation['formatted_content']), 30));
         $og_image = esc_url(MAGIC_ASSISTANT_PLUGIN_URL . 'assets/magicassistant-social.png'); // You might want to create this
         $canonical_url = esc_url(home_url("/magicassistant/shared/{$conversation['share_id']}"));
-        
+
+        // Powered-by credit (filterable so site owners can remove it)
+        $powered_by_html = '';
+        if ( apply_filters( 'magicassistant_show_credits', true ) ) {
+            $powered_by_html = '<div class="footer"><div class="powered-by">Powered by <strong><a href="https://magicplugins.io" target="_blank" style="color: #6366f1; text-decoration: none;">MagicAssistant</a></strong> - AI-Powered WordPress Assistant</div></div>';
+        }
+
         // phpcs:ignore Squiz.PHP.Heredoc.NotAllowed -- Heredoc cleaner for large HTML templates
         return <<<HTML
 <!DOCTYPE html>
@@ -358,11 +364,7 @@ class Public_Share {
             {$html_content}
         </div>
         
-        <div class="footer">
-            <div class="powered-by">
-                Powered by <strong><a href="https://magicplugins.io" target="_blank" style="color: #6366f1; text-decoration: none;">MagicAssistant</a></strong> - AI-Powered WordPress Assistant
-            </div>
-        </div>
+        {$powered_by_html}
     </div>
 </body>
 </html>
