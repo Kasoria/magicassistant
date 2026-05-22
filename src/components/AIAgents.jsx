@@ -4,6 +4,11 @@ import FormModal from './FormModal'
 import { useToast } from './Toast'
 import ChatbotInterface from './ChatbotInterface'
 
+// Normalize the `is_active` flag, which the REST API returns as the string
+// "0"/"1" (MySQL tinyint). A bare truthiness check treats "0" as true, so an
+// inactive record would wrongly render as "Active".
+const isActiveFlag = (value) => value === true || value === 1 || value === '1'
+
 // Color Input Component
 const ColorInput = ({ id, label, value, onChange, className = "" }) => (
   <div className={className}>
@@ -1201,8 +1206,8 @@ const AIAgents = ({ adminData, settings }) => {
                     {agent.description || 'No description'}
                   </p>
                 </div>
-                <Badge color={agent.is_active ? 'success' : 'warning'} size="sm">
-                  {agent.is_active ? 'Active' : 'Inactive'}
+                <Badge color={isActiveFlag(agent.is_active) ? 'success' : 'warning'} size="sm">
+                  {isActiveFlag(agent.is_active) ? 'Active' : 'Inactive'}
                 </Badge>
               </div>
 
@@ -1296,8 +1301,8 @@ const AIAgents = ({ adminData, settings }) => {
                     <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                       {kb.name}
                     </h3>
-                    <Badge color={kb.is_active ? 'success' : 'warning'} size="sm">
-                      {kb.is_active ? 'Active' : 'Inactive'}
+                    <Badge color={isActiveFlag(kb.is_active) ? 'success' : 'warning'} size="sm">
+                      {isActiveFlag(kb.is_active) ? 'Active' : 'Inactive'}
                     </Badge>
                     {kb.category && (
                       <Badge color="purple" size="sm">
@@ -1396,8 +1401,8 @@ const AIAgents = ({ adminData, settings }) => {
                     {chatbot.description || 'No description'}
                   </p>
                 </div>
-                <Badge color={chatbot.is_active ? 'success' : 'warning'} size="sm">
-                  {chatbot.is_active ? 'Active' : 'Inactive'}
+                <Badge color={isActiveFlag(chatbot.is_active) ? 'success' : 'warning'} size="sm">
+                  {isActiveFlag(chatbot.is_active) ? 'Active' : 'Inactive'}
                 </Badge>
               </div>
 
@@ -1563,7 +1568,7 @@ const AIAgents = ({ adminData, settings }) => {
                     className="mt-1"
                   >
                     <option value="">Select an AI Agent</option>
-                    {agents.filter(agent => agent.is_active).map((agent) => (
+                    {agents.filter(agent => isActiveFlag(agent.is_active)).map((agent) => (
                       <option key={agent.id} value={agent.id}>
                         {agent.name}
                       </option>
