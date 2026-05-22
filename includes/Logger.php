@@ -164,6 +164,7 @@ class Logger {
         
         if ($result === false) {
             // Fallback to WordPress error log if our custom logging fails
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- last-resort notice when the plugin's own log file cannot be written
             error_log('[MagicAssistant Logger] Failed to write to custom log file: ' . $this->log_file_path);
         }
     }
@@ -202,14 +203,14 @@ class Logger {
             $new_file = $log_dir . '/' . $base_name . '.' . ($i + 1) . '.log';
             
             if (file_exists($old_file)) {
-                rename($old_file, $new_file); // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
+                rename($old_file, $new_file); // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename -- log rotation; WP_Filesystem is too heavy for the logger hot path
             }
         }
         
         // Move current log to .1 backup
         $first_backup = $log_dir . '/' . $base_name . '.1.log';
         if (file_exists($this->log_file_path)) {
-            rename($this->log_file_path, $first_backup); // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
+            rename($this->log_file_path, $first_backup); // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename -- log rotation; WP_Filesystem is too heavy for the logger hot path
         }
     }
     

@@ -23,7 +23,7 @@ class Login_Tracker {
      * @param \WP_User $user       User object.
      */
     public static function track_login_success($user_login, $user) {
-        $ip = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field($_SERVER['REMOTE_ADDR']) : '';
+        $ip = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
         $events = get_option('magicassistant_login_events', []);
         array_unshift($events, [
             'type' => 'success',
@@ -45,7 +45,7 @@ class Login_Tracker {
      * @param string $username Attempted username.
      */
     public static function track_login_failed($username) {
-        $ip = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field($_SERVER['REMOTE_ADDR']) : '';
+        $ip = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
         $events = get_option('magicassistant_login_events', []);
         array_unshift($events, [
             'type' => 'failure',

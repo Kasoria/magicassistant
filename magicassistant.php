@@ -15,7 +15,7 @@
  * Requires PHP:      7.4
  * Author:            Christian Wenterodt
  * Author URI:        https://chrispump.me
- * Text Domain:       magic-assistant
+ * Text Domain:       magicassistant
  * Domain Path:       /languages
  * License:           GPL v2 or later
  * License URI:       http://www.gnu.org/licenses/gpl-2.0.txt
@@ -90,7 +90,8 @@ class MagicAssistant {
   }
 
   public function setup() {
-    load_plugin_textdomain('magic-assistant', false, dirname(plugin_basename(__FILE__)) . '/languages');
+    // Translations load automatically for WordPress.org-hosted plugins (since WP 4.6)
+    // because the text domain matches the plugin slug — no load_plugin_textdomain() needed.
   }
 
   /**
@@ -144,6 +145,7 @@ function magic_assistant() {
   return $GLOBALS['magic_assistant'];
 }
 
+// phpcs:disable WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedFunctionFound -- public API accessors with intentional short MAT* names
 /**
  * Global function to access MagicAssistant MCP server
  */
@@ -171,6 +173,20 @@ function MATDFS() {
 function MATPS() {
   return $GLOBALS['magic_assistant']->get_pagespeed_service();
 }
+// phpcs:enable WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedFunctionFound
 
 // Register login event tracker
 \MagicAssistant\Login_Tracker::register();
+
+/**
+ * Gated debug logger. Writes to the PHP error log only when WP_DEBUG is enabled,
+ * so debug tracing never runs on production sites.
+ *
+ * @param mixed $message String or any value to log.
+ */
+function mat_debug_log($message) { // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedFunctionFound -- Uses the plugin's established mat_ prefix, consistent with its custom tables and global helpers.
+  if (defined('WP_DEBUG') && WP_DEBUG) {
+    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- intentional, WP_DEBUG-gated debug logging
+    error_log(is_scalar($message) ? (string) $message : wp_json_encode($message));
+  }
+}

@@ -581,6 +581,7 @@ class AI_Provider {
     public function handle_chat($request) {
         // Increase PHP execution time limit for content generation
         // Each request should have its own timeout, this just ensures PHP doesn't kill the script
+        // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged -- long-running AI request needs extended execution time
         @set_time_limit(600); // 10 minutes for content generation requests
         
         $data = $request->get_json_params();
@@ -876,7 +877,9 @@ class AI_Provider {
         if (function_exists('apache_setenv')) {
             apache_setenv('no-gzip', '1');
         }
+        // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged -- disable output compression for SSE streaming
         ini_set('zlib.output_compression', 0);
+        // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged -- enable implicit flush for SSE streaming
         ini_set('implicit_flush', 1);
         
         // Send initial connection test
@@ -1008,8 +1011,8 @@ class AI_Provider {
                         );
                     }
                 }
-                error_log('[MagicAssistant] generate_image with attached files: ' . json_encode($log_data));
-                error_log('[MagicAssistant] Total input images: ' . count($input_images));
+                \mat_debug_log('[MagicAssistant] generate_image with attached files: ' . json_encode($log_data));
+                \mat_debug_log('[MagicAssistant] Total input images: ' . count($input_images));
             }
             
             $user_id = get_current_user_id();
@@ -1061,11 +1064,11 @@ class AI_Provider {
             // Add input images if provided (for image editing/enhancement/combining)
             if (!empty($input_images)) {
                 $request_data['input_images'] = $input_images;
-                error_log('[MagicAssistant] Sending image generation request with ' . count($input_images) . ' input images');
+                \mat_debug_log('[MagicAssistant] Sending image generation request with ' . count($input_images) . ' input images');
             }
             
-            error_log('[MagicAssistant] Image generation request data keys: ' . implode(', ', array_keys($request_data)));
-            error_log('[MagicAssistant] Request payload (summary): prompt_length=' . strlen($prompt) . ', has_input_images=' . (empty($input_images) ? 'no' : 'yes (' . count($input_images) . ')'));
+            \mat_debug_log('[MagicAssistant] Image generation request data keys: ' . implode(', ', array_keys($request_data)));
+            \mat_debug_log('[MagicAssistant] Request payload (summary): prompt_length=' . strlen($prompt) . ', has_input_images=' . (empty($input_images) ? 'no' : 'yes (' . count($input_images) . ')'));
             
             // Make request to proxy
             // Note: Image editing with input images can take 3+ minutes via OpenAI Responses API
@@ -1076,25 +1079,25 @@ class AI_Provider {
             ));
 
             if (is_wp_error($response)) {
-                error_log('[MagicAssistant] Proxy request error: ' . $response->get_error_message());
+                \mat_debug_log('[MagicAssistant] Proxy request error: ' . $response->get_error_message());
                 return new WP_Error('proxy_error', $response->get_error_message(), array('status' => 500));
             }
 
             $response_code = wp_remote_retrieve_response_code($response);
             $response_body = wp_remote_retrieve_body($response);
             
-            error_log('[MagicAssistant] API response code: ' . $response_code);
-            error_log('[MagicAssistant] API response body length: ' . strlen($response_body));
+            \mat_debug_log('[MagicAssistant] API response code: ' . $response_code);
+            \mat_debug_log('[MagicAssistant] API response body length: ' . strlen($response_body));
 
             $result = json_decode($response_body, true);
 
             if ($response_code !== 200) {
                 $error_message = $result['error']['message'] ?? $result['error'] ?? $result['message'] ?? 'Image generation failed';
-                error_log('[MagicAssistant] Generation failed with error: ' . $error_message);
+                \mat_debug_log('[MagicAssistant] Generation failed with error: ' . $error_message);
                 return new WP_Error('generation_failed', $error_message, array('status' => $response_code));
             }
 
-            error_log('[MagicAssistant] Generation successful, processing images...');
+            \mat_debug_log('[MagicAssistant] Generation successful, processing images...');
 
             // Extract image URLs from response (direct API response format)
             $images = $result['data'] ?? array();
@@ -1204,7 +1207,7 @@ class AI_Provider {
             }
             
             if (empty($base64_data)) {
-                error_log('[MagicAssistant] No base64 data found in image response');
+                \mat_debug_log('[MagicAssistant] No base64 data found in image response');
                 return new WP_Error('invalid_image_data', 'No valid image data found');
             }
             
@@ -1266,7 +1269,7 @@ class AI_Provider {
             $seo_alt = $seo_metadata['alt'];
             
             // Log success
-            error_log('[MagicAssistant] Image processed successfully: ' . json_encode(array(
+            \mat_debug_log('[MagicAssistant] Image processed successfully: ' . json_encode(array(
                 'provider' => $provider,
                 'model' => $model,
                 'format' => $format,
@@ -1285,7 +1288,7 @@ class AI_Provider {
             );
             
         } catch (Exception $e) {
-            error_log('[MagicAssistant] Image processing failed: ' . json_encode(array(
+            \mat_debug_log('[MagicAssistant] Image processing failed: ' . json_encode(array(
                 'error' => $e->getMessage(),
                 'provider' => $provider,
                 'model' => $model
@@ -1494,6 +1497,7 @@ class AI_Provider {
      */
     private function handle_streaming_chat($data) {
         // Increase PHP execution time limit for content generation
+        // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged -- long-running AI request needs extended execution time
         @set_time_limit(600); // 10 minutes
         
         // Prepare request data similar to regular handle_chat
@@ -1872,13 +1876,13 @@ class AI_Provider {
         // Store current agent mode for tool filtering
         $this->current_agent_mode = $agent_mode;
         $this->current_page_context = $page_context; // Store page context for framework injection
-        error_log('=== HANDLE CHAT MODE ===');
-        error_log('Agent Mode: ' . ($agent_mode ?: 'null'));
-        error_log('Provider: ' . $provider);
-        error_log('Session ID: ' . $session_id);
+        \mat_debug_log('=== HANDLE CHAT MODE ===');
+        \mat_debug_log('Agent Mode: ' . ($agent_mode ?: 'null'));
+        \mat_debug_log('Provider: ' . $provider);
+        \mat_debug_log('Session ID: ' . $session_id);
         if ($agent_mode === 'bricks' && !empty($page_context) && is_array($page_context)) {
             $framework = $page_context['bricks_framework'] ?? 'NOT SET';
-            error_log('🔧 Bricks Framework from page_context: ' . $framework);
+            \mat_debug_log('🔧 Bricks Framework from page_context: ' . $framework);
         }
         
         // Limit the amount of history we send to the model to save tokens
@@ -2080,12 +2084,12 @@ class AI_Provider {
         // Store current agent mode for tool filtering
         $this->current_agent_mode = $agent_mode;
         $this->current_page_context = $page_context; // Store page context for framework injection
-        error_log('=== HANDLE AGENT MODE ===');
-        error_log('Agent Mode: ' . ($agent_mode ?: 'null'));
-        error_log('Provider: ' . $provider);
-        error_log('Session ID: ' . $session_id);
+        \mat_debug_log('=== HANDLE AGENT MODE ===');
+        \mat_debug_log('Agent Mode: ' . ($agent_mode ?: 'null'));
+        \mat_debug_log('Provider: ' . $provider);
+        \mat_debug_log('Session ID: ' . $session_id);
         if ($agent_mode === 'bricks') {
-            error_log('✅ BRICKS MODE DETECTED - Will filter to only Bricks tools');
+            \mat_debug_log('✅ BRICKS MODE DETECTED - Will filter to only Bricks tools');
         }
         
         // Limit history length to avoid oversized prompts while keeping recent context
@@ -2425,8 +2429,8 @@ class AI_Provider {
         
         // BRICKS MODE: Use Bricks Component Library MCP tools
         if ($agent_mode === 'bricks') {
-            error_log('✅ BUILDING BRICKS MODE SYSTEM MESSAGE');
-            error_log('Bricks mode detected - Using Bricks-specific system message and tool filtering');
+            \mat_debug_log('✅ BUILDING BRICKS MODE SYSTEM MESSAGE');
+            \mat_debug_log('Bricks mode detected - Using Bricks-specific system message and tool filtering');
             
             // Get framework preference from page context if available
             $framework_preference = '';
@@ -2909,7 +2913,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             ];
         } catch (Exception $e) {
             // Log error but don't fail the request - just continue without agent context
-            error_log('Error getting agent context: ' . $e->getMessage());
+            \mat_debug_log('Error getting agent context: ' . $e->getMessage());
             return [];
         }
     }
@@ -2969,7 +2973,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             ];
         } catch (Exception $e) {
             // Log error but don't fail the request - just continue without agent context
-            error_log('Error getting agent context by ID: ' . $e->getMessage());
+            \mat_debug_log('Error getting agent context by ID: ' . $e->getMessage());
             return [];
         }
     }
@@ -3237,7 +3241,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             ));
 
             if (is_wp_error($response)) {
-                error_log('[AI_Provider] Simple AI call error: ' . $response->get_error_message());
+                \mat_debug_log('[AI_Provider] Simple AI call error: ' . $response->get_error_message());
                 return null;
             }
 
@@ -3245,7 +3249,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $response_body = wp_remote_retrieve_body($response);
 
             if ($status_code !== 200) {
-                error_log('[AI_Provider] Simple AI call failed with status ' . $status_code . ': ' . $response_body);
+                \mat_debug_log('[AI_Provider] Simple AI call failed with status ' . $status_code . ': ' . $response_body);
                 return null;
             }
 
@@ -3274,11 +3278,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 }
             }
 
-            error_log('[AI_Provider] Simple AI call: Unable to extract text from response');
+            \mat_debug_log('[AI_Provider] Simple AI call: Unable to extract text from response');
             return null;
 
         } catch (Exception $e) {
-            error_log('[AI_Provider] Simple AI call exception: ' . $e->getMessage());
+            \mat_debug_log('[AI_Provider] Simple AI call exception: ' . $e->getMessage());
             return null;
         }
     }
@@ -3343,16 +3347,16 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $is_bricks_mode = ($this->current_agent_mode === 'bricks');
             $should_get_tools = $is_bricks_mode || $is_using_default_message;
             
-            error_log('=== TOOL SELECTION FOR OPENAI ===');
-            error_log('is_bricks_mode: ' . ($is_bricks_mode ? 'true' : 'false'));
-            error_log('is_using_default_message: ' . ($is_using_default_message ? 'true' : 'false'));
-            error_log('should_get_tools: ' . ($should_get_tools ? 'true' : 'false'));
+            \mat_debug_log('=== TOOL SELECTION FOR OPENAI ===');
+            \mat_debug_log('is_bricks_mode: ' . ($is_bricks_mode ? 'true' : 'false'));
+            \mat_debug_log('is_using_default_message: ' . ($is_using_default_message ? 'true' : 'false'));
+            \mat_debug_log('should_get_tools: ' . ($should_get_tools ? 'true' : 'false'));
             
             $tools_for_request = $should_get_tools ? $this->get_mcp_tools_for_openai() : [];
             
-            error_log('Tools count: ' . count($tools_for_request));
+            \mat_debug_log('Tools count: ' . count($tools_for_request));
             if (!empty($tools_for_request)) {
-                error_log('Tools: ' . json_encode(array_column($tools_for_request, 'name')));
+                \mat_debug_log('Tools: ' . json_encode(array_column($tools_for_request, 'name')));
             }
 
             $request_data = array(
@@ -3428,7 +3432,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
             // Handle timeout or empty responses
             if ($data === null) {
-                error_log('AI_Provider - FAILED RESPONSE DEBUG: ' . json_encode([
+                \mat_debug_log('AI_Provider - FAILED RESPONSE DEBUG: ' . json_encode([
                     'body_length' => strlen($body),
                     'body_preview' => substr($body, 0, 1000),
                     'response_code' => $response_code,
@@ -3730,24 +3734,24 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $is_using_default_message = strpos($system_message, 'You are MagicAssistant') !== false;
         $is_bricks_mode = ($this->current_agent_mode === 'bricks');
 
-        error_log('=== TOOL SELECTION FOR ANTHROPIC ===');
-        error_log('is_bricks_mode: ' . ($is_bricks_mode ? 'true' : 'false'));
-        error_log('is_using_agent_context: ' . ($is_using_agent_context ? 'true' : 'false'));
-        error_log('is_using_default_message: ' . ($is_using_default_message ? 'true' : 'false'));
+        \mat_debug_log('=== TOOL SELECTION FOR ANTHROPIC ===');
+        \mat_debug_log('is_bricks_mode: ' . ($is_bricks_mode ? 'true' : 'false'));
+        \mat_debug_log('is_using_agent_context: ' . ($is_using_agent_context ? 'true' : 'false'));
+        \mat_debug_log('is_using_default_message: ' . ($is_using_default_message ? 'true' : 'false'));
 
         if ($is_using_agent_context) {
             $tools = []; // No tools for AI Agents - they should have clean custom messages
-            error_log('No tools - using agent context');
+            \mat_debug_log('No tools - using agent context');
         } elseif ($is_bricks_mode || $is_using_default_message) {
             // In Bricks mode or default message, get tools (will be filtered in Bricks mode)
             $tools = $this->get_mcp_tools_for_anthropic();
-            error_log('Tools count: ' . count($tools));
+            \mat_debug_log('Tools count: ' . count($tools));
             if (!empty($tools)) {
-                error_log('Tools: ' . json_encode(array_column($tools, 'name')));
+                \mat_debug_log('Tools: ' . json_encode(array_column($tools, 'name')));
             }
         } else {
             $tools = []; // No tools for custom messages either
-            error_log('No tools - custom message');
+            \mat_debug_log('No tools - custom message');
         }
 
         $request_data = array(
@@ -3821,7 +3825,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         // Handle timeout or empty responses
         if ($data === null) {
-            error_log('AI_Provider - FAILED RESPONSE DEBUG (Anthropic): ' . json_encode([
+            \mat_debug_log('AI_Provider - FAILED RESPONSE DEBUG (Anthropic): ' . json_encode([
                 'body_length' => strlen($body),
                 'body_preview' => substr($body, 0, 1000),
                 'response_code' => wp_remote_retrieve_response_code($response),
@@ -4177,7 +4181,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         // Handle timeout or empty responses
         if ($data === null) {
-            error_log('AI_Provider - FAILED RESPONSE DEBUG (OpenRouter): ' . json_encode([
+            \mat_debug_log('AI_Provider - FAILED RESPONSE DEBUG (OpenRouter): ' . json_encode([
                 'body_length' => strlen($body),
                 'body_preview' => substr($body, 0, 1000),
                 'response_code' => wp_remote_retrieve_response_code($response),
@@ -4240,7 +4244,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         // BRICKS MODE: Only return Bricks-specific tools
         if ($this->current_agent_mode === 'bricks') {
-            error_log('BRICKS MODE: Filtering to only Bricks component tools');
+            \mat_debug_log('BRICKS MODE: Filtering to only Bricks component tools');
             $bricks_tools = ['bricks_get_component', 'bricks_insert_component'];
             $openai_tools = [];
             
@@ -4257,13 +4261,13 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         'description' => $description,
                         'parameters'  => $schema,
                     );
-                    error_log('BRICKS MODE: Added tool: ' . $tool_name);
+                    \mat_debug_log('BRICKS MODE: Added tool: ' . $tool_name);
                 } else {
-                    error_log('BRICKS MODE: WARNING - Tool not found: ' . $tool_name);
+                    \mat_debug_log('BRICKS MODE: WARNING - Tool not found: ' . $tool_name);
                 }
             }
             
-            error_log('BRICKS MODE: Total Bricks tools available: ' . count($openai_tools));
+            \mat_debug_log('BRICKS MODE: Total Bricks tools available: ' . count($openai_tools));
             return $openai_tools;
         }
         
@@ -4345,7 +4349,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         // BRICKS MODE: Only return Bricks-specific tools
         if ($this->current_agent_mode === 'bricks') {
-            error_log('BRICKS MODE: Filtering to only Bricks component tools (Google)');
+            \mat_debug_log('BRICKS MODE: Filtering to only Bricks component tools (Google)');
             $bricks_tools = ['bricks_get_component', 'bricks_insert_component'];
             $google_tools = [];
             
@@ -4361,11 +4365,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         'description' => $description,
                         'parameters'  => $schema,
                     );
-                    error_log('BRICKS MODE: Added tool (Google): ' . $tool_name);
+                    \mat_debug_log('BRICKS MODE: Added tool (Google): ' . $tool_name);
                 }
             }
             
-            error_log('BRICKS MODE: Total Bricks tools available (Google): ' . count($google_tools));
+            \mat_debug_log('BRICKS MODE: Total Bricks tools available (Google): ' . count($google_tools));
             return $google_tools;
         }
         
@@ -4444,7 +4448,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         // BRICKS MODE: Only return Bricks-specific tools
         if ($this->current_agent_mode === 'bricks') {
-            error_log('BRICKS MODE: Filtering to only Bricks component tools (Anthropic)');
+            \mat_debug_log('BRICKS MODE: Filtering to only Bricks component tools (Anthropic)');
             $bricks_tools = ['bricks_get_component', 'bricks_insert_component'];
             $anthropic_tools = [];
             
@@ -4460,11 +4464,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         'description'  => $description,
                         'input_schema' => $schema,
                     );
-                    error_log('BRICKS MODE: Added tool (Anthropic): ' . $tool_name);
+                    \mat_debug_log('BRICKS MODE: Added tool (Anthropic): ' . $tool_name);
                 }
             }
             
-            error_log('BRICKS MODE: Total Bricks tools available (Anthropic): ' . count($anthropic_tools));
+            \mat_debug_log('BRICKS MODE: Total Bricks tools available (Anthropic): ' . count($anthropic_tools));
             return $anthropic_tools;
         }
         
@@ -4547,16 +4551,16 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     $framework_preference = $this->current_page_context['bricks_framework'] ?? null;
                     if (!empty($framework_preference) && in_array($framework_preference, array('Native', 'ACSS', 'CoreFramework', 'ATF'))) {
                         $tool_args['framework'] = $framework_preference;
-                        error_log('🔧 Auto-injecting framework from page_context: ' . $framework_preference);
+                        \mat_debug_log('🔧 Auto-injecting framework from page_context: ' . $framework_preference);
                     } else {
                         // Default to Native if not specified
                         $tool_args['framework'] = 'Native';
-                        error_log('🔧 Using default framework (preference not found): Native');
+                        \mat_debug_log('🔧 Using default framework (preference not found): Native');
                     }
                 } else {
                     // Default to Native if no page_context available
                     $tool_args['framework'] = 'Native';
-                    error_log('🔧 Using default framework (no page_context): Native');
+                    \mat_debug_log('🔧 Using default framework (no page_context): Native');
                 }
             }
         }
@@ -5793,6 +5797,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         // Update the session title in the database
         global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Write to the plugin's own custom table; values are passed through $wpdb->update() format specifiers and object caching is not applicable to this update.
         $updated = $wpdb->update(
             $wpdb->prefix . 'mat_chat_history',
             array('title' => $title),
@@ -9333,7 +9338,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             return "Content summary not available";
             
         } catch (Exception $e) {
-            error_log('Web content summarization failed: ' . $e->getMessage());
+            \mat_debug_log('Web content summarization failed: ' . $e->getMessage());
             return "Content retrieved but summarization failed";
         }
     }
@@ -11303,13 +11308,16 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
         $user_id = get_current_user_id();
         
-        // Check if file was uploaded
+        // Check if file was uploaded. File uploads in the REST API arrive via $_FILES;
+        // this route is protected by its permission_callback.
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotValidated -- REST auth via permission_callback; upload validated by type/extension checks below
         if (!isset($_FILES['file']) || $_FILES['file']['error'] !== UPLOAD_ERR_OK) {
             return new WP_Error('upload_error', 'File upload failed', array('status' => 400));
         }
 
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- REST endpoint; raw $_FILES entry, filename sanitized before use
         $file = $_FILES['file'];
-        $file_extension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+        $file_extension = strtolower(pathinfo(sanitize_file_name($file['name']), PATHINFO_EXTENSION));
         
         // Validate file type - now includes images
         $text_types = array('pdf', 'docx', 'doc', 'txt', 'md');

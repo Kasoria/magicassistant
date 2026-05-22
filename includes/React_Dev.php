@@ -122,7 +122,7 @@ class React_Dev {
                 } else {
                     // Debug: log what screen we're on
                     if ( get_post_type() === 'attachment' ) {
-                        error_log( 'MagicAssistant: Attachment page but wrong screen base - screen base: ' . $screen->base . ', screen id: ' . $screen->id );
+                        \mat_debug_log( 'MagicAssistant: Attachment page but wrong screen base - screen base: ' . $screen->base . ', screen id: ' . $screen->id );
                     }
                     // Check floating chat settings before loading public React app on admin pages
                     if ( $this->should_show_public_app() ) {
@@ -205,6 +205,7 @@ class React_Dev {
      */
     private function is_bricks_builder() {
         // Check for bricks=run in URL (Bricks builder mode)
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only detection of Bricks builder mode
         if ( isset( $_GET['bricks'] ) && $_GET['bricks'] === 'run' ) {
             return true;
         }
@@ -233,7 +234,7 @@ class React_Dev {
                 'vite-client',
                 $this->vite_dev_server . '/@vite/client',
                 array(),
-                null,
+                MAGIC_ASSISTANT_VERSION,
                 false
             );
             
@@ -246,7 +247,7 @@ class React_Dev {
             'mat-react-media-library-dev',
             $this->vite_dev_server . '/src/media-library.jsx',
             array( 'vite-client' ),
-            null,
+            MAGIC_ASSISTANT_VERSION,
             true
         );
         
@@ -313,7 +314,7 @@ class React_Dev {
                 'vite-client',
                 $this->vite_dev_server . '/@vite/client',
                 array(),
-                null,
+                MAGIC_ASSISTANT_VERSION,
                 false
             );
             
@@ -326,7 +327,7 @@ class React_Dev {
             'mat-react-image-editor-dev',
             $this->vite_dev_server . '/src/image-editor.jsx',
             array( 'vite-client' ),
-            null,
+            MAGIC_ASSISTANT_VERSION,
             true
         );
         
@@ -360,7 +361,7 @@ class React_Dev {
             // Add type="module" to image editor script using centralized method
             add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
         } else {
-            error_log( 'MagicAssistant: image-editor.js not found at: ' . $dist_path . 'image-editor.js' );
+            \mat_debug_log( 'MagicAssistant: image-editor.js not found at: ' . $dist_path . 'image-editor.js' );
         }
     }
 
@@ -372,7 +373,7 @@ class React_Dev {
         
         // Only localize if the script is actually enqueued
         if ( ! wp_script_is( $handle, 'enqueued' ) && ! wp_script_is( $handle, 'registered' ) ) {
-            error_log( 'MagicAssistant: Attempted to localize image editor data but script handle not found: ' . $handle );
+            \mat_debug_log( 'MagicAssistant: Attempted to localize image editor data but script handle not found: ' . $handle );
             return;
         }
         
@@ -380,6 +381,7 @@ class React_Dev {
         $attachment_id = get_the_ID();
         if ( ! $attachment_id || get_post_type( $attachment_id ) !== 'attachment' ) {
             // Try getting from URL parameter
+            // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only attachment ID for the media editor, no form processing
             $attachment_id = isset( $_GET['post'] ) ? intval( $_GET['post'] ) : 0;
         }
         
@@ -409,7 +411,7 @@ class React_Dev {
                 'vite-client',
                 $this->vite_dev_server . '/@vite/client',
                 array(),
-                null,
+                MAGIC_ASSISTANT_VERSION,
                 false
             );
 
@@ -421,7 +423,7 @@ class React_Dev {
             'mat-react-bricks-text-enhancer-dev',
             $this->vite_dev_server . '/src/bricks-text-enhancer.jsx',
             array( 'vite-client' ),
-            null,
+            MAGIC_ASSISTANT_VERSION,
             true
         );
 
@@ -498,7 +500,7 @@ class React_Dev {
                 'vite-client',
                 $this->vite_dev_server . '/@vite/client',
                 array(),
-                null,
+                MAGIC_ASSISTANT_VERSION,
                 false
             );
 
@@ -510,7 +512,7 @@ class React_Dev {
             'mat-react-bricks-image-enhancer-dev',
             $this->vite_dev_server . '/src/bricks-image-enhancer.jsx',
             array( 'vite-client' ),
-            null,
+            MAGIC_ASSISTANT_VERSION,
             true
         );
 
@@ -574,7 +576,7 @@ class React_Dev {
             'vite-client',
             $this->vite_dev_server . '/@vite/client',
             array(),
-            null,
+            MAGIC_ASSISTANT_VERSION,
             false
         );
         
@@ -586,7 +588,7 @@ class React_Dev {
             'mat-react-admin-dev',
             $this->vite_dev_server . '/src/admin.jsx',
             array( 'vite-client' ),
-            null,
+            MAGIC_ASSISTANT_VERSION,
             true
         );
         
@@ -608,7 +610,7 @@ class React_Dev {
                 'vite-client',
                 $this->vite_dev_server . '/@vite/client',
                 array(),
-                null,
+                MAGIC_ASSISTANT_VERSION,
                 false
             );
             
@@ -621,7 +623,7 @@ class React_Dev {
             'mat-react-public-dev' . $public_handle_suffix,
             $this->vite_dev_server . '/src/main.jsx',
             array( 'vite-client' ),
-            null,
+            MAGIC_ASSISTANT_VERSION,
             true
         );
         
@@ -848,12 +850,12 @@ class React_Dev {
             ),
             'toursGloballyDisabled' => (bool) get_option('mat_tours_globally_disabled', false),
             'i18n' => array(
-              'loading' => __( 'Loading...', 'magic-assistant' ),
-              'error' => __( 'An error occurred', 'magic-assistant' ),
-              'save' => __( 'Save', 'magic-assistant' ),
-              'cancel' => __( 'Cancel', 'magic-assistant' ),
-              'delete' => __( 'Delete', 'magic-assistant' ),
-              'edit' => __( 'Edit', 'magic-assistant' ),
+              'loading' => __( 'Loading...', 'magicassistant' ),
+              'error' => __( 'An error occurred', 'magicassistant' ),
+              'save' => __( 'Save', 'magicassistant' ),
+              'cancel' => __( 'Cancel', 'magicassistant' ),
+              'delete' => __( 'Delete', 'magicassistant' ),
+              'edit' => __( 'Edit', 'magicassistant' ),
             )
           ));
         }
@@ -894,12 +896,12 @@ class React_Dev {
             'floatingChatCustomColor' => isset( $settings['floating_chat_custom_color'] ) ? $settings['floating_chat_custom_color'] : '',
             'floatingChatCustomIcon'  => isset( $settings['floating_chat_custom_icon'] )  ? $settings['floating_chat_custom_icon']  : '',
             'i18n' => array(
-                'loading' => __( 'Loading...', 'magic-assistant' ),
-                'error' => __( 'An error occurred', 'magic-assistant' ),
-                'save' => __( 'Save', 'magic-assistant' ),
-                'cancel' => __( 'Cancel', 'magic-assistant' ),
-                'delete' => __( 'Delete', 'magic-assistant' ),
-                'edit' => __( 'Edit', 'magic-assistant' ),
+                'loading' => __( 'Loading...', 'magicassistant' ),
+                'error' => __( 'An error occurred', 'magicassistant' ),
+                'save' => __( 'Save', 'magicassistant' ),
+                'cancel' => __( 'Cancel', 'magicassistant' ),
+                'delete' => __( 'Delete', 'magicassistant' ),
+                'edit' => __( 'Edit', 'magicassistant' ),
             )
         ));
     }
@@ -1010,6 +1012,7 @@ class React_Dev {
         if (is_admin()) {
             global $pagenow, $post;
             
+            // phpcs:disable WordPress.Security.NonceVerification.Recommended -- read-only detection of the current admin screen; no form data is processed
             if (in_array($pagenow, array('post.php', 'post-new.php'))) {
                 if (isset($_GET['post']) && is_numeric($_GET['post'])) {
                     $post_id = intval($_GET['post']);
@@ -1048,6 +1051,7 @@ class React_Dev {
                 $info['context'] = 'admin_' . $pagenow;
                 $info['title'] = 'WordPress Admin';
             }
+            // phpcs:enable WordPress.Security.NonceVerification.Recommended
         }
         
         return $info;
@@ -1363,7 +1367,7 @@ class React_Dev {
             return true; // No URL restrictions
         }
 
-        $current_url = $_SERVER['REQUEST_URI'] ?? '';
+        $current_url = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
 
         foreach ($url_patterns as $pattern_config) {
             $pattern = $pattern_config['pattern'] ?? '';
@@ -1415,7 +1419,7 @@ class React_Dev {
         }
 
         // Simple device detection based on user agent
-        $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+        $user_agent = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '';
 
         if ($devices === 'mobile') {
             return wp_is_mobile();
@@ -1539,7 +1543,7 @@ class React_Dev {
                 return false; // No patterns specified, don't show
             }
             
-            $current_url = $_SERVER['REQUEST_URI'] ?? '';
+            $current_url = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
             $patterns = array_filter(array_map('trim', explode("\n", $url_patterns)));
             
             foreach ($patterns as $pattern) {
@@ -1630,7 +1634,9 @@ class React_Dev {
         ];
         
         // Check for WooCommerce pages
-        if (strpos($pagenow, 'wc-') === 0 || isset($_GET['page']) && strpos($_GET['page'], 'wc-') === 0) {
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only screen detection, no form processing
+        $wc_page = isset($_GET['page']) ? sanitize_text_field(wp_unslash($_GET['page'])) : '';
+        if (strpos($pagenow, 'wc-') === 0 || ($wc_page !== '' && strpos($wc_page, 'wc-') === 0)) {
             return 'woocommerce';
         }
         

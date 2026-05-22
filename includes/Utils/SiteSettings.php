@@ -231,7 +231,7 @@ class SiteSettings {
 			'large_size_w'         => get_option( 'large_size_w' ),
 			'large_size_h'         => get_option( 'large_size_h' ),
 			'gmt_offset'           => get_option( 'gmt_offset' ),
-			'comment_whitelist'    => get_option( 'comment_whitelist' ),
+			'comment_previously_approved' => get_option( 'comment_previously_approved' ),
 			'hack_file'            => get_option( 'hack_file' ),
 		);
 	}

@@ -15,7 +15,8 @@ use WC_Product_Query;
 if (!defined('ABSPATH')) exit;
 
 class MCP_Server {
-    
+    // phpcs:disable WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL, WordPress.DB.SlowDBQuery, PluginCheck.Security.DirectDB -- AI tool queries run against the plugin's custom tables and WordPress post meta; user values are prepared, table names are internal, and results are request-scoped.
+
     private $enabled = false;
     private $jwt_secret = null;
     private $ai_provider = null;
@@ -3501,8 +3502,9 @@ class MCP_Server {
         
         // 5. WP_DEBUG (context-aware)
         $debug = defined('WP_DEBUG') && WP_DEBUG;
-        $isProduction = !in_array($_SERVER['SERVER_NAME'] ?? '', array('localhost', '127.0.0.1', 'local.test')) && 
-                       !preg_match('/\.(local|test|dev)$/', $_SERVER['SERVER_NAME'] ?? '');
+        $server_name = isset($_SERVER['SERVER_NAME']) ? sanitize_text_field(wp_unslash($_SERVER['SERVER_NAME'])) : '';
+        $isProduction = !in_array($server_name, array('localhost', '127.0.0.1', 'local.test')) &&
+                       !preg_match('/\.(local|test|dev)$/', $server_name);
         $checks[] = array(
             'check' => 'Debug Mode',
             'status' => ($debug && $isProduction) ? 'warning' : 'ok',
@@ -4763,7 +4765,10 @@ class MCP_Server {
         // Try to use curl with streaming and early termination
         $wordfence_url = 'https://www.wordfence.com/api/intelligence/v2/vulnerabilities/production';
         
-        // phpcs:ignore WordPress.WP.AlternativeFunctions -- cURL required for streaming response
+        // The Wordfence vulnerability feed is multi-megabyte. We stream it with a write
+        // callback and terminate early once enough matches are found, which the WP HTTP
+        // API cannot do (it buffers the whole body). cURL is required here by design.
+        // phpcs:disable WordPress.WP.AlternativeFunctions.curl_curl_init, WordPress.WP.AlternativeFunctions.curl_curl_setopt, WordPress.WP.AlternativeFunctions.curl_curl_exec, WordPress.WP.AlternativeFunctions.curl_curl_close
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $wordfence_url);
         curl_setopt($ch, CURLOPT_WRITEFUNCTION, array($this, 'curl_write_callback'));
@@ -4779,7 +4784,8 @@ class MCP_Server {
         
         curl_exec($ch);
         curl_close($ch);
-        
+        // phpcs:enable WordPress.WP.AlternativeFunctions.curl_curl_init, WordPress.WP.AlternativeFunctions.curl_curl_setopt, WordPress.WP.AlternativeFunctions.curl_curl_exec, WordPress.WP.AlternativeFunctions.curl_curl_close
+
         return $this->found_vulnerabilities;
     }
     
@@ -5158,7 +5164,7 @@ class MCP_Server {
         return array(
             'php_version' => PHP_VERSION,
             'mysql_version' => $wpdb->db_version(),
-            'server_software' => $_SERVER['SERVER_SOFTWARE'] ?? 'Unknown',
+            'server_software' => isset($_SERVER['SERVER_SOFTWARE']) ? sanitize_text_field(wp_unslash($_SERVER['SERVER_SOFTWARE'])) : 'Unknown',
             'max_execution_time' => ini_get('max_execution_time'),
             'memory_limit' => ini_get('memory_limit'),
             'upload_max_filesize' => ini_get('upload_max_filesize'),
@@ -6962,7 +6968,7 @@ class MCP_Server {
         }
         
         $categories = get_terms($query_args);
-        $total = wp_count_terms('product_cat', array('hide_empty' => $args['hide_empty']));
+        $total = wp_count_terms(array('taxonomy' => 'product_cat', 'hide_empty' => $args['hide_empty']));
         
         $formatted_categories = array();
         foreach ($categories as $category) {
@@ -7149,7 +7155,7 @@ class MCP_Server {
         }
         
         $tags = get_terms($query_args);
-        $total = wp_count_terms('product_tag', array('hide_empty' => $args['hide_empty']));
+        $total = wp_count_terms(array('taxonomy' => 'product_tag', 'hide_empty' => $args['hide_empty']));
         
         $formatted_tags = array();
         foreach ($tags as $tag) {
@@ -11306,6 +11312,7 @@ class MCP_Server {
         // Add Meta Box fields using their API
         if (function_exists('rwmb_get_value')) {
             // Get all registered meta boxes for this post type
+            // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- third-party Meta Box plugin filter, intentionally read for integration
             $meta_boxes = apply_filters('rwmb_meta_boxes', array());
             foreach ($meta_boxes as $meta_box) {
                 if (isset($meta_box['post_types']) && in_array($post->post_type, $meta_box['post_types'])) {
@@ -12406,7 +12413,7 @@ class MCP_Server {
             );
 
         } catch (\Exception $e) {
-            error_log('[MagicAssistant Unsplash] Error: ' . $e->getMessage());
+            \mat_debug_log('[MagicAssistant Unsplash] Error: ' . $e->getMessage());
             return new \WP_Error('unsplash_error', $e->getMessage(), array('status' => 500));
         }
     }

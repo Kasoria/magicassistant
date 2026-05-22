@@ -42,3 +42,7 @@ logs
 # Composer
 composer.lock
 licensing/
+
+# Dev-only / submission-prep notes (never publish — internal notes & scan output)
+handoff.md
+plugin-check-results.csv

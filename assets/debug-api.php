@@ -210,9 +210,6 @@ function handle_ai_chat() {
             'store' => false,
             'web_search_enabled' => false
         );
-            'site_url' => (isset($_SERVER['HTTP_HOST']) ? 'https://' . $_SERVER['HTTP_HOST'] : ''),
-            'timestamp' => time(),
-        );
     }
     $headers = array('Content-Type: application/json');
 
@@ -524,7 +521,7 @@ function parse_log_file($file_path, $source, $search = '', $level = '') {
             $current_entry = array(
                 'id' => uniqid(),
                 'timestamp' => $timestamp,
-                'formatted_time' => wp_date('Y-m-d H:i:s', $timestamp),
+                'formatted_time' => $timestamp ? date('Y-m-d H:i:s', $timestamp) : '',
                 'level' => $log_level,
                 'message' => $message,
                 'full_message' => $line,
@@ -731,7 +728,7 @@ function test_proxy_connectivity() {
 }
 
 function sanitize_text($text) {
-    return htmlspecialchars(wp_strip_all_tags(trim($text)), ENT_QUOTES, 'UTF-8');
+    return htmlspecialchars(strip_tags(trim($text)), ENT_QUOTES, 'UTF-8');
 }
 
 /**

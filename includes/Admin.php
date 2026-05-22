@@ -105,8 +105,8 @@ class Admin {
     // If it does not exist, create it first
     if ( ! $magic_plugins_exists ) {
     add_menu_page(
-        __( 'MagicPlugins', 'magic-assistant' ),
-        __( 'MagicPlugins', 'magic-assistant' ),
+        __( 'MagicPlugins', 'magicassistant' ),
+        __( 'MagicPlugins', 'magicassistant' ),
         'manage_options',
         'magic_plugins',
         array( $this, 'magic_plugins_landing_page' ),
@@ -121,8 +121,8 @@ class Admin {
     // Finally, add MagicAssistant as a submenu of MagicPlugins
     add_submenu_page(
       'magic_plugins',
-      __( 'MagicAssistant', 'magic-assistant' ),
-      __( 'MagicAssistant', 'magic-assistant' ),
+      __( 'MagicAssistant', 'magicassistant' ),
+      __( 'MagicAssistant', 'magicassistant' ),
       'manage_options',
       'magicassistant',
       array( $this, 'admin_page' )
@@ -187,14 +187,14 @@ class Admin {
       ),
       'toursGloballyDisabled' => (bool) get_option('mat_tours_globally_disabled', false),
       'i18n' => array(
-        'loading' => __('Loading...', 'magic-assistant'),
-        'error' => __('An error occurred', 'magic-assistant'),
-        'save' => __('Save', 'magic-assistant'),
-        'cancel' => __('Cancel', 'magic-assistant'),
-        'delete' => __('Delete', 'magic-assistant'),
-        'edit' => __('Edit', 'magic-assistant'),
-        'success' => __('Success!', 'magic-assistant'),
-        'confirmDelete' => __('Are you sure you want to delete this item?', 'magic-assistant'),
+        'loading' => __('Loading...', 'magicassistant'),
+        'error' => __('An error occurred', 'magicassistant'),
+        'save' => __('Save', 'magicassistant'),
+        'cancel' => __('Cancel', 'magicassistant'),
+        'delete' => __('Delete', 'magicassistant'),
+        'edit' => __('Edit', 'magicassistant'),
+        'success' => __('Success!', 'magicassistant'),
+        'confirmDelete' => __('Are you sure you want to delete this item?', 'magicassistant'),
       )
     );
     
@@ -310,6 +310,7 @@ class Admin {
     if (is_admin()) {
       global $pagenow, $post;
       
+      // phpcs:disable WordPress.Security.NonceVerification.Recommended -- read-only detection of the current admin screen; no form data is processed
       if (in_array($pagenow, array('post.php', 'post-new.php'))) {
         if (isset($_GET['post']) && is_numeric($_GET['post'])) {
           $post_id = intval($_GET['post']);
@@ -348,6 +349,7 @@ class Admin {
         $info['context'] = 'admin_' . $pagenow;
         $info['title'] = 'WordPress Admin';
       }
+      // phpcs:enable WordPress.Security.NonceVerification.Recommended
     }
     
     return $info;
@@ -364,8 +366,10 @@ class Admin {
   
   private function get_initial_tab() {
     // Check URL parameters for initial tab
-    $tab = isset($_GET['tab']) ? sanitize_text_field($_GET['tab']) : 'dashboard';
-    $view = isset($_GET['view']) ? sanitize_text_field($_GET['view']) : '';
+    // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only UI navigation state, not form processing
+    $tab = isset($_GET['tab']) ? sanitize_text_field(wp_unslash($_GET['tab'])) : 'dashboard';
+    // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only UI navigation state, not form processing
+    $view = isset($_GET['view']) ? sanitize_text_field(wp_unslash($_GET['view'])) : '';
     
     if (!empty($view)) {
       return $view;
@@ -379,35 +383,35 @@ class Admin {
     // Handle form submission
     if (isset($_POST['submit']) && check_admin_referer('magic_plugins_settings', 'magic_plugins_nonce')) {
       $this->save_shared_settings($_POST);
-      echo '<div class="notice notice-success"><p>' . esc_html__('Settings saved successfully!', 'magic-assistant') . '</p></div>';
+      echo '<div class="notice notice-success"><p>' . esc_html__('Settings saved successfully!', 'magicassistant') . '</p></div>';
     }
 
     $settings = $this->get_shared_settings();
     ?>
     <div class="wrap">
-      <h1><?php echo esc_html__( 'MagicPlugins Settings', 'magic-assistant' ); ?></h1>
-      <p><?php echo esc_html__( 'Configure shared settings for all Magic plugins.', 'magic-assistant' ); ?></p>
+      <h1><?php echo esc_html__( 'MagicPlugins Settings', 'magicassistant' ); ?></h1>
+      <p><?php echo esc_html__( 'Configure shared settings for all Magic plugins.', 'magicassistant' ); ?></p>
       
       <form method="post" action="">
         <?php wp_nonce_field('magic_plugins_settings', 'magic_plugins_nonce'); ?>
         
         <table class="form-table">
           <tr>
-            <th scope="row"><?php esc_html_e('Menu Position', 'magic-assistant'); ?></th>
+            <th scope="row"><?php esc_html_e('Menu Position', 'magicassistant'); ?></th>
             <td>
               <?php $this->render_menu_position_field($settings); ?>
             </td>
           </tr>
           
           <tr>
-            <th scope="row"><?php esc_html_e('Date & Time Format', 'magic-assistant'); ?></th>
+            <th scope="row"><?php esc_html_e('Date & Time Format', 'magicassistant'); ?></th>
             <td>
               <?php $this->render_date_format_field($settings); ?>
             </td>
           </tr>
           
           <tr>
-            <th scope="row"><?php esc_html_e('Submenu Items Order', 'magic-assistant'); ?></th>
+            <th scope="row"><?php esc_html_e('Submenu Items Order', 'magicassistant'); ?></th>
             <td>
               <?php $this->render_submenu_order_field($settings); ?>
             </td>
@@ -477,18 +481,18 @@ class Admin {
     }
     ?>
     <select name="menu_position_type" id="menu-position-type">
-      <option value="default" <?php selected($position_type, 'default'); ?>><?php esc_html_e('Default Position', 'magic-assistant'); ?></option>
-      <option value="relative" <?php selected($position_type, 'relative'); ?>><?php esc_html_e('Relative to Another Menu Item', 'magic-assistant'); ?></option>
-      <option value="custom" <?php selected($position_type, 'custom'); ?>><?php esc_html_e('Custom Position (1-99)', 'magic-assistant'); ?></option>
+      <option value="default" <?php selected($position_type, 'default'); ?>><?php esc_html_e('Default Position', 'magicassistant'); ?></option>
+      <option value="relative" <?php selected($position_type, 'relative'); ?>><?php esc_html_e('Relative to Another Menu Item', 'magicassistant'); ?></option>
+      <option value="custom" <?php selected($position_type, 'custom'); ?>><?php esc_html_e('Custom Position (1-99)', 'magicassistant'); ?></option>
     </select>
 
     <div id="relative-position-wrapper" style="<?php echo esc_attr($position_type === 'relative' ? '' : 'display: none;'); ?>">
       <select name="menu_position">
-        <option value="after" <?php selected($position, 'after'); ?>><?php esc_html_e('After', 'magic-assistant'); ?></option>
-        <option value="before" <?php selected($position, 'before'); ?>><?php esc_html_e('Before', 'magic-assistant'); ?></option>
+        <option value="after" <?php selected($position, 'after'); ?>><?php esc_html_e('After', 'magicassistant'); ?></option>
+        <option value="before" <?php selected($position, 'before'); ?>><?php esc_html_e('Before', 'magicassistant'); ?></option>
       </select>
       <select name="menu_position_relative_to">
-        <option value=""><?php esc_html_e('Select Menu Item', 'magic-assistant'); ?></option>
+        <option value=""><?php esc_html_e('Select Menu Item', 'magicassistant'); ?></option>
         <?php foreach ($menu_items as $slug => $title): ?>
           <option value="<?php echo esc_attr($slug); ?>" <?php selected($relative_to, $slug); ?>><?php echo esc_html($title); ?></option>
         <?php endforeach; ?>
@@ -518,11 +522,11 @@ class Admin {
   private function render_date_format_field($settings) {
     $date_format = $settings['date_format'];
     $format_options = array(
-      'us' => array('label' => __('US Format (MM/DD/YYYY)', 'magic-assistant'), 'example' => '03/15/2024 2:30 PM'),
-      'eu' => array('label' => __('European Format (DD/MM/YYYY)', 'magic-assistant'), 'example' => '15/03/2024 14:30'),
-      'iso' => array('label' => __('ISO Format (YYYY-MM-DD)', 'magic-assistant'), 'example' => '2024-03-15 14:30'),
-      'compact' => array('label' => __('Compact Format (DD MMM YYYY)', 'magic-assistant'), 'example' => '15 Mar 2024 14:30'),
-      'long' => array('label' => __('Long Format (Month DD, YYYY)', 'magic-assistant'), 'example' => 'March 15, 2024 2:30 PM')
+      'us' => array('label' => __('US Format (MM/DD/YYYY)', 'magicassistant'), 'example' => '03/15/2024 2:30 PM'),
+      'eu' => array('label' => __('European Format (DD/MM/YYYY)', 'magicassistant'), 'example' => '15/03/2024 14:30'),
+      'iso' => array('label' => __('ISO Format (YYYY-MM-DD)', 'magicassistant'), 'example' => '2024-03-15 14:30'),
+      'compact' => array('label' => __('Compact Format (DD MMM YYYY)', 'magicassistant'), 'example' => '15 Mar 2024 14:30'),
+      'long' => array('label' => __('Long Format (Month DD, YYYY)', 'magicassistant'), 'example' => 'March 15, 2024 2:30 PM')
     );
     ?>
     <select name="date_format" class="regular-text">
@@ -532,7 +536,7 @@ class Admin {
         </option>
       <?php endforeach; ?>
     </select>
-    <p class="description"><?php esc_html_e('Choose how dates and times should be displayed throughout Magic plugins.', 'magic-assistant'); ?></p>
+    <p class="description"><?php esc_html_e('Choose how dates and times should be displayed throughout Magic plugins.', 'magicassistant'); ?></p>
     <?php
   }
   
@@ -551,7 +555,7 @@ class Admin {
     }
     ?>
     <div id="submenu-order-container">
-      <p class="description"><?php esc_html_e('Drag and drop to reorder Magic plugin submenu items.', 'magic-assistant'); ?></p>
+      <p class="description"><?php esc_html_e('Drag and drop to reorder Magic plugin submenu items.', 'magicassistant'); ?></p>
       <ul id="submenu-sortable" style="list-style: none; padding: 0;">
         <?php 
         // Order items based on saved order, then add any new ones
@@ -644,8 +648,8 @@ class Admin {
     if ( ! $landing_exists ) {
       add_submenu_page(
         'magic_plugins',
-        __( 'MagicPlugins', 'magic-assistant' ),
-        __( 'MagicPlugins', 'magic-assistant' ),
+        __( 'MagicPlugins', 'magicassistant' ),
+        __( 'MagicPlugins', 'magicassistant' ),
         'manage_options',
         'magic_plugins_landing',
         array( $this, 'magic_plugins_landing_page' )
@@ -714,7 +718,7 @@ class Admin {
     if (!check_ajax_referer('mat_save_theme_mode', '_ajax_nonce', false)) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('Security check failed.', 'magic-assistant')
+        'data' => __('Security check failed.', 'magicassistant')
       )));
     }
     
@@ -722,16 +726,16 @@ class Admin {
     if (!is_user_logged_in()) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('You must be logged in to change theme preferences.', 'magic-assistant')
+        'data' => __('You must be logged in to change theme preferences.', 'magicassistant')
       )));
     }
     
-    $mode = sanitize_text_field($_POST['mode']);
+    $mode = isset($_POST['mode']) ? sanitize_text_field(wp_unslash($_POST['mode'])) : '';
     
     if (!in_array($mode, array('light', 'dark'))) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('Invalid theme mode.', 'magic-assistant')
+        'data' => __('Invalid theme mode.', 'magicassistant')
       )));
     }
     
@@ -743,7 +747,7 @@ class Admin {
       'success' => true,
       'data' => array(
         'mode' => $mode,
-        'message' => __('Theme preference saved successfully.', 'magic-assistant')
+        'message' => __('Theme preference saved successfully.', 'magicassistant')
       )
     )));
   }
@@ -775,10 +779,10 @@ class Admin {
    */
   public function mark_tour_completed() {
     // Check nonce for security
-    if (!wp_verify_nonce($_POST['_ajax_nonce'], 'mat_ajax_nonce')) {
+    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'mat_ajax_nonce')) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('Invalid nonce.', 'magic-assistant')
+        'data' => __('Invalid nonce.', 'magicassistant')
       )));
     }
     
@@ -786,16 +790,16 @@ class Admin {
     if (!is_user_logged_in()) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('You must be logged in to save tour completion.', 'magic-assistant')
+        'data' => __('You must be logged in to save tour completion.', 'magicassistant')
       )));
     }
     
-    $tour_type = sanitize_text_field($_POST['tour_type']);
+    $tour_type = isset($_POST['tour_type']) ? sanitize_text_field(wp_unslash($_POST['tour_type'])) : '';
     
     if (!in_array($tour_type, array('license', 'dashboard', 'settings'))) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('Invalid tour type.', 'magic-assistant')
+        'data' => __('Invalid tour type.', 'magicassistant')
       )));
     }
     
@@ -808,7 +812,7 @@ class Admin {
       'success' => true,
       'data' => array(
         'tour_type' => $tour_type,
-        'message' => __('Tour completion saved successfully.', 'magic-assistant')
+        'message' => __('Tour completion saved successfully.', 'magicassistant')
       )
     )));
   }
@@ -818,10 +822,10 @@ class Admin {
    */
   public function reset_tour() {
     // Check nonce for security
-    if (!wp_verify_nonce($_POST['_ajax_nonce'], 'mat_ajax_nonce')) {
+    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'mat_ajax_nonce')) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('Invalid nonce.', 'magic-assistant')
+        'data' => __('Invalid nonce.', 'magicassistant')
       )));
     }
     
@@ -829,16 +833,16 @@ class Admin {
     if (!is_user_logged_in()) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('You must be logged in to reset tour.', 'magic-assistant')
+        'data' => __('You must be logged in to reset tour.', 'magicassistant')
       )));
     }
     
-    $tour_type = sanitize_text_field($_POST['tour_type']);
+    $tour_type = isset($_POST['tour_type']) ? sanitize_text_field(wp_unslash($_POST['tour_type'])) : '';
     
     if (!in_array($tour_type, array('license', 'dashboard', 'settings'))) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('Invalid tour type.', 'magic-assistant')
+        'data' => __('Invalid tour type.', 'magicassistant')
       )));
     }
     
@@ -851,7 +855,7 @@ class Admin {
       'success' => true,
       'data' => array(
         'tour_type' => $tour_type,
-        'message' => __('Tour reset successfully.', 'magic-assistant')
+        'message' => __('Tour reset successfully.', 'magicassistant')
       )
     )));
   }
@@ -861,10 +865,10 @@ class Admin {
    */
   public function mark_tour_triggered() {
     // Check nonce for security
-    if (!wp_verify_nonce($_POST['_ajax_nonce'], 'mat_ajax_nonce')) {
+    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'mat_ajax_nonce')) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('Invalid nonce.', 'magic-assistant')
+        'data' => __('Invalid nonce.', 'magicassistant')
       )));
     }
     
@@ -872,16 +876,16 @@ class Admin {
     if (!is_user_logged_in()) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('You must be logged in to mark tour as triggered.', 'magic-assistant')
+        'data' => __('You must be logged in to mark tour as triggered.', 'magicassistant')
       )));
     }
     
-    $tour_type = sanitize_text_field($_POST['tour_type']);
+    $tour_type = isset($_POST['tour_type']) ? sanitize_text_field(wp_unslash($_POST['tour_type'])) : '';
     
     if (!in_array($tour_type, array('license', 'dashboard', 'settings'))) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('Invalid tour type.', 'magic-assistant')
+        'data' => __('Invalid tour type.', 'magicassistant')
       )));
     }
     
@@ -894,7 +898,7 @@ class Admin {
       'success' => true,
       'data' => array(
         'tour_type' => $tour_type,
-        'message' => __('Tour marked as triggered successfully.', 'magic-assistant')
+        'message' => __('Tour marked as triggered successfully.', 'magicassistant')
       )
     )));
   }
@@ -904,10 +908,10 @@ class Admin {
    */
   public function dismiss_tour_permanently() {
     // Check nonce for security
-    if (!wp_verify_nonce($_POST['_ajax_nonce'], 'mat_ajax_nonce')) {
+    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'mat_ajax_nonce')) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('Invalid nonce.', 'magic-assistant')
+        'data' => __('Invalid nonce.', 'magicassistant')
       )));
     }
     
@@ -915,7 +919,7 @@ class Admin {
     if (!is_user_logged_in()) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('You must be logged in to dismiss tours.', 'magic-assistant')
+        'data' => __('You must be logged in to dismiss tours.', 'magicassistant')
       )));
     }
     
@@ -926,7 +930,7 @@ class Admin {
     wp_die(json_encode(array(
       'success' => true,
       'data' => array(
-        'message' => __('Tours dismissed permanently.', 'magic-assistant')
+        'message' => __('Tours dismissed permanently.', 'magicassistant')
       )
     )));
   }
@@ -936,10 +940,10 @@ class Admin {
    */
   public function mark_first_visit_complete() {
     // Check nonce for security
-    if (!wp_verify_nonce($_POST['_ajax_nonce'], 'mat_ajax_nonce')) {
+    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'mat_ajax_nonce')) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('Invalid nonce.', 'magic-assistant')
+        'data' => __('Invalid nonce.', 'magicassistant')
       )));
     }
     
@@ -947,7 +951,7 @@ class Admin {
     if (!is_user_logged_in()) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('You must be logged in to mark first visit.', 'magic-assistant')
+        'data' => __('You must be logged in to mark first visit.', 'magicassistant')
       )));
     }
     
@@ -958,7 +962,7 @@ class Admin {
     wp_die(json_encode(array(
       'success' => true,
       'data' => array(
-        'message' => __('First visit marked as complete.', 'magic-assistant')
+        'message' => __('First visit marked as complete.', 'magicassistant')
       )
     )));
   }
@@ -968,10 +972,10 @@ class Admin {
    */
   public function reset_all_tours() {
     // Check nonce for security
-    if (!wp_verify_nonce($_POST['_ajax_nonce'], 'mat_ajax_nonce')) {
+    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'mat_ajax_nonce')) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('Invalid nonce.', 'magic-assistant')
+        'data' => __('Invalid nonce.', 'magicassistant')
       )));
     }
     
@@ -979,7 +983,7 @@ class Admin {
     if (!is_user_logged_in()) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('You must be logged in to reset tours.', 'magic-assistant')
+        'data' => __('You must be logged in to reset tours.', 'magicassistant')
       )));
     }
     
@@ -997,7 +1001,7 @@ class Admin {
     wp_die(json_encode(array(
       'success' => true,
       'data' => array(
-        'message' => __('All tours reset successfully.', 'magic-assistant')
+        'message' => __('All tours reset successfully.', 'magicassistant')
       )
     )));
   }
@@ -1007,10 +1011,10 @@ class Admin {
    */
   public function reenable_tours() {
     // Check nonce for security
-    if (!wp_verify_nonce($_POST['_ajax_nonce'], 'mat_ajax_nonce')) {
+    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'mat_ajax_nonce')) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('Invalid nonce.', 'magic-assistant')
+        'data' => __('Invalid nonce.', 'magicassistant')
       )));
     }
     
@@ -1018,7 +1022,7 @@ class Admin {
     if (!is_user_logged_in()) {
       wp_die(json_encode(array(
         'success' => false,
-        'data' => __('You must be logged in to re-enable tours.', 'magic-assistant')
+        'data' => __('You must be logged in to re-enable tours.', 'magicassistant')
       )));
     }
     
@@ -1029,7 +1033,7 @@ class Admin {
     wp_die(json_encode(array(
       'success' => true,
       'data' => array(
-        'message' => __('Tours re-enabled successfully.', 'magic-assistant')
+        'message' => __('Tours re-enabled successfully.', 'magicassistant')
       )
     )));
   }

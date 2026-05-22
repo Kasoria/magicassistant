@@ -13,6 +13,7 @@ if (!defined('WP_UNINSTALL_PLUGIN')) {
     exit;
 }
 
+// phpcs:disable WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL, WordPress.DB.PreparedSQLPlaceholders, PluginCheck.Security.DirectDB, WordPress.NamingConventions.PrefixAllGlobals -- One-shot uninstaller running in global scope; it drops the plugin's own custom tables and deletes its options.
 global $wpdb;
 
 // Check if complete data removal is enabled

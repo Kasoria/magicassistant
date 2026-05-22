@@ -10,7 +10,8 @@ namespace MagicAssistant;
 if (!defined('ABSPATH')) exit;
 
 class DB {
-    
+    // phpcs:disable WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL, WordPress.DB.PreparedSQLPlaceholders, WordPress.DB.SlowDBQuery, PluginCheck.Security.DirectDB -- Dedicated data layer for the plugin's own custom tables: table names are internal constants, all user-supplied values use $wpdb->prepare() placeholders, and object caching is not applicable to these write/admin operations.
+
     private $table_prefix;
     private $settings_table;
     private $chat_history_table;

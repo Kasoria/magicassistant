@@ -63,13 +63,13 @@ class Public_Share {
      */
     private function display_shared_conversation($share_id) {
         if (!$this->db) {
-            wp_die(esc_html__('Service not available', 'magic-assistant'), 503);
+            wp_die(esc_html__('Service not available', 'magicassistant'), 503);
         }
         
         $conversation = $this->db->get_shared_conversation($share_id);
         
         if (!$conversation) {
-            wp_die(esc_html__('Shared conversation not found or has expired', 'magic-assistant'), 404);
+            wp_die(esc_html__('Shared conversation not found or has expired', 'magicassistant'), 404);
         }
         
         // Set headers
@@ -101,7 +101,7 @@ class Public_Share {
             $powered_by_html = '<div class="footer"><div class="powered-by">Powered by <strong><a href="https://magicplugins.io" target="_blank" style="color: #6366f1; text-decoration: none;">MagicAssistant</a></strong> - AI-Powered WordPress Assistant</div></div>';
         }
 
-        // phpcs:ignore Squiz.PHP.Heredoc.NotAllowed -- Heredoc cleaner for large HTML templates
+        // phpcs:ignore PluginCheck.CodeAnalysis.Heredoc.NotAllowed -- large HTML template; every interpolated value is escaped at assignment above
         return <<<HTML
 <!DOCTYPE html>
 <html lang="en">

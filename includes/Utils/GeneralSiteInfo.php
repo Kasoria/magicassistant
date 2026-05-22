@@ -67,7 +67,7 @@ class GeneralSiteInfo {
 	 */
 	private static function get_server_info(): array {
 		return array(
-			'software'    => $_SERVER['SERVER_SOFTWARE'] ?? 'Unknown',
+			'software'    => isset( $_SERVER['SERVER_SOFTWARE'] ) ? sanitize_text_field( wp_unslash( $_SERVER['SERVER_SOFTWARE'] ) ) : 'Unknown',
 			'php_version' => phpversion(),
 			'os'          => php_uname( 's' ),
 			'architecture' => php_uname( 'm' ),
