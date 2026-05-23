@@ -30,6 +30,7 @@ const includeFiles = [
   'uninstall.php',
   'dist',
   'vendor',
+  'composer.json',
   'readme.txt',
   'LICENSE'
 ];
@@ -47,7 +48,6 @@ const excludePatterns = [
   'postcss.config.js',
   'package.json',
   'package-lock.json',
-  'composer.json',
   'composer.lock',
   'build.js',
   'version-sync.js',

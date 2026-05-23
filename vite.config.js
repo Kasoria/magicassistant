@@ -22,7 +22,6 @@ export default defineConfig({
       input: {
         main: './src/main.jsx',
         admin: './src/admin.jsx',
-        debug: path.resolve(__dirname, 'src/debug.jsx'),
         mediaLibrary: './src/media-library.jsx',
         imageEditor: './src/image-editor.jsx',
         bricksTextEnhancer: './src/bricks-text-enhancer.jsx',

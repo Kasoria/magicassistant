@@ -26,7 +26,6 @@ class ComposerStaticInit41eb0251f4ccd7e5899191fcfd6827ce
         'MagicAssistant\\Admin' => __DIR__ . '/../..' . '/includes/Admin.php',
         'MagicAssistant\\DB' => __DIR__ . '/../..' . '/includes/DB.php',
         'MagicAssistant\\DataForSEO' => __DIR__ . '/../..' . '/includes/DataForSEO.php',
-        'MagicAssistant\\Logger' => __DIR__ . '/../..' . '/includes/Logger.php',
         'MagicAssistant\\Login_Tracker' => __DIR__ . '/../..' . '/includes/Login_Tracker.php',
         'MagicAssistant\\MCP_Server' => __DIR__ . '/../..' . '/includes/MCP_Server.php',
         'MagicAssistant\\PageSpeed_Service' => __DIR__ . '/../..' . '/includes/PageSpeed_Service.php',

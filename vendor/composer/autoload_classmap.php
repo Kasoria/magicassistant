@@ -11,7 +11,6 @@ return array(
     'MagicAssistant\\Admin' => $baseDir . '/includes/Admin.php',
     'MagicAssistant\\DB' => $baseDir . '/includes/DB.php',
     'MagicAssistant\\DataForSEO' => $baseDir . '/includes/DataForSEO.php',
-    'MagicAssistant\\Logger' => $baseDir . '/includes/Logger.php',
     'MagicAssistant\\Login_Tracker' => $baseDir . '/includes/Login_Tracker.php',
     'MagicAssistant\\MCP_Server' => $baseDir . '/includes/MCP_Server.php',
     'MagicAssistant\\PageSpeed_Service' => $baseDir . '/includes/PageSpeed_Service.php',

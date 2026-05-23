@@ -17,9 +17,6 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
   const [pendingApiKeyDelete, setPendingApiKeyDelete] = useState(null)
   const [localSettings, setLocalSettings] = useState({})
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
-  const [debugLogs, setDebugLogs] = useState(null)
-  const [isLoadingLogs, setIsLoadingLogs] = useState(false)
-  const [isClearingLogs, setIsClearingLogs] = useState(false)
   const [availableUsers, setAvailableUsers] = useState([])
   const [isLoadingUsers, setIsLoadingUsers] = useState(false)
   const [showDangerousSqlModal, setShowDangerousSqlModal] = useState(false)
@@ -78,7 +75,6 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         enable_create_tools: settings.enable_create_tools === true,
         enable_update_tools: settings.enable_update_tools === true,
         enable_delete_tools: settings.enable_delete_tools === true,
-        debug_log_raw_responses: settings.debug_log_raw_responses === true,
         max_response_tokens: parseInt(settings.max_response_tokens) || 1500,
         conversation_history_limit: parseInt(settings.conversation_history_limit) || 20,
         streaming_enabled: settings.streaming_enabled === undefined ? true : settings.streaming_enabled === true,
@@ -102,8 +98,6 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         floating_chat_custom_icon: settings.floating_chat_custom_icon || '',
         enable_sql_queries: settings.enable_sql_queries === true,
         enable_dangerous_sql_queries: settings.enable_dangerous_sql_queries === true,
-        debug_view_enabled: settings.debug_view_enabled === true,
-        debug_view_file_editing: settings.debug_view_file_editing === true,
       })
       setHasUnsavedChanges(false)
     }
@@ -155,17 +149,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
       else if (provider === 'google') settingsKey = 'google_api_key'
       else if (provider === 'openrouter') settingsKey = 'openrouter_api_key'
       else if (provider === 'unsplash') settingsKey = 'unsplash_access_key'
-      else if (provider === 'debug_view') settingsKey = 'debug_view_password'
-      
-      // For debug view password, also save the enabled state
-      if (provider === 'debug_view') {
-        onSaveSettings({ 
-          [settingsKey]: apiKey.trim(),
-          debug_view_enabled: localSettings.debug_view_enabled
-        })
-      } else {
-        onSaveSettings({ [settingsKey]: apiKey.trim() })
-      }
+
+      onSaveSettings({ [settingsKey]: apiKey.trim() })
       setApiKey('')
     }
   }
@@ -208,102 +193,6 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     await onSaveSettings(tabSettings)
     setHasUnsavedChanges(false)
     showSuccess('Settings saved successfully!')
-  }
-
-  // Load debug logs
-  const loadDebugLogs = async () => {
-    if (isLoadingLogs) return
-    
-    setIsLoadingLogs(true)
-    
-    try {
-      const response = await fetch(`${window.matAdminData?.restUrl}debug-logs?limit=200`, {
-        headers: {
-          'X-WP-Nonce': window.matAdminData?.nonces.wp_rest,
-        },
-      })
-      
-      if (response.ok) {
-        const result = await response.json()
-        if (result.success) {
-          setDebugLogs(result.data)
-        } else {
-          showError('Failed to load debug logs')
-        }
-      } else {
-        showError('Failed to load debug logs')
-      }
-    } catch (error) {
-      console.error('Error loading debug logs:', error)
-      showError('Failed to load debug logs')
-    }
-    
-    setIsLoadingLogs(false)
-  }
-
-  // Clear debug logs
-  const clearDebugLogs = async () => {
-    if (isClearingLogs) return
-    
-    if (!confirm('Are you sure you want to clear all debug logs? This action cannot be undone.')) {
-      return
-    }
-    
-    setIsClearingLogs(true)
-    
-    try {
-      const response = await fetch(`${window.matAdminData?.restUrl}debug-logs`, {
-        method: 'DELETE',
-        headers: {
-          'X-WP-Nonce': window.matAdminData?.nonces.wp_rest,
-        },
-      })
-      
-      if (response.ok) {
-        const result = await response.json()
-        if (result.success) {
-          setDebugLogs(null)
-          showSuccess('Debug logs cleared successfully')
-        } else {
-          showError('Failed to clear debug logs')
-        }
-      } else {
-        showError('Failed to clear debug logs')
-      }
-    } catch (error) {
-      console.error('Error clearing debug logs:', error)
-      showError('Failed to clear debug logs')
-    }
-    
-    setIsClearingLogs(false)
-  }
-
-  // Download debug logs
-  const downloadDebugLogs = () => {
-    const downloadUrl = `${window.matAdminData?.restUrl}debug-logs/download`
-    const link = document.createElement('a')
-    link.href = downloadUrl
-    link.download = `magicassistant-debug-${new Date().toISOString().split('T')[0]}.log`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-  }
-
-  // Copy debug logs to clipboard
-  const copyDebugLogs = async () => {
-    if (!debugLogs || !debugLogs.recent_entries || debugLogs.recent_entries.length === 0) {
-      showError('No log content to copy')
-      return
-    }
-
-    try {
-      const logContent = debugLogs.recent_entries.join('\n')
-      await navigator.clipboard.writeText(logContent)
-      showSuccess('Debug logs copied to clipboard!')
-    } catch (error) {
-      console.error('Failed to copy logs to clipboard:', error)
-      showError('Failed to copy logs to clipboard')
-    }
   }
 
   // Load available users for selection
@@ -491,8 +380,6 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         return {
           complete_data_removal: localSettings.complete_data_removal,
           show_tips: localSettings.show_tips,
-          debug_view_enabled: localSettings.debug_view_enabled,
-          debug_view_file_editing: localSettings.debug_view_file_editing,
         }
       case 'ai':
         return {
@@ -507,14 +394,11 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           enable_create_tools: localSettings.enable_create_tools,
           enable_update_tools: localSettings.enable_update_tools,
           enable_delete_tools: localSettings.enable_delete_tools,
-          debug_log_raw_responses: localSettings.debug_log_raw_responses,
           max_response_tokens: parseInt(localSettings.max_response_tokens),
           conversation_history_limit: parseInt(localSettings.conversation_history_limit),
           streaming_enabled: localSettings.streaming_enabled,
           enable_sql_queries: localSettings.enable_sql_queries,
           enable_dangerous_sql_queries: localSettings.enable_dangerous_sql_queries,
-          debug_view_enabled: localSettings.debug_view_enabled,
-          debug_view_file_editing: localSettings.debug_view_file_editing,
         }
       case 'seo':
         return {
@@ -760,130 +644,6 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                     </span>
                   </label>
                 </div>
-              </div>
-            </div>
-
-            {/* Debug View Settings */}
-            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
-              <h4 className="font-medium text-brand-dark dark:text-white mb-2">Emergency Debug View</h4>
-              <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
-                Provides a standalone debug interface that works even when WordPress has fatal errors. When enabled, debug files are automatically copied to your WordPress root directory for emergency access.
-              </p>
-              
-              {localSettings.show_tips === true && (
-                <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                  <p className="text-sm text-blue-800 dark:text-blue-200">
-                    <strong>🛟 How it works:</strong> When you enable the debug view, the system automatically copies <code>debug-view.php</code> and <code>debug-api.php</code> from the plugin folder to your WordPress root directory. This allows access to debugging tools even when WordPress crashes with fatal errors.
-                  </p>
-                  <ul className="text-sm text-blue-800 dark:text-blue-200 mt-2 ml-4 list-disc">
-                    <li>Files are copied automatically when you save these settings</li>
-                    <li>Access via: <code>{window.location.origin}/mat-debugging/</code></li>
-                    <li>Files are removed automatically when you disable debug view</li>
-                    <li>Existing files are backed up before overwriting</li>
-                  </ul>
-                </div>
-              )}
-              
-              <div className="space-y-4">
-                {/* Enable debug view toggle */}
-                <label className="inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={localSettings.debug_view_enabled === true}
-                    onChange={(e) => handleLocalChange('debug_view_enabled', e.target.checked)}
-                    disabled={isSavingSettings}
-                    className="sr-only peer"
-                  />
-                  <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-accent/20 dark:peer-focus:ring-brand-accent/30 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-brand-accent dark:peer-checked:bg-brand-accent peer-disabled:opacity-50 peer-disabled:cursor-not-allowed"></div>
-                  <span className="ms-3 text-sm font-medium text-gray-900 dark:text-gray-300">
-                    Enable Debug View
-                  </span>
-                </label>
-
-                {/* File editing permission (only show when debug view is enabled) */}
-                {localSettings.debug_view_enabled === true && (
-                  <div className="ml-6 pl-4 border-l-2 border-gray-200 dark:border-gray-600">
-                    <label className="inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={localSettings.debug_view_file_editing === true}
-                        onChange={(e) => handleLocalChange('debug_view_file_editing', e.target.checked)}
-                        disabled={isSavingSettings}
-                        className="sr-only peer"
-                      />
-                      <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-red-500/20 dark:peer-focus:ring-red-500/30 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-red-600 dark:peer-checked:bg-red-600 peer-disabled:opacity-50 peer-disabled:cursor-not-allowed"></div>
-                      <span className="ms-3 text-sm font-medium text-gray-900 dark:text-gray-300">
-                        Allow File Editing (High Risk)
-                      </span>
-                    </label>
-                    <div className="mt-2 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-                      <p className="text-sm text-yellow-800 dark:text-yellow-200">
-                        <strong>⚠️ Security Warning:</strong> When enabled, the debug view allows direct editing of PHP files on your server. 
-                        This is useful for emergency bug fixes but poses significant security risks if accessed by unauthorized users.
-                      </p>
-                      <ul className="text-sm text-yellow-800 dark:text-yellow-200 mt-2 ml-4 list-disc">
-                        <li>Only enable if you need to edit files during emergencies</li>
-                        <li>Ensure your debug view password is strong and secure</li>
-                        <li>Disable this feature when not actively debugging</li>
-                      </ul>
-                    </div>
-                  </div>
-                )}
-
-                {/* Password field (only show when enabled) */}
-                {localSettings.debug_view_enabled === true && (
-                  <div>
-                    <Label htmlFor="debug-view-password" value="Debug View Password" className="mb-2" />
-                    <div className="flex gap-2">
-                      <TextInput
-                        id="debug-view-password"
-                        type="password"
-                        placeholder="Enter password for debug view access"
-                        value={apiKey}
-                        onChange={(e) => setApiKey(e.target.value)}
-                        className="flex-1"
-                        disabled={isSavingSettings}
-                      />
-                      <Button 
-                        onClick={() => handleApiKeySubmit('debug_view')}
-                        disabled={!apiKey.trim() || isSavingSettings}
-                        size="sm"
-                      >
-                        {isSavingSettings ? 'Saving...' : 'Save'}
-                      </Button>
-                    </div>
-                    {settings?.debug_view_password && (
-                      <p className="text-sm text-green-600 dark:text-green-400 mt-1">
-                        ✓ Password configured (encrypted in database)
-                      </p>
-                    )}
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      This password will be required to access the debug view interface.
-                    </p>
-                  </div>
-                )}
-
-                {/* Debug view access info */}
-                {localSettings.debug_view_enabled === true && settings?.debug_view_password && (
-                  <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
-                    <p className="text-sm text-blue-800 dark:text-blue-200">
-                      <strong>🔗 Debug View Access:</strong> Visit <code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">{window.location.origin}/mat-debugging/</code> to access the emergency debug interface.
-                    </p>
-                    <p className="text-sm text-blue-800 dark:text-blue-200 mt-1">
-                      <strong>📁 Files Location:</strong> Debug files are automatically placed in your WordPress root directory when you save these settings.
-                    </p>
-                    {localSettings.debug_view_file_editing === true && (
-                      <p className="text-sm text-red-800 dark:text-red-200 mt-2">
-                        <strong>🔒 File Editing:</strong> Enabled - Users can edit PHP files directly through the debug interface.
-                      </p>
-                    )}
-                    {localSettings.debug_view_file_editing !== true && (
-                      <p className="text-sm text-green-800 dark:text-green-200 mt-2">
-                        <strong>🛡️ File Editing:</strong> Disabled - Read-only mode for enhanced security.
-                      </p>
-                    )}
-                  </div>
-                )}
               </div>
             </div>
 
@@ -1612,128 +1372,6 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                   </label>
                 </div>
               </div>
-            </div>
-
-            {/* Debug Logging Section */}
-            <div className="p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
-              <h4 className="font-medium text-brand-dark dark:text-white mb-2">Debug: Raw API Response Logging</h4>
-              <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
-                Logs the full raw JSON responses from OpenAI / Anthropic to a custom secure log file. These responses can contain sensitive data. Only enable when troubleshooting and disable afterwards.
-              </p>
-              <label className="inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={localSettings.debug_log_raw_responses === true}
-                  onChange={(e) => handleLocalChange('debug_log_raw_responses', e.target.checked)}
-                  disabled={isSavingSettings}
-                  className="sr-only peer"
-                />
-                <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-accent/20 dark:peer-focus:ring-brand-accent/30 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-brand-accent dark:peer-checked:bg-brand-accent peer-disabled:opacity-50 peer-disabled:cursor-not-allowed"></div>
-                <span className="ms-3 text-sm font-medium text-gray-900 dark:text-gray-300">
-                  Enable raw response logging
-                </span>
-              </label>
-              
-              {/* Debug Log Viewer */}
-              {localSettings.debug_log_raw_responses === true && (
-                <div className="mt-4 pt-4 border-t border-red-200 dark:border-red-600">
-                  <div className="flex items-center justify-between mb-3">
-                    <h5 className="font-medium text-brand-dark dark:text-white">Debug Log Viewer</h5>
-                                         <div className="flex space-x-2">
-                       <Button
-                         size="xs"
-                         onClick={loadDebugLogs}
-                         disabled={isLoadingLogs}
-                         className="bg-blue-600 hover:bg-blue-700 text-white"
-                       >
-                         {isLoadingLogs ? 'Loading...' : 'Refresh Logs'}
-                       </Button>
-                       {debugLogs && debugLogs.recent_entries && debugLogs.recent_entries.length > 0 && (
-                         <Button
-                           size="xs"
-                           onClick={copyDebugLogs}
-                           className="bg-purple-600 hover:bg-purple-700 text-white"
-                         >
-                           <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                             <path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z" />
-                             <path d="M3 5a2 2 0 012-2 3 3 0 003 3h6a3 3 0 003-3 2 2 0 012 2v6h-4.586l1.293-1.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L10.414 13H15v3a2 2 0 01-2 2H5a2 2 0 01-2-2V5z" />
-                           </svg>
-                           Copy
-                         </Button>
-                       )}
-                       {debugLogs && debugLogs.log_files && debugLogs.log_files.length > 0 && (
-                         <Button
-                           size="xs"
-                           onClick={downloadDebugLogs}
-                           className="bg-green-600 hover:bg-green-700 text-white"
-                         >
-                           <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                             <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
-                           </svg>
-                           Download
-                         </Button>
-                       )}
-                       <Button
-                         size="xs"
-                         onClick={clearDebugLogs}
-                         disabled={isClearingLogs}
-                         className="bg-red-600 hover:bg-red-700 text-white"
-                       >
-                         <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                           <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-                         </svg>
-                         {isClearingLogs ? 'Clearing...' : 'Clear Logs'}
-                       </Button>
-                     </div>
-                  </div>
-                  
-                  {debugLogs ? (
-                    <div className="space-y-3">
-                      {/* Log File Info */}
-                      {debugLogs.log_files && debugLogs.log_files.length > 0 && (
-                        <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded border">
-                          <h6 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Log Files</h6>
-                          <div className="space-y-1">
-                            {debugLogs.log_files.map((file, index) => (
-                              <div key={index} className="flex justify-between items-center text-xs text-gray-600 dark:text-gray-400">
-                                <span className={file.is_main ? 'font-semibold' : ''}>{file.file}</span>
-                                <span>
-                                  {(file.size / 1024 / 1024).toFixed(2)} MB • 
-                                  {new Date(file.modified * 1000).toLocaleString()}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      
-                      {/* Recent Log Entries */}
-                      {debugLogs.recent_entries && debugLogs.recent_entries.length > 0 ? (
-                        <div className="bg-gray-900 text-green-400 p-4 rounded border font-mono text-xs max-h-96 overflow-y-auto">
-                          <div className="flex justify-between items-center mb-2 text-gray-300">
-                            <span>Recent log entries (last {debugLogs.recent_entries.length} lines):</span>
-                            <span className="text-xs">Log file: {debugLogs.log_file_path}</span>
-                          </div>
-                          <pre className="whitespace-pre-wrap">
-                            {debugLogs.recent_entries.join('\n')}
-                          </pre>
-                        </div>
-                      ) : (
-                        <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded border text-center text-gray-500 dark:text-gray-400">
-                          {debugLogs.is_enabled 
-                            ? 'No log entries found. Try making an API request to generate logs.'
-                            : 'Debug logging is currently disabled.'
-                          }
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded border text-center text-gray-500 dark:text-gray-400">
-                      Click "Refresh Logs" to view debug log contents
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
             {/* Save Button */}
