@@ -207,7 +207,7 @@ class DB {
         dbDelta($chatbots_sql);
         
         // Set database version
-        update_option('mat_db_version', '1.0.0');
+        update_option('magica_db_version', '1.0.0');
         
         // Migrate existing settings from wp_options if they exist
         $this->migrate_existing_settings();
@@ -318,7 +318,12 @@ class DB {
      * Check if database needs to be updated
      */
     public function check_database_version() {
-        $current_version = get_option('mat_db_version', '0.0.0');
+        // One-time migration: older releases stored these plugin options under the
+        // short "mat_" prefix. Move them to the unique "magica_" prefix so we comply
+        // with the WordPress.org prefix guidelines without losing existing values.
+        $this->migrate_option_prefixes();
+
+        $current_version = get_option('magica_db_version', '0.0.0');
         $plugin_version = MAGIC_ASSISTANT_VERSION;
         
         if (version_compare($current_version, $plugin_version, '<')) {
@@ -328,7 +333,28 @@ class DB {
         // Also run the fix for double-encrypted keys on version updates
         $this->fix_double_encrypted_keys();
     }
-    
+
+    /**
+     * Rename legacy "mat_" prefixed plugin options to the unique "magica_" prefix.
+     * Runs once: after the value is copied the old option is removed.
+     */
+    private function migrate_option_prefixes() {
+        $option_map = array(
+            'mat_db_version'               => 'magica_db_version',
+            'mat_tours_globally_disabled'  => 'magica_tours_globally_disabled',
+        );
+
+        foreach ($option_map as $old_key => $new_key) {
+            $old_value = get_option($old_key, null);
+            if ($old_value !== null) {
+                if (get_option($new_key, null) === null) {
+                    update_option($new_key, $old_value);
+                }
+                delete_option($old_key);
+            }
+        }
+    }
+
     /**
      * Migrate existing settings from wp_options to custom table
      */
@@ -383,9 +409,9 @@ class DB {
                 $theme_value = maybe_unserialize($setting['setting_value']);
                 
                 // Only migrate if user doesn't already have a theme in user meta
-                $existing_theme = get_user_meta($user_id, 'mat_theme', true);
+                $existing_theme = get_user_meta($user_id, 'magica_theme', true);
                 if (empty($existing_theme) && !empty($theme_value)) {
-                    update_user_meta($user_id, 'mat_theme', $theme_value);
+                    update_user_meta($user_id, 'magica_theme', $theme_value);
                 }
             }
             
@@ -949,7 +975,7 @@ class DB {
         // $wpdb->query("DROP TABLE IF EXISTS {$this->settings_table}");
         // $wpdb->query("DROP TABLE IF EXISTS {$this->chat_history_table}");
         // $wpdb->query("DROP TABLE IF EXISTS {$this->api_logs_table}");
-        // delete_option('mat_db_version');
+        // delete_option('magica_db_version');
     }
     
     /**

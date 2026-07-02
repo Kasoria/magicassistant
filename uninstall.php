@@ -45,12 +45,16 @@ if (!$complete_removal_enabled) {
 }
 
 
-// Delete WordPress options created by the plugin
-delete_option('mat_db_version');
-delete_option('mat_complete_data_removal'); // Clean up the setting itself
+// Delete WordPress options created by the plugin (current "magica_" prefix)
+delete_option('magica_db_version');
+delete_option('magica_tours_globally_disabled');
 
-// Delete any legacy options that might exist in wp_options (from migration)
+// Delete any legacy options that might still exist in wp_options under the old
+// "mat_" prefix (from earlier versions / migration).
 $legacy_options = array(
+    'mat_db_version',
+    'mat_tours_globally_disabled',
+    'mat_complete_data_removal',
     'mat_ai_provider',
     'mat_openai_api_key',
     'mat_anthropic_api_key',
@@ -66,9 +70,25 @@ foreach ($legacy_options as $option) {
     delete_option($option);
 }
 
-// Delete user meta data that might exist from migrations
-delete_metadata('user', 0, 'mat_theme', '', true);
-delete_metadata('user', 0, 'magic_assistant_preferences', '', true);
+// Delete user meta data created by the plugin (current "magica_" prefix) and any
+// legacy keys left behind by earlier versions.
+$user_meta_keys = array(
+    'magica_theme',
+    'magica_tour_completed_license',
+    'magica_tour_completed_dashboard',
+    'magica_tour_completed_settings',
+    'magica_tour_triggered_license',
+    'magica_tour_triggered_dashboard',
+    'magica_tour_triggered_settings',
+    'magica_tour_dismissed_permanently',
+    'magica_tour_first_visit_complete',
+    'mat_theme', // legacy
+    'magic_assistant_preferences', // legacy
+);
+
+foreach ($user_meta_keys as $meta_key) {
+    delete_metadata('user', 0, $meta_key, '', true);
+}
 
 // Remove custom database tables created by the DB class
 $table_prefix = $wpdb->prefix . 'mat_';

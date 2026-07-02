@@ -433,8 +433,7 @@ const AIAgents = ({ adminData, settings }) => {
     tags: '',
     category: '',
     is_active: true,
-    content_source: 'text', // 'text', 'file', 'url'
-    source_url: '',
+    content_source: 'text', // 'text', 'file'
     uploaded_file: null
   })
 
@@ -643,7 +642,6 @@ const AIAgents = ({ adminData, settings }) => {
       category: '',
       is_active: true,
       content_source: 'text',
-      source_url: '',
       uploaded_file: null
     })
     setEditingKB(null)
@@ -845,7 +843,6 @@ const AIAgents = ({ adminData, settings }) => {
       category: kb.category || '',
       is_active: kb.is_active === '1' || kb.is_active === 1,
       content_source: 'text', // Default to text for existing entries
-      source_url: '',
       uploaded_file: null
     })
     setEditingKB(kb)
@@ -901,40 +898,6 @@ const AIAgents = ({ adminData, settings }) => {
     }
   }
 
-  const handleUrlScraping = async (url) => {
-    if (!url.trim()) {
-      showError('Please enter a valid URL')
-      return
-    }
-
-    setIsProcessing(true)
-    
-    try {
-      const response = await fetch(`${adminData.restUrl}knowledge-base/scrape-url`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-WP-Nonce': adminData.nonces.wp_rest,
-        },
-        body: JSON.stringify({ url: url.trim() })
-      })
-
-      const result = await response.json()
-      
-      if (result.success) {
-        setKbForm({...kbForm, content: result.data.content, source_url: url.trim()})
-        showSuccess('URL content scraped successfully')
-      } else {
-        showError(result.message || 'Failed to scrape URL')
-      }
-    } catch (error) {
-      console.error('Failed to scrape URL:', error)
-      showError('Failed to scrape URL. Please try again.')
-    } finally {
-      setIsProcessing(false)
-    }
-  }
-
   const handleSaveKB = async () => {
     if (!adminData?.restUrl || !kbForm.name.trim()) {
       showError('Name is required')
@@ -944,11 +907,6 @@ const AIAgents = ({ adminData, settings }) => {
     // Validate content based on source type
     if (kbForm.content_source === 'text' && !kbForm.content.trim()) {
       showError('Content is required')
-      return
-    }
-    
-    if (kbForm.content_source === 'url' && !kbForm.source_url.trim()) {
-      showError('Please enter a URL to scrape')
       return
     }
     
@@ -2871,7 +2829,7 @@ const AIAgents = ({ adminData, settings }) => {
                     name="content_source"
                     value="text"
                     checked={kbForm.content_source === 'text'}
-                    onChange={(e) => setKbForm({...kbForm, content_source: e.target.value, content: '', source_url: '', uploaded_file: null})}
+                    onChange={(e) => setKbForm({...kbForm, content_source: e.target.value, content: '', uploaded_file: null})}
                     className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
                   />
                   <span className="ml-2 text-sm font-medium text-gray-900 dark:text-gray-300">Direct Text Input</span>
@@ -2882,21 +2840,10 @@ const AIAgents = ({ adminData, settings }) => {
                     name="content_source"
                     value="file"
                     checked={kbForm.content_source === 'file'}
-                    onChange={(e) => setKbForm({...kbForm, content_source: e.target.value, content: '', source_url: '', uploaded_file: null})}
+                    onChange={(e) => setKbForm({...kbForm, content_source: e.target.value, content: '', uploaded_file: null})}
                     className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
                   />
                   <span className="ml-2 text-sm font-medium text-gray-900 dark:text-gray-300">File Upload</span>
-                </label>
-                <label className="flex items-center cursor-pointer">
-                  <input
-                    type="radio"
-                    name="content_source"
-                    value="url"
-                    checked={kbForm.content_source === 'url'}
-                    onChange={(e) => setKbForm({...kbForm, content_source: e.target.value, content: '', source_url: '', uploaded_file: null})}
-                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-                  />
-                  <span className="ml-2 text-sm font-medium text-gray-900 dark:text-gray-300">URL Scraping</span>
                 </label>
               </div>
             </div>
@@ -2951,52 +2898,6 @@ const AIAgents = ({ adminData, settings }) => {
                       onChange={(e) => setKbForm({...kbForm, content: e.target.value})}
                       className="mt-1"
                       placeholder="File content will appear here after processing..."
-                    />
-                  </div>
-                )}
-              </div>
-            )}
-
-            {kbForm.content_source === 'url' && (
-              <div>
-                <Label htmlFor="kb-url">Website URL *</Label>
-                <div className="flex gap-2 mt-2">
-                  <TextInput
-                    id="kb-url"
-                    type="url"
-                    value={kbForm.source_url}
-                    onChange={(e) => setKbForm({...kbForm, source_url: e.target.value})}
-                    placeholder="https://example.com/page-to-scrape"
-                    className="flex-1"
-                    disabled={isProcessing}
-                  />
-                  <Button
-                    type="button"
-                    onClick={() => handleUrlScraping(kbForm.source_url)}
-                    disabled={isProcessing || !kbForm.source_url.trim()}
-                    size="sm"
-                  >
-                    {isProcessing ? <Spinner size="sm" /> : 'Scrape'}
-                  </Button>
-                </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Enter a URL to automatically extract and convert the content to plain text
-                </div>
-                {isProcessing && (
-                  <div className="mt-3 flex items-center gap-2 text-sm text-blue-600">
-                    <Spinner size="sm" />
-                    Scraping URL content...
-                  </div>
-                )}
-                {kbForm.content && (
-                  <div className="mt-3">
-                    <Label>Scraped Content (Preview)</Label>
-                    <Textarea
-                      rows={8}
-                      value={kbForm.content}
-                      onChange={(e) => setKbForm({...kbForm, content: e.target.value})}
-                      className="mt-1"
-                      placeholder="Scraped content will appear here..."
                     />
                   </div>
                 )}

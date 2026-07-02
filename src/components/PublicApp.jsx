@@ -9,7 +9,7 @@ const PublicApp = () => {
 
   useEffect(() => {
     // Check if WordPress data is available
-    if (typeof window.matPublicData !== 'undefined' || typeof window.matAdminData !== 'undefined') {
+    if (typeof window.magicaPublicData !== 'undefined' || typeof window.magicaAdminData !== 'undefined') {
       setIsLoaded(true)
       checkFloatingChatSettings()
     }
@@ -17,7 +17,7 @@ const PublicApp = () => {
 
   const checkFloatingChatSettings = async () => {
     try {
-      const pluginData = typeof window !== 'undefined' && (window.matAdminData || window.matPublicData) || {}
+      const pluginData = typeof window !== 'undefined' && (window.magicaAdminData || window.magicaPublicData) || {}
       
       if (!pluginData.restUrl) {
         return
@@ -47,7 +47,7 @@ const PublicApp = () => {
   }
 
   // Detect global localisation object (admin or public) – falls back gracefully.
-  const pluginData = typeof window !== 'undefined' && (window.matAdminData || window.matPublicData) || {}
+  const pluginData = typeof window !== 'undefined' && (window.magicaAdminData || window.magicaPublicData) || {}
 
   return (
     <>

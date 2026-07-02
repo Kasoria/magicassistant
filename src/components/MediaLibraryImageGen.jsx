@@ -5,7 +5,7 @@ const MediaLibraryImageGen = ({ restUrl, nonce, onImageGenerated, initialImages 
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState(null)
   const [provider, setProvider] = useState('openai')
-  const [model, setModel] = useState('dall-e-3')
+  const [model, setModel] = useState('gpt-image-2')
   const [size, setSize] = useState('1024x1024')
   const [format, setFormat] = useState('png')
   const [attachedImages, setAttachedImages] = useState([])
@@ -61,9 +61,9 @@ const MediaLibraryImageGen = ({ restUrl, nonce, onImageGenerated, initialImages 
   // Reset model when provider changes (match ChatInterface behavior)
   useEffect(() => {
     if (provider === 'openai') {
-      setModel('dall-e-3')
+      setModel('gpt-image-2')
     } else if (provider === 'google') {
-      setModel('gemini-2.5-flash-image')
+      setModel('gemini-3.1-flash-image')
     }
   }, [provider])
 
@@ -268,17 +268,16 @@ const MediaLibraryImageGen = ({ restUrl, nonce, onImageGenerated, initialImages 
         >
           {provider === 'openai' && (
             <>
-              <option value="dall-e-3">DALL-E 3</option>
-              <option value="dall-e-2">DALL-E 2</option>
+              <option value="gpt-image-2">GPT Image 2 (Latest)</option>
+              <option value="gpt-image-1.5">GPT Image 1.5</option>
+              <option value="gpt-image-1-mini">GPT Image 1 Mini (Fast)</option>
             </>
           )}
           {provider === 'google' && (
             <>
+              <option value="gemini-3-pro-image">Gemini 3 Pro Image (Nano Banana Pro)</option>
+              <option value="gemini-3.1-flash-image">Gemini 3.1 Flash Image (Nano Banana 2)</option>
               <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (Nano Banana)</option>
-              <option value="imagen-4.0-fast-generate-001">Imagen 4 (Fast)</option>
-              <option value="imagen-4.0-generate-001">Imagen 4 (Standard)</option>
-              <option value="imagen-4.0-ultra-generate-001">Imagen 4 (Ultra)</option>
-              <option value="imagen-3.0-generate-002">Imagen 3</option>
             </>
           )}
         </select>

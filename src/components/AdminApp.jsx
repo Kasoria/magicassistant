@@ -69,8 +69,8 @@ const AdminApp = () => {
 
   // Initialize settings from WordPress
   useEffect(() => {
-    if (typeof window.matAdminData !== 'undefined') {
-      const data = window.matAdminData
+    if (typeof window.magicaAdminData !== 'undefined') {
+      const data = window.magicaAdminData
       setAdminData(data)
       setIsLoaded(true)
       
@@ -145,11 +145,11 @@ const AdminApp = () => {
     }
 
     window.addEventListener('resize', handleResize)
-    window.addEventListener('mat_switch_tab', handleTabSwitch)
+    window.addEventListener('magica_switch_tab', handleTabSwitch)
     
     return () => {
       window.removeEventListener('resize', handleResize)
-      window.removeEventListener('mat_switch_tab', handleTabSwitch)
+      window.removeEventListener('magica_switch_tab', handleTabSwitch)
     }
   }, [sidebarOpen])
 
@@ -337,10 +337,10 @@ Please start by asking me about the product details so you can create descriptio
     
     if (prompt) {
       // Store the prompt in sessionStorage for the chat interface to pick up
-      sessionStorage.setItem('mat_prefill_message', prompt)
+      sessionStorage.setItem('magica_prefill_message', prompt)
       
       // Dispatch custom event to switch to chat tab
-      window.dispatchEvent(new CustomEvent('mat_switch_tab', {
+      window.dispatchEvent(new CustomEvent('magica_switch_tab', {
         detail: { tab: 'chat' }
       }))
     }
@@ -363,7 +363,7 @@ Please start by asking me about the product details so you can create descriptio
     // Save to server for cross-session persistence
     if (adminData?.ajaxurl && adminData?.nonces?.save_theme_mode) {
       const formData = new FormData()
-      formData.append('action', 'mat_save_theme_mode')
+      formData.append('action', 'magica_save_theme_mode')
       formData.append('mode', newTheme)
       formData.append('_ajax_nonce', adminData.nonces.save_theme_mode)
 

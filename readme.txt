@@ -3,7 +3,7 @@ Contributors: chrispump
 Tags: ai, assistant, chatbot, seo, content
 Requires at least: 6.0
 Tested up to: 7.0
-Stable tag: 2.0
+Stable tag: 2.0.2
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -23,7 +23,7 @@ MagicAssistant is an AI-powered WordPress plugin that provides an intelligent ch
 * **PageSpeed Insights** - Google PageSpeed performance analysis with Core Web Vitals tracking
 * **Image Generation** - Generate images with DALL-E 3 and Google Gemini directly from the chat
 * **Image Search** - Search and insert Unsplash images
-* **Knowledge Base** - Upload documents and scrape URLs to give the AI context about your business
+* **Knowledge Base** - Upload documents or paste text to give the AI context about your business
 * **Custom AI Agents** - Create specialized agents with custom system prompts and tool configurations
 * **Chatbots** - Build and embed AI chatbots on your frontend
 * **Content Mode** - Generate blog posts, meta tags and content with granular settings
@@ -83,7 +83,21 @@ Yes. Create a chatbot in the Chatbots section, configure its appearance and beha
 5. Custom AI agents
 6. Chatbot builder
 
+== Source Code ==
+
+The full source code, including unminified JavaScript, is available on GitHub: https://github.com/Kasoria/magicassistant
+
 == Changelog ==
+
+= 2.0.2 =
+* Renamed plugin-specific functions, options, transients, nonces and AJAX actions to the unique "magica_" prefix to avoid conflicts (existing settings are migrated automatically)
+* Replaced a direct cURL call with the WordPress HTTP API for the vulnerability feed lookup
+* Image-edit backups are now stored in a dedicated plugin subfolder inside the uploads directory
+
+= 2.0.1 =
+* Render the shared-conversation preview locally with a bundled Markdown library (no remote scripts)
+* Added per-IP rate limiting and input sanitization to the public chatbot endpoint
+* Fixed an outdated external link in the readme
 
 = 2.0 =
 * Open source release - all features free, no license required
@@ -113,18 +127,37 @@ Yes. Create a chatbot in the Chatbots section, configure its appearance and beha
 = 2.0 =
 Major update: all features are now free and open source. API calls go directly to providers. You must configure your own API keys in Settings.
 
+== External services ==
+
+MagicAssistant connects to several third-party services. Each call is triggered by an explicit action you take in the plugin (sending a chat message, running an analysis, searching for an image, scanning for vulnerabilities, etc.). No data is sent automatically in the background. Most services require you to provide your own API key.
+
+**AI providers** — used to generate chat responses, content and images. When you send a message or generate an image, the conversation content, your prompt, and any context you attach (such as selected post content or knowledge-base text) are sent to the provider you selected:
+
+* **OpenAI** (api.openai.com) — when using OpenAI models or DALL-E image generation. [Terms](https://openai.com/policies/terms-of-use/) · [Privacy Policy](https://openai.com/policies/privacy-policy/)
+* **Anthropic** (api.anthropic.com) — when using Claude models. [Terms](https://www.anthropic.com/legal/consumer-terms) · [Privacy Policy](https://www.anthropic.com/legal/privacy)
+* **Google Gemini** (generativelanguage.googleapis.com) — when using Gemini models or Gemini image generation. [Terms](https://ai.google.dev/gemini-api/terms) · [Privacy Policy](https://policies.google.com/privacy)
+* **OpenRouter** (openrouter.ai) — when using OpenRouter models. [Terms](https://openrouter.ai/terms) · [Privacy Policy](https://openrouter.ai/privacy)
+
+**SEO, performance and media services:**
+
+* **DataForSEO** (api.dataforseo.com) — used for SERP, keyword and competitor analysis. Your search keywords and target domains are sent when you run an SEO analysis. [Terms](https://dataforseo.com/terms-of-service/) · [Privacy Policy](https://dataforseo.com/privacy-policy/)
+* **Google PageSpeed Insights** (www.googleapis.com) — used for performance analysis. The URL you analyze is sent when you run a PageSpeed report. [Terms](https://developers.google.com/speed/docs/insights/v5/about) · [Privacy Policy](https://policies.google.com/privacy)
+* **Unsplash** (api.unsplash.com) — used for image search. Your search query is sent when you search for images. [Terms](https://unsplash.com/terms) · [Privacy Policy](https://unsplash.com/privacy)
+
+**WordPress.org and security data** (no account or API key required):
+
+* **WordPress.org Plugin/Theme API** (api.wordpress.org) — used to search the WordPress.org plugin and theme directories and to install/update plugins and themes you choose. The plugin/theme slug you request is sent. [Privacy Policy](https://wordpress.org/about/privacy/)
+* **Wordfence Intelligence** (www.wordfence.com) — used by the optional vulnerability scanner to look up known vulnerabilities for the plugins/themes installed on your site. The component slugs and versions being checked are sent when you run a security scan. [Terms & Privacy Policy](https://www.wordfence.com/terms-of-use-and-privacy-policy/)
+* **Gravatar** (gravatar.com / secure.gravatar.com) — WordPress core's avatar service is used to display user avatars in the chat interface, based on the logged-in user's email hash. [Privacy Policy](https://automattic.com/privacy/)
+
+== Plugin & theme management ==
+
+MagicAssistant includes AI tools that can search, install, activate and update plugins and themes from the WordPress.org directory on your request. These actions only run when you explicitly ask the assistant to perform them, and they are gated by the standard WordPress capabilities (install_plugins / activate_plugins / update_plugins for plugins and install_themes for themes). The plugin never changes the active state of other plugins on its own.
+
+== User management ==
+
+The assistant can add and edit WordPress users as part of its site-management tools, the same way you would from the Users screen in wp-admin. These tools use WordPress core functions (wp_insert_user / wp_update_user) and are gated by the standard core capabilities (create_users to add a user, edit_user to edit one). The plugin never logs anyone in, never sets authentication cookies and never creates a session, so it cannot bypass login-attempt limits or other security plugins — it only performs actions the logged-in administrator is already allowed to perform, on their own site, on explicit request.
+
 == Privacy Policy ==
 
-MagicAssistant processes data locally on your WordPress site. When using AI features, data is sent directly to your configured AI provider.
-
-**External Services:**
-
-* **OpenAI** (api.openai.com) - When using OpenAI models for chat or image generation. [Privacy Policy](https://openai.com/privacy/)
-* **Anthropic** (api.anthropic.com) - When using Claude models. [Privacy Policy](https://www.anthropic.com/privacy)
-* **Google** (generativelanguage.googleapis.com) - When using Gemini models. [Privacy Policy](https://policies.google.com/privacy)
-* **OpenRouter** (openrouter.ai) - When using OpenRouter models. [Privacy Policy](https://openrouter.ai/privacy)
-* **DataForSEO** (api.dataforseo.com) - When using SEO analysis features. [Privacy Policy](https://dataforseo.com/privacy-policy)
-* **Unsplash** (api.unsplash.com) - When searching for images. [Privacy Policy](https://unsplash.com/privacy)
-* **Google PageSpeed** (googleapis.com) - When running performance analysis. [Privacy Policy](https://policies.google.com/privacy)
-
-All external service usage requires explicit user action. No data is sent automatically.
+MagicAssistant stores your chat history, settings and knowledge-base content in your own WordPress database. API keys are encrypted at rest. Data is only transmitted to the external services listed above, and only as a result of an explicit action you take. See the "External services" section above for the specific data sent to each service.

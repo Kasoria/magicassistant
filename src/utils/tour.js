@@ -662,7 +662,7 @@ export const startLicenseTour = (options = {}) => {
  */
 export const hasCompletedLicenseTour = () => {
   // Check WordPress user meta - this is the primary source of truth
-  const wpUserMeta = window.matAdminData?.tourCompleted?.license;
+  const wpUserMeta = window.magicaAdminData?.tourCompleted?.license;
   
   // Fallback to localStorage for backward compatibility during migration
   const localStorageCompleted = localStorage.getItem('magicassistant_license_tour_completed') === 'true';
@@ -677,20 +677,20 @@ export const hasCompletedLicenseTour = () => {
  */
 export const markLicenseTourCompleted = () => {
   // Save to WordPress user meta via AJAX (primary method)
-  if (window.matAdminData?.ajaxurl) {
+  if (window.magicaAdminData?.ajaxurl) {
     const formData = new FormData();
-    formData.append('action', 'mat_mark_tour_completed');
+    formData.append('action', 'magica_mark_tour_completed');
     formData.append('tour_type', 'license');
-    formData.append('_ajax_nonce', window.matAdminData.nonces?.mat_ajax || '');
+    formData.append('_ajax_nonce', window.magicaAdminData.nonces?.magica_ajax || '');
     
-    fetch(window.matAdminData.ajaxurl, {
+    fetch(window.magicaAdminData.ajaxurl, {
       method: 'POST',
       body: formData
     }).then(response => response.json()).then(data => {
       if (data.success) {
         // Update local admin data to reflect the change
-        if (window.matAdminData?.tourCompleted) {
-          window.matAdminData.tourCompleted.license = true;
+        if (window.magicaAdminData?.tourCompleted) {
+          window.magicaAdminData.tourCompleted.license = true;
         }
       }
     }).catch(error => {
@@ -708,20 +708,20 @@ export const markLicenseTourCompleted = () => {
  */
 export const resetLicenseTour = () => {
   // Remove from WordPress user meta (primary method)
-  if (window.matAdminData?.ajaxurl) {
+  if (window.magicaAdminData?.ajaxurl) {
     const formData = new FormData();
-    formData.append('action', 'mat_reset_tour');
+    formData.append('action', 'magica_reset_tour');
     formData.append('tour_type', 'license');
-    formData.append('_ajax_nonce', window.matAdminData.nonces?.mat_ajax || '');
+    formData.append('_ajax_nonce', window.magicaAdminData.nonces?.magica_ajax || '');
     
-    return fetch(window.matAdminData.ajaxurl, {
+    return fetch(window.magicaAdminData.ajaxurl, {
       method: 'POST',
       body: formData
     }).then(response => response.json()).then(data => {
       if (data.success) {
         // Update local admin data to reflect the change
-        if (window.matAdminData?.tourCompleted) {
-          window.matAdminData.tourCompleted.license = false;
+        if (window.magicaAdminData?.tourCompleted) {
+          window.magicaAdminData.tourCompleted.license = false;
         }
         return true;
       }
@@ -786,13 +786,13 @@ export const shouldShowLicenseTour = (licenseData) => {
  * Mark that the tour has been triggered (for tracking purposes)
  */
 export const markTourTriggered = () => {
-  if (window.matAdminData?.ajaxurl) {
+  if (window.magicaAdminData?.ajaxurl) {
     const formData = new FormData();
-    formData.append('action', 'mat_mark_tour_triggered');
+    formData.append('action', 'magica_mark_tour_triggered');
     formData.append('tour_type', 'license');
-    formData.append('_ajax_nonce', window.matAdminData.nonces?.mat_ajax || '');
+    formData.append('_ajax_nonce', window.magicaAdminData.nonces?.magica_ajax || '');
     
-    fetch(window.matAdminData.ajaxurl, {
+    fetch(window.magicaAdminData.ajaxurl, {
       method: 'POST',
       body: formData
     }).catch(error => {
@@ -806,7 +806,7 @@ export const markTourTriggered = () => {
  * @returns {boolean} - True if permanently dismissed
  */
 export const hasDismissedTourPermanently = () => {
-  return Boolean(window.matAdminData?.tourDismissed?.permanently);
+  return Boolean(window.magicaAdminData?.tourDismissed?.permanently);
 };
 
 /**
@@ -814,26 +814,26 @@ export const hasDismissedTourPermanently = () => {
  * @returns {boolean} - True if globally disabled
  */
 export const areToursGloballyDisabled = () => {
-  return Boolean(window.matAdminData?.toursGloballyDisabled);
+  return Boolean(window.magicaAdminData?.toursGloballyDisabled);
 };
 
 /**
  * Dismiss tours permanently for current user
  */
 export const dismissToursPermanently = () => {
-  if (window.matAdminData?.ajaxurl) {
+  if (window.magicaAdminData?.ajaxurl) {
     const formData = new FormData();
-    formData.append('action', 'mat_dismiss_tour_permanently');
-    formData.append('_ajax_nonce', window.matAdminData.nonces?.mat_ajax || '');
+    formData.append('action', 'magica_dismiss_tour_permanently');
+    formData.append('_ajax_nonce', window.magicaAdminData.nonces?.magica_ajax || '');
     
-    return fetch(window.matAdminData.ajaxurl, {
+    return fetch(window.magicaAdminData.ajaxurl, {
       method: 'POST',
       body: formData
     }).then(response => response.json()).then(data => {
       if (data.success) {
         // Update local admin data to reflect the change
-        if (window.matAdminData?.tourDismissed) {
-          window.matAdminData.tourDismissed.permanently = true;
+        if (window.magicaAdminData?.tourDismissed) {
+          window.magicaAdminData.tourDismissed.permanently = true;
         }
         return true;
       }

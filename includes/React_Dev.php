@@ -49,14 +49,14 @@ class React_Dev {
         add_action( 'wp_enqueue_scripts', array( $this, 'maybe_enqueue_react_scripts' ), 10 );
         
         // Add fallback script loading for Breakdance zero theme compatibility
-        add_action( 'wp_head', array( $this, 'add_fallback_script_loading' ), 1 );
-        add_action( 'admin_head', array( $this, 'add_fallback_script_loading' ), 1 );
-        
+        add_action( 'wp_enqueue_scripts', array( $this, 'add_fallback_script_loading' ), 20 );
+        add_action( 'admin_enqueue_scripts', array( $this, 'add_fallback_script_loading' ), 20 );
+
         // Add React root elements to both frontend and admin
         add_action( 'wp_footer', array( $this, 'add_react_root_elements' ) );
         add_action( 'admin_footer', array( $this, 'add_react_root_elements' ) );
-        
-        add_action( 'admin_head', array( $this, 'add_admin_styles' ) );
+
+        add_action( 'admin_enqueue_scripts', array( $this, 'add_admin_styles' ) );
     }
     
     /**
@@ -122,7 +122,7 @@ class React_Dev {
                 } else {
                     // Debug: log what screen we're on
                     if ( get_post_type() === 'attachment' ) {
-                        \mat_debug_log( 'MagicAssistant: Attachment page but wrong screen base - screen base: ' . $screen->base . ', screen id: ' . $screen->id );
+                        \magica_debug_log( 'MagicAssistant: Attachment page but wrong screen base - screen base: ' . $screen->base . ', screen id: ' . $screen->id );
                     }
                     // Check floating chat settings before loading public React app on admin pages
                     if ( $this->should_show_public_app() ) {
@@ -289,13 +289,13 @@ class React_Dev {
     private function localize_media_library_data() {
         $handle = $this->is_dev_mode ? 'mat-react-media-library-dev' : 'mat-react-media-library';
         
-        wp_localize_script( $handle, 'matAdminData', array(
+        wp_localize_script( $handle, 'magicaAdminData', array(
             'ajaxurl' => admin_url( 'admin-ajax.php' ),
             'restUrl' => rest_url( 'magicassistant/v1/' ),
             'nonces' => array(
                 'wp_rest' => wp_create_nonce( 'wp_rest' ),
-                'mat_admin' => wp_create_nonce( 'mat_admin_nonce' ),
-                'mat_ajax' => wp_create_nonce( 'mat_ajax_nonce' ),
+                'magica_admin' => wp_create_nonce( 'magica_admin_nonce' ),
+                'magica_ajax' => wp_create_nonce( 'magica_ajax_nonce' ),
             ),
             'currentUser' => wp_get_current_user()->ID,
             'isAdmin' => is_admin(),
@@ -361,7 +361,7 @@ class React_Dev {
             // Add type="module" to image editor script using centralized method
             add_filter( 'script_loader_tag', array( $this, 'add_module_type_to_script' ), 10, 2 );
         } else {
-            \mat_debug_log( 'MagicAssistant: image-editor.js not found at: ' . $dist_path . 'image-editor.js' );
+            \magica_debug_log( 'MagicAssistant: image-editor.js not found at: ' . $dist_path . 'image-editor.js' );
         }
     }
 
@@ -373,7 +373,7 @@ class React_Dev {
         
         // Only localize if the script is actually enqueued
         if ( ! wp_script_is( $handle, 'enqueued' ) && ! wp_script_is( $handle, 'registered' ) ) {
-            \mat_debug_log( 'MagicAssistant: Attempted to localize image editor data but script handle not found: ' . $handle );
+            \magica_debug_log( 'MagicAssistant: Attempted to localize image editor data but script handle not found: ' . $handle );
             return;
         }
         
@@ -385,13 +385,13 @@ class React_Dev {
             $attachment_id = isset( $_GET['post'] ) ? intval( $_GET['post'] ) : 0;
         }
         
-        wp_localize_script( $handle, 'matImageEditorData', array(
+        wp_localize_script( $handle, 'magicaImageEditorData', array(
             'ajaxurl' => admin_url( 'admin-ajax.php' ),
             'restUrl' => rest_url( 'magicassistant/v1/' ),
             'nonces' => array(
                 'wp_rest' => wp_create_nonce( 'wp_rest' ),
-                'mat_admin' => wp_create_nonce( 'mat_admin_nonce' ),
-                'mat_ajax' => wp_create_nonce( 'mat_ajax_nonce' ),
+                'magica_admin' => wp_create_nonce( 'magica_admin_nonce' ),
+                'magica_ajax' => wp_create_nonce( 'magica_ajax_nonce' ),
             ),
             'currentUser' => wp_get_current_user()->ID,
             'isAdmin' => is_admin(),
@@ -468,8 +468,8 @@ class React_Dev {
             'restUrl' => rest_url( 'magicassistant/v1/' ),
             'nonces' => array(
                 'wp_rest' => wp_create_nonce( 'wp_rest' ),
-                'mat_admin' => wp_create_nonce( 'mat_admin_nonce' ),
-                'mat_ajax' => wp_create_nonce( 'mat_ajax_nonce' ),
+                'magica_admin' => wp_create_nonce( 'magica_admin_nonce' ),
+                'magica_ajax' => wp_create_nonce( 'magica_ajax_nonce' ),
             ),
             'currentUser' => wp_get_current_user()->ID,
             'isAdmin' => is_admin(),
@@ -557,8 +557,8 @@ class React_Dev {
             'restUrl' => rest_url( 'magicassistant/v1/' ),
             'nonces' => array(
                 'wp_rest' => wp_create_nonce( 'wp_rest' ),
-                'mat_admin' => wp_create_nonce( 'mat_admin_nonce' ),
-                'mat_ajax' => wp_create_nonce( 'mat_ajax_nonce' ),
+                'magica_admin' => wp_create_nonce( 'magica_admin_nonce' ),
+                'magica_ajax' => wp_create_nonce( 'magica_ajax_nonce' ),
             ),
             'currentUser' => wp_get_current_user()->ID,
             'isAdmin' => is_admin(),
@@ -823,32 +823,32 @@ class React_Dev {
         
         // Check if the script is enqueued and not already localized
         if (wp_script_is($handle, 'enqueued') && !wp_scripts()->get_data($handle, 'data')) {
-          wp_localize_script( $handle, 'matAdminData', array(
+          wp_localize_script( $handle, 'magicaAdminData', array(
             'ajaxurl' => admin_url( 'admin-ajax.php' ),
             'restUrl' => rest_url( 'magicassistant/v1/' ),
             'nonces' => array(
               'wp_rest' => wp_create_nonce( 'wp_rest' ),
-              'mat_admin' => wp_create_nonce( 'mat_admin_nonce' ),
-              'mat_ajax' => wp_create_nonce( 'mat_ajax_nonce' ),
-              'save_theme_mode' => wp_create_nonce( 'mat_save_theme_mode_nonce' ),
+              'magica_admin' => wp_create_nonce( 'magica_admin_nonce' ),
+              'magica_ajax' => wp_create_nonce( 'magica_ajax_nonce' ),
+              'save_theme_mode' => wp_create_nonce( 'magica_save_theme_mode_nonce' ),
             ),
             'currentUser' => wp_get_current_user()->ID,
-            'savedTheme' => get_user_meta( get_current_user_id(), 'mat_theme', true ),
+            'savedTheme' => get_user_meta( get_current_user_id(), 'magica_theme', true ),
             'isAdmin' => is_admin(),
             'isDev' => $this->is_dev_mode,
             'pluginUrl' => MAGIC_ASSISTANT_PLUGIN_URL,
             'admin_url' => admin_url(),
             'dashboard_url' => admin_url('index.php'),
             'tourCompleted' => array(
-              'license' => (bool) get_user_meta(get_current_user_id(), 'mat_tour_completed_license', true),
-              'dashboard' => (bool) get_user_meta(get_current_user_id(), 'mat_tour_completed_dashboard', true),
-              'settings' => (bool) get_user_meta(get_current_user_id(), 'mat_tour_completed_settings', true),
-              'firstVisit' => (bool) get_user_meta(get_current_user_id(), 'mat_tour_first_visit_complete', true)
+              'license' => (bool) get_user_meta(get_current_user_id(), 'magica_tour_completed_license', true),
+              'dashboard' => (bool) get_user_meta(get_current_user_id(), 'magica_tour_completed_dashboard', true),
+              'settings' => (bool) get_user_meta(get_current_user_id(), 'magica_tour_completed_settings', true),
+              'firstVisit' => (bool) get_user_meta(get_current_user_id(), 'magica_tour_first_visit_complete', true)
             ),
             'tourDismissed' => array(
-              'permanently' => (bool) get_user_meta(get_current_user_id(), 'mat_tour_dismissed_permanently', true)
+              'permanently' => (bool) get_user_meta(get_current_user_id(), 'magica_tour_dismissed_permanently', true)
             ),
-            'toursGloballyDisabled' => (bool) get_option('mat_tours_globally_disabled', false),
+            'toursGloballyDisabled' => (bool) get_option('magica_tours_globally_disabled', false),
             'i18n' => array(
               'loading' => __( 'Loading...', 'magicassistant' ),
               'error' => __( 'An error occurred', 'magicassistant' ),
@@ -872,17 +872,17 @@ class React_Dev {
         
         // Fetch plugin settings for default button customization
         $settings = array();
-        if ( function_exists( 'MATDB' ) && MATDB() ) {
-            $settings = MATDB()->get_all_settings();
+        if ( function_exists( 'magica_db' ) && magica_db() ) {
+            $settings = magica_db()->get_all_settings();
         }
         
-        wp_localize_script( $handle, 'matPublicData', array(
+        wp_localize_script( $handle, 'magicaPublicData', array(
             'ajaxurl' => admin_url( 'admin-ajax.php' ),
             'restUrl' => rest_url( 'magicassistant/v1/' ),
             'nonces' => array(
                 'wp_rest' => wp_create_nonce( 'wp_rest' ),
-                'mat_ajax' => wp_create_nonce( 'mat_ajax_nonce' ),
-                'mat_ajax_nopriv' => wp_create_nonce( 'mat_ajax_nopriv_nonce' ),
+                'magica_ajax' => wp_create_nonce( 'magica_ajax_nonce' ),
+                'magica_ajax_nopriv' => wp_create_nonce( 'magica_ajax_nopriv_nonce' ),
             ),
             'currentUser' => wp_get_current_user()->ID,
             'isLoggedIn' => is_user_logged_in(),
@@ -1121,7 +1121,7 @@ class React_Dev {
     }
     
     /**
-     * Add admin styles for React integration
+     * Enqueue admin styles for React integration.
      */
     public function add_admin_styles() {
         // Only add styles on plugin pages
@@ -1129,58 +1129,22 @@ class React_Dev {
         if ( ! $screen ) {
             return;
         }
-        
+
         $plugin_pages = array(
             'toplevel_page_magic_plugins',            // MagicPlugins landing page
             'magicplugins_page_magicassistant',       // Main MagicAssistant page
         );
-        
-        if ( ! in_array( $screen->id, $plugin_pages ) ) {
+
+        if ( ! in_array( $screen->id, $plugin_pages, true ) ) {
             return;
         }
-        
-        ?>
-        <?php // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedStylesheet -- Inline critical CSS for admin root ?>
-        <style>
-        #mat-admin-root {
-            width: 100%;
-            min-height: 100%;
-            margin: 0;
-            padding: 0;
-            background: transparent;
-        }
 
-        .wrap #mat-admin-root {
-            margin: 0;
-        }
-
-        @media screen and (max-width: 782px) {
-            #mat-admin-root {
-                min-height: calc(100vh - 46px);
-            }
-        }
-
-        #wpfooter {
-            display: none !important;
-        }
-
-        #wpcontent {
-            padding: 0 !important;
-        }
-        #wpbody-content {
-            padding-bottom: 0 !important;
-        }
-        /* Theme-based WP admin background color overrides */
-        html:not(.dark) body,
-        html:not(.dark) #wpwrap {
-            background-color: #f4f4f4 !important;
-        }
-        html.dark body,
-        html.dark #wpwrap {
-            background-color: #011326 !important;
-        }
-        </style>
-        <?php
+        wp_enqueue_style(
+            'mat-admin-root',
+            MAGIC_ASSISTANT_PLUGIN_URL . 'assets/css/admin-root.css',
+            array(),
+            MAGIC_ASSISTANT_VERSION
+        );
     }
 
     /**
@@ -1216,11 +1180,11 @@ class React_Dev {
      */
     private function has_active_chatbots() {
         // Get chatbots from database
-        if (!function_exists('MATDB') || !MATDB()) {
+        if (!function_exists('magica_db') || !magica_db()) {
             return false;
         }
 
-        $db = MATDB();
+        $db = magica_db();
         $chatbots = $db->get_active_chatbots_for_display();
 
         if (empty($chatbots)) {
@@ -1443,12 +1407,12 @@ class React_Dev {
      */
     private function should_show_floating_chat() {
         // Get floating chat settings from database
-        if (!function_exists('MATDB') || !MATDB()) {
+        if (!function_exists('magica_db') || !magica_db()) {
             // If database not available, default to showing (fallback)
             return true;
         }
 
-        $db = MATDB();
+        $db = magica_db();
         $settings = $db->get_all_settings();
 
         // If floating chat is explicitly disabled, don't show it
@@ -1699,33 +1663,27 @@ class React_Dev {
             return;
         }
 
-        // Output a script that ensures our ES modules are loaded correctly
-        ?>
-        <?php // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript -- Fallback module loader must be inline ?>
-        <script>
-        (function() {
-            // Check if our scripts are already loaded
-            var matScriptsLoaded = false;
-            var scripts = document.querySelectorAll('script[src*="vendor-"], script[src*="flowbite-"], script[src*="utils-"], script[src*="main.js"], script[src*="admin.js"]');
-            
-            if (scripts.length > 0) {
-                // Scripts are already enqueued by WordPress, check if they have module type
-                scripts.forEach(function(script) {
-                    if (script.src.includes('<?php echo esc_js(MAGIC_ASSISTANT_PLUGIN_URL); ?>')) {
-                        if (!script.getAttribute('type') || script.getAttribute('type') !== 'module') {
-                            script.setAttribute('type', 'module');
-                            script.setAttribute('crossorigin', 'anonymous');
-                        }
-                        matScriptsLoaded = true;
-                    }
-                });
-            }
+        // Build an inline script that ensures our ES modules are loaded correctly,
+        // then attach it through the enqueue system (no raw <script> tag).
+        $plugin_url = esc_js( MAGIC_ASSISTANT_PLUGIN_URL );
 
-            // If scripts weren't loaded by WordPress enqueue system, we may need manual loading
-            // This would be implemented based on specific requirements for the environment
-        })();
-        </script>
-        <?php
+        $inline_js = '(function() {'
+            . 'var scripts = document.querySelectorAll(\'script[src*="vendor-"], script[src*="flowbite-"], script[src*="utils-"], script[src*="main.js"], script[src*="admin.js"]\');'
+            . 'if (scripts.length > 0) {'
+            . 'scripts.forEach(function(script) {'
+            . 'if (script.src.indexOf("' . $plugin_url . '") !== -1) {'
+            . 'if (!script.getAttribute("type") || script.getAttribute("type") !== "module") {'
+            . 'script.setAttribute("type", "module");'
+            . 'script.setAttribute("crossorigin", "anonymous");'
+            . '}'
+            . '}'
+            . '});'
+            . '}'
+            . '})();';
+
+        wp_register_script( 'mat-fallback-loader', '', array(), MAGIC_ASSISTANT_VERSION, false );
+        wp_enqueue_script( 'mat-fallback-loader' );
+        wp_add_inline_script( 'mat-fallback-loader', $inline_js );
     }
 
     /**

@@ -13,7 +13,7 @@ const ImageEditorIntegration = () => {
 
   const handleImageGenerated = useCallback(async (images) => {
     // Get the current attachment ID
-    const attachmentId = window.matImageEditorData?.attachmentId
+    const attachmentId = window.magicaImageEditorData?.attachmentId
     
     if (!attachmentId) {
       console.error('❌ Missing attachment ID')
@@ -61,9 +61,9 @@ const ImageEditorIntegration = () => {
         const newImageUrl = imageUrl + '?t=' + Date.now()
         
         // Store the generated image URL so we can save it when user clicks "Save Edits"
-        window.matAIEditedImageUrl = imageUrl
-        window.matAIEditedImageAlt = imageAlt
-        window.matAIEditedImageTitle = imageTitle
+        window.magicaAIEditedImageUrl = imageUrl
+        window.magicaAIEditedImageAlt = imageAlt
+        window.magicaAIEditedImageTitle = imageTitle
         
         // Get the original image URL - try multiple methods
         const getOriginalImageUrl = async () => {
@@ -98,10 +98,10 @@ const ImageEditorIntegration = () => {
           if (attachmentId) {
             try {
               // Use WordPress core REST API endpoint (not plugin endpoint)
-              const wpRestUrl = window.matImageEditorData.restUrl.replace('/magicassistant/v1/', '/wp/v2/')
+              const wpRestUrl = window.magicaImageEditorData.restUrl.replace('/magicassistant/v1/', '/wp/v2/')
               const response = await fetch(`${wpRestUrl}media/${attachmentId}`, {
                 headers: {
-                  'X-WP-Nonce': window.matImageEditorData.nonces.wp_rest,
+                  'X-WP-Nonce': window.magicaImageEditorData.nonces.wp_rest,
                 },
               })
               if (response.ok) {
@@ -149,8 +149,8 @@ const ImageEditorIntegration = () => {
           }
           
           // Store original state for undo functionality
-          if (!window.matAIOriginalImage) {
-            window.matAIOriginalImage = {
+          if (!window.magicaAIOriginalImage) {
+            window.magicaAIOriginalImage = {
               src: finalOriginalSrc,
               width: originalWidth,
               height: originalHeight
@@ -191,7 +191,7 @@ const ImageEditorIntegration = () => {
             }
             
             // Add original to history for undo
-            const originalState = window.matAIOriginalImage
+            const originalState = window.magicaAIOriginalImage
             const lastHistory = window.imageEdit.history[window.imageEdit.history.length - 1]
             if (!lastHistory || lastHistory.src !== originalState.src) {
               window.imageEdit.history.push({
@@ -204,8 +204,8 @@ const ImageEditorIntegration = () => {
           }
           
           // Store AI-generated image state for redo functionality
-          if (!window.matAIEditedImageState) {
-            window.matAIEditedImageState = {
+          if (!window.magicaAIEditedImageState) {
+            window.magicaAIEditedImageState = {
               url: newImageUrl.split('?')[0], // Remove cache buster
               src: newImageUrl,
               width: newImg.width,
@@ -222,14 +222,14 @@ const ImageEditorIntegration = () => {
           // Helper function to check if current image is AI-generated
           const isCurrentImageAI = () => {
             const currentSrc = normalizeUrl(imgElement.src)
-            const aiSrc = normalizeUrl(window.matAIEditedImageState?.url || window.matAIEditedImageState?.src)
+            const aiSrc = normalizeUrl(window.magicaAIEditedImageState?.url || window.magicaAIEditedImageState?.src)
             return aiSrc && currentSrc === aiSrc
           }
           
           // Helper function to check if current image is original
           const isCurrentImageOriginal = () => {
             const currentSrc = normalizeUrl(imgElement.src)
-            const originalSrc = normalizeUrl(window.matAIOriginalImage?.src)
+            const originalSrc = normalizeUrl(window.magicaAIOriginalImage?.src)
             return originalSrc && currentSrc === originalSrc
           }
           
@@ -242,13 +242,13 @@ const ImageEditorIntegration = () => {
             
             undoButton.addEventListener('click', (e) => {
               // Only handle if we have AI state and are currently showing AI image
-              if (window.matAIEditedImageState && window.matAIOriginalImage && isCurrentImageAI()) {
+              if (window.magicaAIEditedImageState && window.magicaAIOriginalImage && isCurrentImageAI()) {
                 // Prevent WordPress's default undo behavior
                 e.preventDefault()
                 e.stopPropagation()
                 e.stopImmediatePropagation()
                 
-                const originalState = window.matAIOriginalImage
+                const originalState = window.magicaAIOriginalImage
                 
                 // Restore original image
                 imgElement.src = originalState.src
@@ -257,7 +257,7 @@ const ImageEditorIntegration = () => {
                 }
                 
                 // Mark that we're now showing original (but keep AI state for redo)
-                window.matAICurrentState = 'original'
+                window.magicaAICurrentState = 'original'
                 
                 // Update editor state
                 if (window.imageEdit && typeof window.imageEdit.changed !== 'undefined') {
@@ -290,13 +290,13 @@ const ImageEditorIntegration = () => {
             
             redoButton.addEventListener('click', (e) => {
               // Only handle if we have AI state and are currently showing original image
-              if (window.matAIEditedImageState && window.matAIOriginalImage && isCurrentImageOriginal()) {
+              if (window.magicaAIEditedImageState && window.magicaAIOriginalImage && isCurrentImageOriginal()) {
                 // Prevent WordPress's default redo behavior
                 e.preventDefault()
                 e.stopPropagation()
                 e.stopImmediatePropagation()
                 
-                const aiState = window.matAIEditedImageState
+                const aiState = window.magicaAIEditedImageState
                 
                 // Restore AI-generated image
                 const aiImageUrl = aiState.src || aiState.url + '?t=' + Date.now()
@@ -306,7 +306,7 @@ const ImageEditorIntegration = () => {
                 }
                 
                 // Mark that we're now showing AI version
-                window.matAICurrentState = 'ai'
+                window.magicaAICurrentState = 'ai'
                 
                 // Update editor state
                 if (window.imageEdit && typeof window.imageEdit.changed !== 'undefined') {
@@ -326,7 +326,7 @@ const ImageEditorIntegration = () => {
           }
           
           // Mark current state as AI-generated
-          window.matAICurrentState = 'ai'
+          window.magicaAICurrentState = 'ai'
           
           // Enable the undo button (can undo to original)
           if (undoButton) {
@@ -368,11 +368,11 @@ const ImageEditorIntegration = () => {
               const currentImgElement = document.querySelector('#image-preview-0, .imgedit-wrap img, img[id*="image"]')
               
               // Check if we have AI image state
-              if (window.matAIEditedImageState || window.matAIEditedImageUrl) {
+              if (window.magicaAIEditedImageState || window.magicaAIEditedImageUrl) {
                 // Determine which image to save based on current state
                 const currentSrc = currentImgElement ? currentImgElement.src.split('?')[0] : ''
-                const aiSrc = window.matAIEditedImageState?.url
-                const originalSrc = window.matAIOriginalImage?.src
+                const aiSrc = window.magicaAIEditedImageState?.url
+                const originalSrc = window.magicaAIOriginalImage?.src
                 
                 // If we're showing the original (user clicked undo), let WordPress handle it normally
                 // WordPress will save the current state as-is
@@ -385,7 +385,7 @@ const ImageEditorIntegration = () => {
                 }
                 
                 // We're saving the AI-generated version (current state is AI image)
-                if (currentSrc === aiSrc || window.matAICurrentState === 'ai') {
+                if (currentSrc === aiSrc || window.magicaAICurrentState === 'ai') {
                   e.preventDefault()
                   e.stopPropagation()
                   
@@ -396,20 +396,20 @@ const ImageEditorIntegration = () => {
                   
                   try {
                     // Get the AI image URL (use stored state or fallback)
-                    const imageUrlToSave = window.matAIEditedImageUrl || window.matAIEditedImageState?.url
+                    const imageUrlToSave = window.magicaAIEditedImageUrl || window.magicaAIEditedImageState?.url
                     
                     // Save the AI-generated image
-                    const response = await fetch(`${window.matImageEditorData.restUrl}replace-attachment`, {
+                    const response = await fetch(`${window.magicaImageEditorData.restUrl}replace-attachment`, {
                       method: 'POST',
                       headers: {
                         'Content-Type': 'application/json',
-                        'X-WP-Nonce': window.matImageEditorData.nonces.wp_rest,
+                        'X-WP-Nonce': window.magicaImageEditorData.nonces.wp_rest,
                       },
                       body: JSON.stringify({
                         attachment_id: attachmentId,
                         image_url: imageUrlToSave,
-                        alt: window.matAIEditedImageAlt || imageAlt,
-                        title: window.matAIEditedImageTitle || imageTitle
+                        alt: window.magicaAIEditedImageAlt || imageAlt,
+                        title: window.magicaAIEditedImageTitle || imageTitle
                       }),
                     })
                     
@@ -423,12 +423,12 @@ const ImageEditorIntegration = () => {
                   }
                   
                   // Clear all stored state (image is now saved)
-                    delete window.matAIEditedImageUrl
-                    delete window.matAIEditedImageAlt
-                    delete window.matAIEditedImageTitle
-                    delete window.matAIEditedImageState
-                    delete window.matAIOriginalImage
-                    delete window.matAICurrentState
+                    delete window.magicaAIEditedImageUrl
+                    delete window.magicaAIEditedImageAlt
+                    delete window.magicaAIEditedImageTitle
+                    delete window.magicaAIEditedImageState
+                    delete window.magicaAIOriginalImage
+                    delete window.magicaAICurrentState
                     
                     // Reload to show saved image
                     window.location.reload()
@@ -490,9 +490,9 @@ const ImageEditorIntegration = () => {
 
   useEffect(() => {
     // Get REST URL and nonce from localized data
-    const restUrl = window.matImageEditorData?.restUrl
-    const nonce = window.matImageEditorData?.nonces?.wp_rest
-    const attachmentId = window.matImageEditorData?.attachmentId
+    const restUrl = window.magicaImageEditorData?.restUrl
+    const nonce = window.magicaImageEditorData?.nonces?.wp_rest
+    const attachmentId = window.magicaImageEditorData?.attachmentId
 
     if (!restUrl || !nonce) {
       console.error('MagicAssistant: Missing REST URL or nonce')
@@ -723,8 +723,8 @@ const ImageEditorIntegration = () => {
       return
     }
 
-    const restUrl = window.matImageEditorData?.restUrl
-    const nonce = window.matImageEditorData?.nonces?.wp_rest
+    const restUrl = window.magicaImageEditorData?.restUrl
+    const nonce = window.magicaImageEditorData?.nonces?.wp_rest
 
     if (!restUrl || !nonce) {
       console.error('MagicAssistant: Missing REST URL or nonce')

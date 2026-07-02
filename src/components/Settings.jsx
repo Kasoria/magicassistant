@@ -19,7 +19,6 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [availableUsers, setAvailableUsers] = useState([])
   const [isLoadingUsers, setIsLoadingUsers] = useState(false)
-  const [showDangerousSqlModal, setShowDangerousSqlModal] = useState(false)
   const [isDismissingTours, setIsDismissingTours] = useState(false)
   const [tourStatus, setTourStatus] = useState({
     toursHidden: false
@@ -96,8 +95,6 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         floating_chat_button_icon: settings.floating_chat_button_icon || 'chat',
         floating_chat_custom_color: settings.floating_chat_custom_color || '',
         floating_chat_custom_icon: settings.floating_chat_custom_icon || '',
-        enable_sql_queries: settings.enable_sql_queries === true,
-        enable_dangerous_sql_queries: settings.enable_dangerous_sql_queries === true,
       })
       setHasUnsavedChanges(false)
     }
@@ -161,14 +158,14 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
   }
 
   const confirmDeleteApiKey = async () => {
-    if (!pendingApiKeyDelete || !window.matAdminData?.restUrl) return
+    if (!pendingApiKeyDelete || !window.magicaAdminData?.restUrl) return
     
     try {
-      const response = await fetch(`${window.matAdminData.restUrl}delete-api-key`, {
+      const response = await fetch(`${window.magicaAdminData.restUrl}delete-api-key`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-WP-Nonce': window.matAdminData.nonces.wp_rest,
+          'X-WP-Nonce': window.magicaAdminData.nonces.wp_rest,
         },
         body: JSON.stringify({ provider: pendingApiKeyDelete })
       })
@@ -202,9 +199,9 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     setIsLoadingUsers(true)
     
     try {
-      const response = await fetch(`${window.matAdminData?.restUrl}users`, {
+      const response = await fetch(`${window.magicaAdminData?.restUrl}users`, {
         headers: {
-          'X-WP-Nonce': window.matAdminData?.nonces.wp_rest,
+          'X-WP-Nonce': window.magicaAdminData?.nonces.wp_rest,
         },
       })
       
@@ -229,9 +226,9 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
     setIsLoadingOpenrouterModels(true)
     
     try {
-      const response = await fetch(`${window.matAdminData?.restUrl}openrouter-models`, {
+      const response = await fetch(`${window.magicaAdminData?.restUrl}openrouter-models`, {
         headers: {
-          'X-WP-Nonce': window.matAdminData?.nonces.wp_rest,
+          'X-WP-Nonce': window.magicaAdminData?.nonces.wp_rest,
         },
       })
       
@@ -312,10 +309,10 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
 
     try {
       const formData = new FormData()
-      formData.append('action', 'mat_reset_all_tours')
-      formData.append('_ajax_nonce', window.matAdminData?.nonces?.mat_ajax || '')
+      formData.append('action', 'magica_reset_all_tours')
+      formData.append('_ajax_nonce', window.magicaAdminData?.nonces?.magica_ajax || '')
 
-      const response = await fetch(window.matAdminData?.ajaxurl, {
+      const response = await fetch(window.magicaAdminData?.ajaxurl, {
         method: 'POST',
         body: formData
       })
@@ -326,8 +323,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
         setTourStatus({
           toursHidden: false
         })
-        if (window.matAdminData?.tourDismissed) {
-          window.matAdminData.tourDismissed.permanently = false
+        if (window.magicaAdminData?.tourDismissed) {
+          window.magicaAdminData.tourDismissed.permanently = false
         }
         showSuccess('All tours reset successfully! You can now replay all tours.')
       } else {
@@ -345,10 +342,10 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
 
     try {
       const formData = new FormData()
-      formData.append('action', 'mat_reenable_tours')
-      formData.append('_ajax_nonce', window.matAdminData?.nonces?.mat_ajax || '')
+      formData.append('action', 'magica_reenable_tours')
+      formData.append('_ajax_nonce', window.magicaAdminData?.nonces?.magica_ajax || '')
 
-      const response = await fetch(window.matAdminData?.ajaxurl, {
+      const response = await fetch(window.magicaAdminData?.ajaxurl, {
         method: 'POST',
         body: formData
       })
@@ -361,8 +358,8 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           toursHidden: false
         }))
         // Also update the global admin data
-        if (window.matAdminData?.tourDismissed) {
-          window.matAdminData.tourDismissed.permanently = false
+        if (window.magicaAdminData?.tourDismissed) {
+          window.magicaAdminData.tourDismissed.permanently = false
         }
         showSuccess('Tours re-enabled successfully! You will now see tour prompts again.')
       } else {
@@ -397,8 +394,6 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           max_response_tokens: parseInt(localSettings.max_response_tokens),
           conversation_history_limit: parseInt(localSettings.conversation_history_limit),
           streaming_enabled: localSettings.streaming_enabled,
-          enable_sql_queries: localSettings.enable_sql_queries,
-          enable_dangerous_sql_queries: localSettings.enable_dangerous_sql_queries,
         }
       case 'seo':
         return {
@@ -523,14 +518,14 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
 
     try {
       // Build URL with framework parameter
-      const baseUrl = `${window.matAdminData?.restUrl || '/wp-json/magicassistant/v1/'}bricks/framework-context`
+      const baseUrl = `${window.magicaAdminData?.restUrl || '/wp-json/magicassistant/v1/'}bricks/framework-context`
       const url = new URL(baseUrl, window.location.origin)
       url.searchParams.set('framework', selectedFramework)
 
       const response = await fetch(url.toString(), {
         method: 'GET',
         headers: {
-          'X-WP-Nonce': window.matAdminData?.nonces?.wp_rest || '',
+          'X-WP-Nonce': window.magicaAdminData?.nonces?.wp_rest || '',
         },
       })
 
@@ -1264,35 +1259,6 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                       Delete Operations
                     </Label>
                   </div>
-                  <div className="flex items-center space-x-3">
-                    <input
-                      type="checkbox"
-                      id="enable-sql-queries"
-                      checked={localSettings.enable_sql_queries === true}
-                      onChange={(e) => handleLocalChange('enable_sql_queries', e.target.checked)}
-                      disabled={isSavingSettings}
-                      className="w-4 h-4 text-brand-accent bg-gray-100 border-gray-300 rounded focus:ring-brand-accent dark:focus:ring-brand-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-                    />
-                    <Label htmlFor="enable-sql-queries" className="font-medium">
-                      SQL Query Tool (read-only)
-                    </Label>
-                  </div>
-                  <div className="flex items-center space-x-3">
-                    <input
-                      type="checkbox"
-                      id="enable-dangerous-sql"
-                      checked={localSettings.enable_dangerous_sql_queries === true}
-                      onChange={(e) => handleDangerousSqlChange(e.target.checked)}
-                      disabled={isSavingSettings || localSettings.enable_sql_queries !== true}
-                      className="w-4 h-4 text-red-600 bg-gray-100 border-gray-300 rounded focus:ring-red-600 dark:focus:ring-red-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-                    />
-                    <Label htmlFor="enable-dangerous-sql" className="font-medium text-red-700 dark:text-red-400">
-                      FULL SQL (write/delete) – Dangerous
-                    </Label>
-                  </div>
-                  <p className="col-span-full text-xs text-red-600 dark:text-red-400 -mt-2">
-                    WARNING: Allows AI to run ANY SQL statement, including UPDATE / DELETE / DROP. Use only if you fully trust actions.
-                  </p>
                 </div>
                 <div className="mt-3 bg-yellow-50 dark:bg-yellow-900/20 p-3 rounded-lg">
                   <p className="text-sm text-yellow-800 dark:text-yellow-200">
@@ -1938,7 +1904,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                             handleLocalChange('floating_chat_button_color', color.value)
                             // Trigger immediate update to FloatingChat component
                             setTimeout(() => {
-                              window.dispatchEvent(new CustomEvent('matFloatingChatCustomizationUpdate', {
+                              window.dispatchEvent(new CustomEvent('magicaFloatingChatCustomizationUpdate', {
                                 detail: {
                                   backgroundColor: color.value,
                                   customColor: localSettings.floating_chat_custom_color,
@@ -1969,7 +1935,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                             handleLocalChange('floating_chat_button_color', 'custom')
                             // Trigger immediate update to FloatingChat component
                             setTimeout(() => {
-                              window.dispatchEvent(new CustomEvent('matFloatingChatCustomizationUpdate', {
+                              window.dispatchEvent(new CustomEvent('magicaFloatingChatCustomizationUpdate', {
                                 detail: {
                                   backgroundColor: 'custom',
                                   customColor: e.target.value,
@@ -1991,7 +1957,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                             handleLocalChange('floating_chat_button_color', 'custom')
                             // Trigger immediate update to FloatingChat component
                             setTimeout(() => {
-                              window.dispatchEvent(new CustomEvent('matFloatingChatCustomizationUpdate', {
+                              window.dispatchEvent(new CustomEvent('magicaFloatingChatCustomizationUpdate', {
                                 detail: {
                                   backgroundColor: 'custom',
                                   customColor: e.target.value,
@@ -2054,7 +2020,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                             handleLocalChange('floating_chat_button_icon', icon.value)
                             // Trigger immediate update to FloatingChat component
                             setTimeout(() => {
-                              window.dispatchEvent(new CustomEvent('matFloatingChatCustomizationUpdate', {
+                              window.dispatchEvent(new CustomEvent('magicaFloatingChatCustomizationUpdate', {
                                 detail: {
                                   backgroundColor: localSettings.floating_chat_button_color,
                                   customColor: localSettings.floating_chat_custom_color,
@@ -2101,7 +2067,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                             handleLocalChange('floating_chat_button_icon', 'custom')
                             // Trigger immediate update to FloatingChat component
                             setTimeout(() => {
-                              window.dispatchEvent(new CustomEvent('matFloatingChatCustomizationUpdate', {
+                              window.dispatchEvent(new CustomEvent('magicaFloatingChatCustomizationUpdate', {
                                 detail: {
                                   backgroundColor: localSettings.floating_chat_button_color,
                                   customColor: localSettings.floating_chat_custom_color,
@@ -2138,7 +2104,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                                 handleLocalChange('floating_chat_button_icon', 'custom')
                                 // Trigger immediate update to FloatingChat component
                                 setTimeout(() => {
-                                  window.dispatchEvent(new CustomEvent('matFloatingChatCustomizationUpdate', {
+                                  window.dispatchEvent(new CustomEvent('magicaFloatingChatCustomizationUpdate', {
                                     detail: {
                                       backgroundColor: localSettings.floating_chat_button_color,
                                       customColor: localSettings.floating_chat_custom_color,
@@ -2438,8 +2404,7 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
                   <ol className="mt-2 text-sm text-cyan-700 dark:text-cyan-400 list-decimal list-inside space-y-1">
                     <li>Click "Fetch Design Context" to extract your Bricks CSS variables</li>
                     <li>Copy the generated context to your clipboard</li>
-                    <li>Go to the AI Site Builder in your MagicDash account</li>
-                    <li>Paste the context into the "CSS Framework Variables" field</li>
+                    <li>Paste the context into your AI tool when generating layouts or styles</li>
                     <li>The AI will use your existing design system instead of creating new styles</li>
                   </ol>
                 </div>
@@ -2450,26 +2415,12 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
 
       case 'sharing':
         return (
-          <SharedConversations adminData={window.matAdminData} />
+          <SharedConversations adminData={window.magicaAdminData} />
         )
 
       default:
         return null
     }
-  }
-
-  // Handle FULL SQL (dangerous SQL) checkbox change
-  const handleDangerousSqlChange = (checked) => {
-    if (checked) {
-      setShowDangerousSqlModal(true)
-    } else {
-      handleLocalChange('enable_dangerous_sql_queries', false)
-    }
-  }
-
-  const confirmDangerousSql = () => {
-    handleLocalChange('enable_dangerous_sql_queries', true)
-    showWarning('FULL SQL access will be enabled when you save these settings')
   }
 
   return (
@@ -2558,24 +2509,6 @@ const Settings = ({ settings, onSaveSettings, isSavingSettings, darkMode, onTogg
           "The encrypted API key will be permanently removed",
           "You will need to re-enter the API key to use AI features",
           "This will not affect your account with the provider"
-        ]}
-      />
-
-      {/* FULL SQL Confirmation Modal */}
-      <ConfirmationModal
-        isOpen={showDangerousSqlModal}
-        onClose={() => setShowDangerousSqlModal(false)}
-        onConfirm={confirmDangerousSql}
-        title="Enable FULL SQL Access?"
-        message="Are you sure you want to enable FULL SQL (write/delete) access? This will allow the AI to execute any SQL statement, including destructive operations."
-        confirmText="Yes, enable FULL SQL"
-        cancelText="No, keep it disabled"
-        confirmButtonClass="bg-red-600 hover:bg-red-700 focus:ring-red-300 dark:bg-red-500 dark:hover:bg-red-600 dark:focus:ring-red-900"
-        icon="delete"
-        items={[
-          "AI can run UPDATE and DELETE queries",
-          "AI can DROP tables or alter database schema",
-          "These actions can permanently alter or delete data"
         ]}
       />
     </div>

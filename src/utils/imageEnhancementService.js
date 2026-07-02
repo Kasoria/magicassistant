@@ -21,7 +21,7 @@ export const IMAGE_ORIENTATIONS = [
  * @returns {Object|null}
  */
 const getPluginData = () => {
-  return window.magicAssistantAdmin || window.matAdminData || window.matPublicData || window.magicAssistantData || null;
+  return window.magicAssistantAdmin || window.magicaAdminData || window.magicaPublicData || window.magicAssistantData || null;
 };
 
 /**

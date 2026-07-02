@@ -479,13 +479,6 @@ class AI_Provider {
             'permission_callback' => array($this, 'check_permissions'),
         ));
 
-        // URL scraping endpoint
-        register_rest_route('magicassistant/v1', '/knowledge-base/scrape-url', array(
-            'methods' => 'POST',
-            'callback' => array($this, 'scrape_url_content'),
-            'permission_callback' => array($this, 'check_permissions'),
-        ));
-
         // CHATBOTS ENDPOINTS
         register_rest_route('magicassistant/v1', '/chatbots', array(
             'methods' => 'GET',
@@ -517,7 +510,13 @@ class AI_Provider {
             'permission_callback' => array($this, 'check_permissions'),
         ));
 
-        // Public chatbot endpoints (no auth required)
+        // Public chatbot endpoints.
+        //
+        // These power the front-end chatbot widget that site visitors interact with,
+        // so they are intentionally public and use "__return_true" as documented for
+        // unauthenticated endpoints. Access is constrained in the callbacks instead:
+        // only chatbots explicitly marked active/public are exposed, all input is
+        // sanitized, and the chat endpoint is rate limited per IP to prevent abuse.
         register_rest_route('magicassistant/v1', '/public/chatbots', array(
             'methods' => 'GET',
             'callback' => array($this, 'get_public_chatbots'),
@@ -528,6 +527,14 @@ class AI_Provider {
             'methods' => 'POST',
             'callback' => array($this, 'handle_chatbot_chat'),
             'permission_callback' => '__return_true',
+            'args' => array(
+                'chatbot_id' => array(
+                    'required'          => true,
+                    'validate_callback' => function ($value) {
+                        return is_numeric($value);
+                    },
+                ),
+            ),
         ));
 
         // BRICKS FRAMEWORK CONTEXT ENDPOINT (for AI Site Builder)
@@ -537,28 +544,8 @@ class AI_Provider {
             'permission_callback' => array($this, 'check_permissions'),
         ));
 
-        // FRAMEWORK CSS ENDPOINT (for MagicDash preview)
-        register_rest_route('magicassistant/v1', '/framework-css', array(
-            'methods'             => 'GET',
-            'callback'            => array($this, 'get_framework_css'),
-            'permission_callback' => array($this, 'check_magicdash_permissions'),
-            'args'                => array(
-                'framework' => array(
-                    'required' => false,
-                    'type'     => 'string',
-                    'enum'     => array('acss', 'coreframework', 'none'),
-                    'default'  => 'acss',
-                ),
-                'include_bricks' => array(
-                    'required' => false,
-                    'type'     => 'string',
-                    'default'  => 'true',
-                    'description' => 'Include Bricks frontend CSS and theme styles',
-                ),
-            ),
-        ));
     }
-    
+
     public function handle_chat($request) {
         // Increase PHP execution time limit for content generation
         // Each request should have its own timeout, this just ensures PHP doesn't kill the script
@@ -975,8 +962,8 @@ class AI_Provider {
                         );
                     }
                 }
-                \mat_debug_log('[MagicAssistant] generate_image with attached files: ' . json_encode($log_data));
-                \mat_debug_log('[MagicAssistant] Total input images: ' . count($input_images));
+                \magica_debug_log('[MagicAssistant] generate_image with attached files: ' . json_encode($log_data));
+                \magica_debug_log('[MagicAssistant] Total input images: ' . count($input_images));
             }
             
             $user_id = get_current_user_id();
@@ -999,76 +986,41 @@ class AI_Provider {
             // Get API key for the selected provider
             $api_key = $this->get_api_key($provider);
             
-            // Determine endpoint and headers based on provider
+            // Route to the correct provider API and normalize the response into a
+            // list of images (each entry has 'b64_json' or 'url'). The old unified
+            // proxy used to translate a single flat payload into each provider's
+            // native format; with direct API calls we must build the right request
+            // and parse the right response per provider.
             if ($provider === 'google') {
-                $google_model = $this->settings['google_model'] ?? 'gemini-2.0-flash';
-                $proxy_endpoint = $this->google_proxy_url . '/models/' . $google_model . ':generateContent?key=' . urlencode($api_key);
-                $headers = array(
-                    'Content-Type' => 'application/json',
-                );
+                // Newest "Nano Banana" image models use the generateContent
+                // endpoint. Upgrade deprecated / non-image model ids (e.g. an old
+                // text model from settings) to the current default so we never
+                // send a non-image model to the image flow.
+                if (strpos($model, 'image') === false) {
+                    $model = 'gemini-3.1-flash-image';
+                }
+                $images = $this->generate_image_google($prompt, $model, $size, $api_key, $input_images);
             } else {
-                // OpenAI
-                $proxy_endpoint = $this->openai_proxy_url . '/images/generations';
-                $headers = array(
-                    'Content-Type' => 'application/json',
-                    'Authorization' => 'Bearer ' . $api_key,
-                );
-            }
-            
-            $request_data = array(
-                'prompt' => $prompt,
-                'model' => $model,
-                'size' => $size,
-                'format' => $format,
-                'quality' => $quality,
-                'style' => $style,
-                'n' => $n
-            );
-            
-            // Add input images if provided (for image editing/enhancement/combining)
-            if (!empty($input_images)) {
-                $request_data['input_images'] = $input_images;
-                \mat_debug_log('[MagicAssistant] Sending image generation request with ' . count($input_images) . ' input images');
-            }
-            
-            \mat_debug_log('[MagicAssistant] Image generation request data keys: ' . implode(', ', array_keys($request_data)));
-            \mat_debug_log('[MagicAssistant] Request payload (summary): prompt_length=' . strlen($prompt) . ', has_input_images=' . (empty($input_images) ? 'no' : 'yes (' . count($input_images) . ')'));
-            
-            // Make request to proxy
-            // Note: Image editing with input images can take 3+ minutes via OpenAI Responses API
-            $response = wp_remote_post($proxy_endpoint, array(
-                'headers' => $headers,
-                'body' => wp_json_encode($request_data),
-                'timeout' => 300, // 5 minutes timeout for image editing/combining which can be slow
-            ));
-
-            if (is_wp_error($response)) {
-                \mat_debug_log('[MagicAssistant] Proxy request error: ' . $response->get_error_message());
-                return new WP_Error('proxy_error', $response->get_error_message(), array('status' => 500));
+                // OpenAI: newest GPT Image models. Upgrade legacy DALL·E ids.
+                if (strpos($model, 'gpt-image') !== 0) {
+                    $model = 'gpt-image-2';
+                }
+                $images = $this->generate_image_openai($prompt, $model, $size, $format, $quality, $api_key, $input_images);
             }
 
-            $response_code = wp_remote_retrieve_response_code($response);
-            $response_body = wp_remote_retrieve_body($response);
-            
-            \mat_debug_log('[MagicAssistant] API response code: ' . $response_code);
-            \mat_debug_log('[MagicAssistant] API response body length: ' . strlen($response_body));
-
-            $result = json_decode($response_body, true);
-
-            if ($response_code !== 200) {
-                $error_message = $result['error']['message'] ?? $result['error'] ?? $result['message'] ?? 'Image generation failed';
-                \mat_debug_log('[MagicAssistant] Generation failed with error: ' . $error_message);
-                return new WP_Error('generation_failed', $error_message, array('status' => $response_code));
+            if (is_wp_error($images)) {
+                \magica_debug_log('[MagicAssistant] Image generation failed: ' . $images->get_error_message());
+                return $images;
             }
 
-            \mat_debug_log('[MagicAssistant] Generation successful, processing images...');
-
-            // Extract image URLs from response (direct API response format)
-            $images = $result['data'] ?? array();
-            
             if (empty($images)) {
                 return new WP_Error('no_images', 'No images generated', array('status' => 500));
             }
+
+            // Direct API calls don't return our proxy's billing metadata.
+            $result = array();
+
+            \magica_debug_log('[MagicAssistant] Generation successful, processing ' . count($images) . ' image(s)...');
             
             // Process images: convert base64 to actual files and return URLs
             $processed_images = array();
@@ -1131,8 +1083,251 @@ class AI_Provider {
     }
     
     /**
+     * Generate / edit an image with OpenAI's GPT Image models.
+     *
+     * Uses /images/generations (JSON) for text-to-image, and /images/edits
+     * (multipart) when input images are supplied for editing/combining.
+     *
+     * @param string $prompt       Image prompt / edit instructions.
+     * @param string $model        GPT Image model id (e.g. gpt-image-2).
+     * @param string $size         Requested size as WIDTHxHEIGHT.
+     * @param string $format       Desired output format (png|jpeg|webp).
+     * @param string $quality      Quality hint (mapped to GPT Image scale).
+     * @param string $api_key      OpenAI API key.
+     * @param array  $input_images Optional input images for editing.
+     * @return array|WP_Error List of images (b64_json) or error.
+     */
+    private function generate_image_openai($prompt, $model, $size, $format, $quality, $api_key, $input_images = array()) {
+        // GPT Image quality is low|medium|high|auto. Map legacy DALL·E values.
+        $quality_map = array('standard' => 'medium', 'hd' => 'high', 'vivid' => 'high', 'natural' => 'medium');
+        if (isset($quality_map[$quality])) {
+            $quality = $quality_map[$quality];
+        } elseif (!in_array($quality, array('low', 'medium', 'high', 'auto'), true)) {
+            $quality = 'high';
+        }
+
+        // GPT Image supports png, jpeg and webp output.
+        $output_format = in_array($format, array('png', 'jpeg', 'webp'), true) ? $format : 'png';
+
+        // GPT Image only supports a fixed set of sizes (plus "auto").
+        $gpt_size = $this->map_size_for_openai($size);
+
+        $headers = array(
+            'Authorization' => 'Bearer ' . $api_key,
+        );
+
+        if (!empty($input_images)) {
+            // Image editing/combining -> multipart upload to /images/edits.
+            $boundary = wp_generate_password(24, false);
+            $eol = "\r\n";
+            $fields = array(
+                'model'         => $model,
+                'prompt'        => $prompt,
+                'size'          => $gpt_size,
+                'quality'       => $quality,
+                'output_format' => $output_format,
+            );
+
+            $body = '';
+            foreach ($fields as $name => $value) {
+                $body .= '--' . $boundary . $eol;
+                $body .= 'Content-Disposition: form-data; name="' . $name . '"' . $eol . $eol;
+                $body .= $value . $eol;
+            }
+            foreach (array_values($input_images) as $idx => $img) {
+                $binary = base64_decode($img['data']);
+                $mime = $img['mime_type'] ?? 'image/png';
+                $ext = $this->image_mime_to_ext($mime);
+                $body .= '--' . $boundary . $eol;
+                $body .= 'Content-Disposition: form-data; name="image[]"; filename="image_' . $idx . '.' . $ext . '"' . $eol;
+                $body .= 'Content-Type: ' . $mime . $eol . $eol;
+                $body .= $binary . $eol;
+            }
+            $body .= '--' . $boundary . '--' . $eol;
+
+            $headers['Content-Type'] = 'multipart/form-data; boundary=' . $boundary;
+            $endpoint = $this->openai_proxy_url . '/images/edits';
+            $response = wp_remote_post($endpoint, array(
+                'headers' => $headers,
+                'body'    => $body,
+                'timeout' => 300,
+            ));
+        } else {
+            $request_data = array(
+                'model'         => $model,
+                'prompt'        => $prompt,
+                'size'          => $gpt_size,
+                'quality'       => $quality,
+                'output_format' => $output_format,
+                'n'             => 1,
+            );
+            $headers['Content-Type'] = 'application/json';
+            $endpoint = $this->openai_proxy_url . '/images/generations';
+            $response = wp_remote_post($endpoint, array(
+                'headers' => $headers,
+                'body'    => wp_json_encode($request_data),
+                'timeout' => 300,
+            ));
+        }
+
+        if (is_wp_error($response)) {
+            return new WP_Error('proxy_error', $response->get_error_message(), array('status' => 500));
+        }
+
+        $response_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        $decoded = json_decode($response_body, true);
+
+        if ($response_code !== 200) {
+            $error_message = $decoded['error']['message'] ?? $decoded['error'] ?? 'Image generation failed';
+            return new WP_Error('generation_failed', $error_message, array('status' => $response_code));
+        }
+
+        $images = array();
+        foreach (($decoded['data'] ?? array()) as $item) {
+            if (!empty($item['b64_json'])) {
+                $images[] = array('b64_json' => $item['b64_json'], 'revised_prompt' => $item['revised_prompt'] ?? null);
+            } elseif (!empty($item['url'])) {
+                $images[] = array('url' => $item['url'], 'revised_prompt' => $item['revised_prompt'] ?? null);
+            }
+        }
+
+        return $images;
+    }
+
+    /**
+     * Generate / edit an image with Google's Gemini "Nano Banana" image models.
+     *
+     * Uses the generateContent endpoint. Input images are passed as inline_data
+     * parts, which lets the same call handle text-to-image, editing and combining.
+     *
+     * @param string $prompt       Image prompt / edit instructions.
+     * @param string $model        Gemini image model id (e.g. gemini-3.1-flash-image).
+     * @param string $size         Requested size as WIDTHxHEIGHT (mapped to aspect ratio).
+     * @param string $api_key      Google API key.
+     * @param array  $input_images Optional input images for editing.
+     * @return array|WP_Error List of images (b64_json) or error.
+     */
+    private function generate_image_google($prompt, $model, $size, $api_key, $input_images = array()) {
+        $parts = array(array('text' => $prompt));
+        foreach ($input_images as $img) {
+            $parts[] = array(
+                'inline_data' => array(
+                    'mime_type' => $img['mime_type'] ?? 'image/png',
+                    'data'      => $img['data'],
+                ),
+            );
+        }
+
+        $request_data = array(
+            'contents' => array(
+                array('parts' => $parts),
+            ),
+            'generationConfig' => array(
+                'responseModalities' => array('TEXT', 'IMAGE'),
+                'imageConfig'        => array(
+                    'aspectRatio' => $this->map_size_to_aspect_ratio($size),
+                ),
+            ),
+        );
+
+        $endpoint = $this->google_proxy_url . '/models/' . $model . ':generateContent?key=' . urlencode($api_key);
+        $response = wp_remote_post($endpoint, array(
+            'headers' => array('Content-Type' => 'application/json'),
+            'body'    => wp_json_encode($request_data),
+            'timeout' => 300,
+        ));
+
+        if (is_wp_error($response)) {
+            return new WP_Error('proxy_error', $response->get_error_message(), array('status' => 500));
+        }
+
+        $response_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        $decoded = json_decode($response_body, true);
+
+        if ($response_code !== 200) {
+            $error_message = $decoded['error']['message'] ?? 'Image generation failed';
+            return new WP_Error('generation_failed', $error_message, array('status' => $response_code));
+        }
+
+        $images = array();
+        foreach (($decoded['candidates'] ?? array()) as $candidate) {
+            foreach (($candidate['content']['parts'] ?? array()) as $part) {
+                // The API returns camelCase inlineData; accept snake_case too.
+                $inline = $part['inlineData'] ?? $part['inline_data'] ?? null;
+                if ($inline && !empty($inline['data'])) {
+                    $images[] = array('b64_json' => $inline['data']);
+                }
+            }
+        }
+
+        return $images;
+    }
+
+    /**
+     * Map a WIDTHxHEIGHT size string to the closest OpenAI GPT Image size.
+     *
+     * @param string $size Size as WIDTHxHEIGHT.
+     * @return string A size GPT Image accepts (or "auto").
+     */
+    private function map_size_for_openai($size) {
+        switch ($size) {
+            case '1792x1024':
+            case '1536x1024':
+                return '1536x1024';
+            case '1024x1792':
+            case '1024x1536':
+                return '1024x1536';
+            case '1024x1024':
+                return '1024x1024';
+            default:
+                return 'auto';
+        }
+    }
+
+    /**
+     * Map a WIDTHxHEIGHT size string to a Gemini aspect ratio.
+     *
+     * @param string $size Size as WIDTHxHEIGHT.
+     * @return string A Gemini-supported aspect ratio (e.g. "1:1").
+     */
+    private function map_size_to_aspect_ratio($size) {
+        switch ($size) {
+            case '1792x1024':
+                return '16:9';
+            case '1024x1792':
+                return '9:16';
+            case '1536x1024':
+                return '3:2';
+            case '1024x1536':
+                return '2:3';
+            case '1024x1024':
+            default:
+                return '1:1';
+        }
+    }
+
+    /**
+     * Map an image MIME type to a file extension for multipart uploads.
+     *
+     * @param string $mime MIME type.
+     * @return string File extension without the dot.
+     */
+    private function image_mime_to_ext($mime) {
+        $map = array(
+            'image/png'  => 'png',
+            'image/jpeg' => 'jpg',
+            'image/jpg'  => 'jpg',
+            'image/webp' => 'webp',
+            'image/gif'  => 'gif',
+        );
+        return $map[$mime] ?? 'png';
+    }
+
+    /**
      * Process generated image: convert base64 to file and return URL
-     * 
+     *
      * @param array $image Image data with url or b64_json
      * @param string $format Desired output format (png, jpeg, webp)
      * @param string $provider Provider name (for logging)
@@ -1171,7 +1366,7 @@ class AI_Provider {
             }
             
             if (empty($base64_data)) {
-                \mat_debug_log('[MagicAssistant] No base64 data found in image response');
+                \magica_debug_log('[MagicAssistant] No base64 data found in image response');
                 return new WP_Error('invalid_image_data', 'No valid image data found');
             }
             
@@ -1233,7 +1428,7 @@ class AI_Provider {
             $seo_alt = $seo_metadata['alt'];
             
             // Log success
-            \mat_debug_log('[MagicAssistant] Image processed successfully: ' . json_encode(array(
+            \magica_debug_log('[MagicAssistant] Image processed successfully: ' . json_encode(array(
                 'provider' => $provider,
                 'model' => $model,
                 'format' => $format,
@@ -1252,7 +1447,7 @@ class AI_Provider {
             );
             
         } catch (Exception $e) {
-            \mat_debug_log('[MagicAssistant] Image processing failed: ' . json_encode(array(
+            \magica_debug_log('[MagicAssistant] Image processing failed: ' . json_encode(array(
                 'error' => $e->getMessage(),
                 'provider' => $provider,
                 'model' => $model
@@ -1840,13 +2035,13 @@ class AI_Provider {
         // Store current agent mode for tool filtering
         $this->current_agent_mode = $agent_mode;
         $this->current_page_context = $page_context; // Store page context for framework injection
-        \mat_debug_log('=== HANDLE CHAT MODE ===');
-        \mat_debug_log('Agent Mode: ' . ($agent_mode ?: 'null'));
-        \mat_debug_log('Provider: ' . $provider);
-        \mat_debug_log('Session ID: ' . $session_id);
+        \magica_debug_log('=== HANDLE CHAT MODE ===');
+        \magica_debug_log('Agent Mode: ' . ($agent_mode ?: 'null'));
+        \magica_debug_log('Provider: ' . $provider);
+        \magica_debug_log('Session ID: ' . $session_id);
         if ($agent_mode === 'bricks' && !empty($page_context) && is_array($page_context)) {
             $framework = $page_context['bricks_framework'] ?? 'NOT SET';
-            \mat_debug_log('🔧 Bricks Framework from page_context: ' . $framework);
+            \magica_debug_log('🔧 Bricks Framework from page_context: ' . $framework);
         }
         
         // Limit the amount of history we send to the model to save tokens
@@ -2048,12 +2243,12 @@ class AI_Provider {
         // Store current agent mode for tool filtering
         $this->current_agent_mode = $agent_mode;
         $this->current_page_context = $page_context; // Store page context for framework injection
-        \mat_debug_log('=== HANDLE AGENT MODE ===');
-        \mat_debug_log('Agent Mode: ' . ($agent_mode ?: 'null'));
-        \mat_debug_log('Provider: ' . $provider);
-        \mat_debug_log('Session ID: ' . $session_id);
+        \magica_debug_log('=== HANDLE AGENT MODE ===');
+        \magica_debug_log('Agent Mode: ' . ($agent_mode ?: 'null'));
+        \magica_debug_log('Provider: ' . $provider);
+        \magica_debug_log('Session ID: ' . $session_id);
         if ($agent_mode === 'bricks') {
-            \mat_debug_log('✅ BRICKS MODE DETECTED - Will filter to only Bricks tools');
+            \magica_debug_log('✅ BRICKS MODE DETECTED - Will filter to only Bricks tools');
         }
         
         // Limit history length to avoid oversized prompts while keeping recent context
@@ -2393,8 +2588,8 @@ class AI_Provider {
         
         // BRICKS MODE: Use Bricks Component Library MCP tools
         if ($agent_mode === 'bricks') {
-            \mat_debug_log('✅ BUILDING BRICKS MODE SYSTEM MESSAGE');
-            \mat_debug_log('Bricks mode detected - Using Bricks-specific system message and tool filtering');
+            \magica_debug_log('✅ BUILDING BRICKS MODE SYSTEM MESSAGE');
+            \magica_debug_log('Bricks mode detected - Using Bricks-specific system message and tool filtering');
             
             // Get framework preference from page context if available
             $framework_preference = '';
@@ -2877,7 +3072,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             ];
         } catch (Exception $e) {
             // Log error but don't fail the request - just continue without agent context
-            \mat_debug_log('Error getting agent context: ' . $e->getMessage());
+            \magica_debug_log('Error getting agent context: ' . $e->getMessage());
             return [];
         }
     }
@@ -2937,7 +3132,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             ];
         } catch (Exception $e) {
             // Log error but don't fail the request - just continue without agent context
-            \mat_debug_log('Error getting agent context by ID: ' . $e->getMessage());
+            \magica_debug_log('Error getting agent context by ID: ' . $e->getMessage());
             return [];
         }
     }
@@ -3205,7 +3400,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             ));
 
             if (is_wp_error($response)) {
-                \mat_debug_log('[AI_Provider] Simple AI call error: ' . $response->get_error_message());
+                \magica_debug_log('[AI_Provider] Simple AI call error: ' . $response->get_error_message());
                 return null;
             }
 
@@ -3213,7 +3408,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $response_body = wp_remote_retrieve_body($response);
 
             if ($status_code !== 200) {
-                \mat_debug_log('[AI_Provider] Simple AI call failed with status ' . $status_code . ': ' . $response_body);
+                \magica_debug_log('[AI_Provider] Simple AI call failed with status ' . $status_code . ': ' . $response_body);
                 return null;
             }
 
@@ -3242,11 +3437,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                 }
             }
 
-            \mat_debug_log('[AI_Provider] Simple AI call: Unable to extract text from response');
+            \magica_debug_log('[AI_Provider] Simple AI call: Unable to extract text from response');
             return null;
 
         } catch (Exception $e) {
-            \mat_debug_log('[AI_Provider] Simple AI call exception: ' . $e->getMessage());
+            \magica_debug_log('[AI_Provider] Simple AI call exception: ' . $e->getMessage());
             return null;
         }
     }
@@ -3311,16 +3506,16 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $is_bricks_mode = ($this->current_agent_mode === 'bricks');
             $should_get_tools = $is_bricks_mode || $is_using_default_message;
             
-            \mat_debug_log('=== TOOL SELECTION FOR OPENAI ===');
-            \mat_debug_log('is_bricks_mode: ' . ($is_bricks_mode ? 'true' : 'false'));
-            \mat_debug_log('is_using_default_message: ' . ($is_using_default_message ? 'true' : 'false'));
-            \mat_debug_log('should_get_tools: ' . ($should_get_tools ? 'true' : 'false'));
+            \magica_debug_log('=== TOOL SELECTION FOR OPENAI ===');
+            \magica_debug_log('is_bricks_mode: ' . ($is_bricks_mode ? 'true' : 'false'));
+            \magica_debug_log('is_using_default_message: ' . ($is_using_default_message ? 'true' : 'false'));
+            \magica_debug_log('should_get_tools: ' . ($should_get_tools ? 'true' : 'false'));
             
             $tools_for_request = $should_get_tools ? $this->get_mcp_tools_for_openai() : [];
             
-            \mat_debug_log('Tools count: ' . count($tools_for_request));
+            \magica_debug_log('Tools count: ' . count($tools_for_request));
             if (!empty($tools_for_request)) {
-                \mat_debug_log('Tools: ' . json_encode(array_column($tools_for_request, 'name')));
+                \magica_debug_log('Tools: ' . json_encode(array_column($tools_for_request, 'name')));
             }
 
             $request_data = array(
@@ -3396,7 +3591,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
 
             // Handle timeout or empty responses
             if ($data === null) {
-                \mat_debug_log('AI_Provider - FAILED RESPONSE DEBUG: ' . json_encode([
+                \magica_debug_log('AI_Provider - FAILED RESPONSE DEBUG: ' . json_encode([
                     'body_length' => strlen($body),
                     'body_preview' => substr($body, 0, 1000),
                     'response_code' => $response_code,
@@ -3698,24 +3893,24 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $is_using_default_message = strpos($system_message, 'You are MagicAssistant') !== false;
         $is_bricks_mode = ($this->current_agent_mode === 'bricks');
 
-        \mat_debug_log('=== TOOL SELECTION FOR ANTHROPIC ===');
-        \mat_debug_log('is_bricks_mode: ' . ($is_bricks_mode ? 'true' : 'false'));
-        \mat_debug_log('is_using_agent_context: ' . ($is_using_agent_context ? 'true' : 'false'));
-        \mat_debug_log('is_using_default_message: ' . ($is_using_default_message ? 'true' : 'false'));
+        \magica_debug_log('=== TOOL SELECTION FOR ANTHROPIC ===');
+        \magica_debug_log('is_bricks_mode: ' . ($is_bricks_mode ? 'true' : 'false'));
+        \magica_debug_log('is_using_agent_context: ' . ($is_using_agent_context ? 'true' : 'false'));
+        \magica_debug_log('is_using_default_message: ' . ($is_using_default_message ? 'true' : 'false'));
 
         if ($is_using_agent_context) {
             $tools = []; // No tools for AI Agents - they should have clean custom messages
-            \mat_debug_log('No tools - using agent context');
+            \magica_debug_log('No tools - using agent context');
         } elseif ($is_bricks_mode || $is_using_default_message) {
             // In Bricks mode or default message, get tools (will be filtered in Bricks mode)
             $tools = $this->get_mcp_tools_for_anthropic();
-            \mat_debug_log('Tools count: ' . count($tools));
+            \magica_debug_log('Tools count: ' . count($tools));
             if (!empty($tools)) {
-                \mat_debug_log('Tools: ' . json_encode(array_column($tools, 'name')));
+                \magica_debug_log('Tools: ' . json_encode(array_column($tools, 'name')));
             }
         } else {
             $tools = []; // No tools for custom messages either
-            \mat_debug_log('No tools - custom message');
+            \magica_debug_log('No tools - custom message');
         }
 
         $request_data = array(
@@ -3789,7 +3984,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         // Handle timeout or empty responses
         if ($data === null) {
-            \mat_debug_log('AI_Provider - FAILED RESPONSE DEBUG (Anthropic): ' . json_encode([
+            \magica_debug_log('AI_Provider - FAILED RESPONSE DEBUG (Anthropic): ' . json_encode([
                 'body_length' => strlen($body),
                 'body_preview' => substr($body, 0, 1000),
                 'response_code' => wp_remote_retrieve_response_code($response),
@@ -4145,7 +4340,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         // Handle timeout or empty responses
         if ($data === null) {
-            \mat_debug_log('AI_Provider - FAILED RESPONSE DEBUG (OpenRouter): ' . json_encode([
+            \magica_debug_log('AI_Provider - FAILED RESPONSE DEBUG (OpenRouter): ' . json_encode([
                 'body_length' => strlen($body),
                 'body_preview' => substr($body, 0, 1000),
                 'response_code' => wp_remote_retrieve_response_code($response),
@@ -4208,7 +4403,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         // BRICKS MODE: Only return Bricks-specific tools
         if ($this->current_agent_mode === 'bricks') {
-            \mat_debug_log('BRICKS MODE: Filtering to only Bricks component tools');
+            \magica_debug_log('BRICKS MODE: Filtering to only Bricks component tools');
             $bricks_tools = ['bricks_get_component', 'bricks_insert_component'];
             $openai_tools = [];
             
@@ -4225,13 +4420,13 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         'description' => $description,
                         'parameters'  => $schema,
                     );
-                    \mat_debug_log('BRICKS MODE: Added tool: ' . $tool_name);
+                    \magica_debug_log('BRICKS MODE: Added tool: ' . $tool_name);
                 } else {
-                    \mat_debug_log('BRICKS MODE: WARNING - Tool not found: ' . $tool_name);
+                    \magica_debug_log('BRICKS MODE: WARNING - Tool not found: ' . $tool_name);
                 }
             }
             
-            \mat_debug_log('BRICKS MODE: Total Bricks tools available: ' . count($openai_tools));
+            \magica_debug_log('BRICKS MODE: Total Bricks tools available: ' . count($openai_tools));
             return $openai_tools;
         }
         
@@ -4313,7 +4508,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         // BRICKS MODE: Only return Bricks-specific tools
         if ($this->current_agent_mode === 'bricks') {
-            \mat_debug_log('BRICKS MODE: Filtering to only Bricks component tools (Google)');
+            \magica_debug_log('BRICKS MODE: Filtering to only Bricks component tools (Google)');
             $bricks_tools = ['bricks_get_component', 'bricks_insert_component'];
             $google_tools = [];
             
@@ -4329,11 +4524,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         'description' => $description,
                         'parameters'  => $schema,
                     );
-                    \mat_debug_log('BRICKS MODE: Added tool (Google): ' . $tool_name);
+                    \magica_debug_log('BRICKS MODE: Added tool (Google): ' . $tool_name);
                 }
             }
             
-            \mat_debug_log('BRICKS MODE: Total Bricks tools available (Google): ' . count($google_tools));
+            \magica_debug_log('BRICKS MODE: Total Bricks tools available (Google): ' . count($google_tools));
             return $google_tools;
         }
         
@@ -4412,7 +4607,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         
         // BRICKS MODE: Only return Bricks-specific tools
         if ($this->current_agent_mode === 'bricks') {
-            \mat_debug_log('BRICKS MODE: Filtering to only Bricks component tools (Anthropic)');
+            \magica_debug_log('BRICKS MODE: Filtering to only Bricks component tools (Anthropic)');
             $bricks_tools = ['bricks_get_component', 'bricks_insert_component'];
             $anthropic_tools = [];
             
@@ -4428,11 +4623,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                         'description'  => $description,
                         'input_schema' => $schema,
                     );
-                    \mat_debug_log('BRICKS MODE: Added tool (Anthropic): ' . $tool_name);
+                    \magica_debug_log('BRICKS MODE: Added tool (Anthropic): ' . $tool_name);
                 }
             }
             
-            \mat_debug_log('BRICKS MODE: Total Bricks tools available (Anthropic): ' . count($anthropic_tools));
+            \magica_debug_log('BRICKS MODE: Total Bricks tools available (Anthropic): ' . count($anthropic_tools));
             return $anthropic_tools;
         }
         
@@ -4515,16 +4710,16 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
                     $framework_preference = $this->current_page_context['bricks_framework'] ?? null;
                     if (!empty($framework_preference) && in_array($framework_preference, array('Native', 'ACSS', 'CoreFramework', 'ATF'))) {
                         $tool_args['framework'] = $framework_preference;
-                        \mat_debug_log('🔧 Auto-injecting framework from page_context: ' . $framework_preference);
+                        \magica_debug_log('🔧 Auto-injecting framework from page_context: ' . $framework_preference);
                     } else {
                         // Default to Native if not specified
                         $tool_args['framework'] = 'Native';
-                        \mat_debug_log('🔧 Using default framework (preference not found): Native');
+                        \magica_debug_log('🔧 Using default framework (preference not found): Native');
                     }
                 } else {
                     // Default to Native if no page_context available
                     $tool_args['framework'] = 'Native';
-                    \mat_debug_log('🔧 Using default framework (no page_context): Native');
+                    \magica_debug_log('🔧 Using default framework (no page_context): Native');
                 }
             }
         }
@@ -4682,7 +4877,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'enable_delete_tools' => isset($this->settings['enable_delete_tools']) ? (bool) $this->settings['enable_delete_tools'] : false,
             'agent_mode' => $this->settings['agent_mode'] ?? 'always',
             'max_agent_iterations' => $this->settings['max_agent_iterations'] ?? 10,
-            'enable_sql_queries' => isset($this->settings['enable_sql_queries']) ? (bool) $this->settings['enable_sql_queries'] : false,
             'max_response_tokens' => intval($this->settings['max_response_tokens'] ?? 1500),
             'conversation_history_limit' => intval($this->settings['conversation_history_limit'] ?? 20),
             'manual_competitors' => $this->settings['manual_competitors'] ?? '',
@@ -4699,7 +4893,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             'floating_chat_frontend_urls' => $this->settings['floating_chat_frontend_urls'] ?? '',
             'floating_chat_admin_pages' => $this->settings['floating_chat_admin_pages'] ?? 'all',
             'floating_chat_specific_admin_pages' => isset($this->settings['floating_chat_specific_admin_pages']) ? json_decode($this->settings['floating_chat_specific_admin_pages'], true) : [],
-            'enable_dangerous_sql_queries' => isset($this->settings['enable_dangerous_sql_queries']) ? (bool) $this->settings['enable_dangerous_sql_queries'] : false,
             'current_credits' => isset($this->settings['current_credits']) ? $this->settings['current_credits'] : null,
             'floating_chat_button_color' => $this->settings['floating_chat_button_color'] ?? 'blue',
             'floating_chat_button_icon'  => $this->settings['floating_chat_button_icon']  ?? 'chat',
@@ -4825,11 +5018,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             }
         }
         
-        // SQL query execution toggle
-        if (isset($data['enable_sql_queries'])) {
-            $this->db->save_setting('enable_sql_queries', (bool) $data['enable_sql_queries']);
-        }
-        
         // Streaming enabled toggle
         if (isset($data['streaming_enabled'])) {
             $this->db->save_setting('streaming_enabled', (bool) $data['streaming_enabled']);
@@ -4930,11 +5118,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             $valid_pages = ['dashboard', 'posts', 'pages', 'media', 'comments', 'appearance', 'plugins', 'users', 'tools', 'settings', 'woocommerce'];
             $filtered_pages = array_intersect($pages, $valid_pages);
             $this->db->save_setting('floating_chat_specific_admin_pages', json_encode($filtered_pages));
-        }
-        
-        // Dangerous SQL query execution toggle
-        if (isset($data['enable_dangerous_sql_queries'])) {
-            $this->db->save_setting('enable_dangerous_sql_queries', (bool) $data['enable_dangerous_sql_queries']);
         }
         
         // Refresh settings from database
@@ -5161,183 +5344,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     }
 
     /**
-     * Get framework CSS files for MagicDash preview
-     * Returns the compiled CSS from AutomaticCSS or CoreFramework
-     *
-     * @param WP_REST_Request $request The REST request object.
-     * @return WP_REST_Response The response with CSS content.
-     */
-    public function get_framework_css($request) {
-        $framework = $request->get_param('framework');
-        $include_bricks = $request->get_param('include_bricks') === 'true' || $request->get_param('include_bricks') === '1';
-        $css = '';
-        $files_included = array();
-        $debug_info = array();
-
-        if ($framework === 'acss') {
-            // Read ALL CSS files from /wp-content/uploads/automatic-css/
-            $upload_dir = wp_upload_dir();
-            $acss_dir = $upload_dir['basedir'] . '/automatic-css/';
-            $debug_info['acss_dir'] = $acss_dir;
-            $debug_info['dir_exists'] = is_dir($acss_dir);
-
-            if (is_dir($acss_dir)) {
-                // Get all CSS files in the directory AND subdirectories
-                $css_files = array();
-
-                // Root level CSS files
-                $root_files = glob($acss_dir . '*.css');
-                if ($root_files) {
-                    $css_files = array_merge($css_files, $root_files);
-                }
-
-                // Check for subdirectories and get their CSS files too
-                $subdirs = glob($acss_dir . '*', GLOB_ONLYDIR);
-                if ($subdirs) {
-                    foreach ($subdirs as $subdir) {
-                        $subdir_files = glob($subdir . '/*.css');
-                        if ($subdir_files) {
-                            $css_files = array_merge($css_files, $subdir_files);
-                        }
-                    }
-                }
-
-                $debug_info['files_found'] = count($css_files);
-                $debug_info['all_files'] = array_map('basename', $css_files);
-
-                // Sort to ensure consistent order (variables first)
-                usort($css_files, function($a, $b) {
-                    // Prioritize variables file first
-                    if (strpos($a, 'variables') !== false) return -1;
-                    if (strpos($b, 'variables') !== false) return 1;
-                    return strcmp($a, $b);
-                });
-
-                foreach ($css_files as $file_path) {
-                    if (file_exists($file_path)) {
-                        $file_name = basename($file_path);
-                        // Include subdirectory name if in a subdirectory
-                        $relative_path = str_replace($acss_dir, '', $file_path);
-                        $content = file_get_contents($file_path); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
-                        $css .= "/* ACSS: {$relative_path} */\n" . $content . "\n\n";
-                        $files_included[] = $relative_path;
-                    }
-                }
-            }
-        } elseif ($framework === 'coreframework') {
-            // CoreFramework stores compiled CSS in this option
-            $cf_css = get_option('core_framework_selected_preset_backup', '');
-            if (!empty($cf_css)) {
-                $css = "/* CoreFramework Preset CSS */\n" . $cf_css;
-                $files_included[] = 'core_framework_selected_preset_backup';
-            }
-        }
-
-        // Optionally include Bricks theme styles
-        if ($include_bricks) {
-            $bricks_css = $this->get_bricks_frontend_css();
-            if (!empty($bricks_css)) {
-                $css = "/* Bricks Frontend CSS */\n" . $bricks_css . "\n\n" . $css;
-                $files_included[] = 'bricks-frontend';
-            }
-        }
-
-        if (empty($css)) {
-            return new WP_REST_Response(array(
-                'success'   => false,
-                'error'     => 'No CSS found for framework: ' . $framework,
-                'framework' => $framework,
-                'debug'     => $debug_info,
-            ), 404);
-        }
-
-        return new WP_REST_Response(array(
-            'success'        => true,
-            'framework'      => $framework,
-            'css'            => $css,
-            'size_kb'        => round(strlen($css) / 1024, 2),
-            'files_included' => $files_included,
-            'debug'          => $debug_info,
-        ), 200);
-    }
-
-    /**
-     * Get Bricks frontend CSS for preview rendering
-     * Includes theme styles, custom CSS, and global settings
-     */
-    private function get_bricks_frontend_css() {
-        if (!defined('BRICKS_VERSION')) {
-            return '';
-        }
-
-        $css_parts = array();
-
-        // 1. Bricks frontend CSS file
-        $bricks_css_path = BRICKS_PATH . 'assets/css/frontend.min.css';
-        if (file_exists($bricks_css_path)) {
-            $css_parts[] = file_get_contents($bricks_css_path); // phpcs:ignore
-        }
-
-        // 2. Bricks theme styles (custom CSS from theme settings)
-        $theme_styles = get_option('bricks_theme_styles', array());
-        if (!empty($theme_styles) && is_array($theme_styles)) {
-            foreach ($theme_styles as $style_name => $style_data) {
-                if (!empty($style_data['css'])) {
-                    $css_parts[] = "/* Bricks Theme Style: {$style_name} */\n" . $style_data['css'];
-                }
-            }
-        }
-
-        // 3. Bricks global CSS (from Settings > Custom Code > Custom CSS)
-        $global_css = get_option('bricks_global_css', '');
-        if (!empty($global_css)) {
-            $css_parts[] = "/* Bricks Global CSS */\n" . $global_css;
-        }
-
-        // 4. Bricks color palette as CSS variables
-        $color_palette = get_option('bricks_color_palette', array());
-        if (!empty($color_palette) && is_array($color_palette)) {
-            $color_vars = ":root {\n";
-            foreach ($color_palette as $color) {
-                if (!empty($color['id']) && !empty($color['raw'])) {
-                    $var_name = '--bricks-color-' . sanitize_title($color['id']);
-                    $color_vars .= "  {$var_name}: {$color['raw']};\n";
-                }
-                if (!empty($color['name']) && !empty($color['raw'])) {
-                    $var_name = '--bricks-' . sanitize_title($color['name']);
-                    $color_vars .= "  {$var_name}: {$color['raw']};\n";
-                }
-            }
-            $color_vars .= "}\n";
-            $css_parts[] = "/* Bricks Color Palette */\n" . $color_vars;
-        }
-
-        // 5. Bricks typography settings
-        $typography = get_option('bricks_typography', array());
-        if (!empty($typography) && is_array($typography)) {
-            $typo_css = '';
-            foreach ($typography as $element => $styles) {
-                if (!empty($styles) && is_array($styles)) {
-                    $selector = $element === 'body' ? 'body' : $element;
-                    $typo_css .= "{$selector} {\n";
-                    foreach ($styles as $prop => $value) {
-                        if (!empty($value)) {
-                            $css_prop = str_replace('_', '-', $prop);
-                            $typo_css .= "  {$css_prop}: {$value};\n";
-                        }
-                    }
-                    $typo_css .= "}\n";
-                }
-            }
-            if (!empty($typo_css)) {
-                $css_parts[] = "/* Bricks Typography */\n" . $typo_css;
-            }
-        }
-
-        return implode("\n\n", $css_parts);
-    }
-
-    /**
      * Format framework data into compact AI-friendly format
      * Optimized for minimal token usage while preserving design context
      *
@@ -5500,36 +5506,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         $can_manage = current_user_can('manage_options');
         return $can_manage;
     }
-
-    /**
-     * Check permissions for MagicDash API requests
-     * Validates that the site has a valid license and request is from MagicDash proxy
-     */
-    public function check_magicdash_permissions() {
-        // First check if user is logged in admin
-        if (current_user_can('manage_options')) {
-            return true;
-        }
-
-        // Check for X-MagicDash-Request header (indicates request from proxy)
-        $is_magicdash_request = isset($_SERVER['HTTP_X_MAGICDASH_REQUEST']) && $_SERVER['HTTP_X_MAGICDASH_REQUEST'] === 'true';
-
-        if (!$is_magicdash_request) {
-            return false;
-        }
-
-        // Verify this site has a valid license installed
-        // The proxy already validates the license before calling this endpoint
-        $stored_license_key = get_option('magicassistant_license_key', '');
-
-        if (empty($stored_license_key)) {
-            return false;
-        }
-
-        // License exists - trust the proxy's validation
-        return true;
-    }
-
 
     /**
      * Delete API key endpoint
@@ -9184,7 +9160,7 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             return "Content summary not available";
             
         } catch (Exception $e) {
-            \mat_debug_log('Web content summarization failed: ' . $e->getMessage());
+            \magica_debug_log('Web content summarization failed: ' . $e->getMessage());
             return "Content retrieved but summarization failed";
         }
     }
@@ -9290,16 +9266,32 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             return new WP_Error('missing_content', 'No content provided for backup', array('status' => 400));
         }
 
-        // Store backups in the root directory where .htaccess resides
-        $backup_dir = ABSPATH; // ABSPATH ends with a trailing slash
+        // Store backups inside the uploads directory (never in the web root or the
+        // plugin folder), as required by the WordPress.org plugin guidelines.
+        $upload_dir = wp_upload_dir();
+        if (!empty($upload_dir['error'])) {
+            return new WP_Error('backup_failed', 'Uploads directory is not available', array('status' => 500));
+        }
+        $backup_dir = trailingslashit($upload_dir['basedir']) . 'magicassistant/htaccess-backups/';
+
+        // Use the WordPress filesystem API for all file operations.
+        global $wp_filesystem;
+        if (empty($wp_filesystem)) {
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+            WP_Filesystem();
+        }
+
+        if (!$wp_filesystem->is_dir($backup_dir)) {
+            wp_mkdir_p($backup_dir);
+        }
 
         // Generate backup filename with timestamp
         $timestamp = isset($data['timestamp']) ? sanitize_file_name($data['timestamp']) : current_time('Y-m-d_H-i-s');
         $backup_filename = 'htaccess_backup_' . $timestamp . '.txt';
         $backup_file = $backup_dir . $backup_filename;
 
-        // Keep only the 2 most recent backups in the root directory
-        $existing_backups = glob(ABSPATH . 'htaccess_backup_*.txt');
+        // Keep only the 2 most recent backups
+        $existing_backups = glob($backup_dir . 'htaccess_backup_*.txt');
         if ($existing_backups && count($existing_backups) >= 2) {
             // Sort by modification time, oldest first
             usort($existing_backups, function($a, $b) {
@@ -9312,8 +9304,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             }
         }
 
-        // Save the backup
-        $result = file_put_contents($backup_file, $data['content']);
+        // Save the backup via the filesystem API
+        $result = $wp_filesystem->put_contents($backup_file, $data['content'], FS_CHMOD_FILE);
         if ($result === false) {
             return new WP_Error('backup_failed', 'Failed to create .htaccess backup', array('status' => 500));
         }
@@ -9704,6 +9696,26 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     }
     
     /**
+     * Return the plugin-specific directory (inside uploads) used to store image
+     * backups, creating it if needed. Keeping backups in a dedicated uploads
+     * subfolder — rather than beside the original media files — follows the
+     * WordPress.org guideline against scattering plugin data across the uploads tree.
+     *
+     * @return string|false Trailing-slashed backup directory path, or false on failure.
+     */
+    private function get_image_backup_dir() {
+        $upload_dir = wp_upload_dir();
+        if (!empty($upload_dir['error'])) {
+            return false;
+        }
+        $backup_dir = trailingslashit($upload_dir['basedir']) . 'magicassistant/image-backups/';
+        if (!is_dir($backup_dir)) {
+            wp_mkdir_p($backup_dir);
+        }
+        return $backup_dir;
+    }
+
+    /**
      * Replace an existing attachment's file with a new image
      * This is used for the image editor to update the current image
      */
@@ -9734,9 +9746,8 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         }
         
         require_once ABSPATH . 'wp-admin/includes/file.php';
-        require_once ABSPATH . 'wp-admin/includes/media.php';
         require_once ABSPATH . 'wp-admin/includes/image.php';
-        
+
         $upload_dir = wp_upload_dir();
         $is_local = strpos($image_url, $upload_dir['baseurl']) === 0;
         
@@ -9753,13 +9764,14 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         // If no backup exists yet, create one by copying the original file
         $has_backup = get_post_meta($attachment_id, '_ai_original_file', true);
         if (!$has_backup && $old_file_path && file_exists($old_file_path)) {
-            // Copy original file to a backup location
+            // Copy original file to a backup location inside the plugin's uploads subfolder
             $original_filename = basename($old_file_path);
             $original_info = pathinfo($original_filename);
-            $backup_filename = $original_info['filename'] . '-original-' . time() . '.' . $original_info['extension'];
-            $backup_path = dirname($old_file_path) . '/' . $backup_filename;
-            
-            if (@copy($old_file_path, $backup_path)) {
+            $backup_dir = $this->get_image_backup_dir();
+            $backup_filename = $attachment_id . '-' . $original_info['filename'] . '-original-' . time() . '.' . $original_info['extension'];
+            $backup_path = $backup_dir ? $backup_dir . $backup_filename : '';
+
+            if ($backup_dir && @copy($old_file_path, $backup_path)) {
                 // Save backup file path and original file path
                 update_post_meta($attachment_id, '_ai_original_file', $backup_path);
                 update_post_meta($attachment_id, '_ai_original_file_original', $old_file_path); // Keep reference to original name
@@ -9808,8 +9820,11 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             // If file exists, we'll replace it, but first backup the current one if not already backed up
             if (file_exists($new_file_path) && $new_file_path !== $old_file_path) {
                 // This shouldn't happen, but just in case
-                $backup_path = $new_file_path . '.backup.' . time();
-                @copy($new_file_path, $backup_path);
+                $backup_dir = $this->get_image_backup_dir();
+                if ($backup_dir) {
+                    $backup_path = $backup_dir . $attachment_id . '-' . basename($new_file_path) . '.backup.' . time();
+                    @copy($new_file_path, $backup_path);
+                }
             }
             
             if (!copy($tmp, $new_file_path)) {
@@ -9820,29 +9835,27 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             wp_delete_file($tmp);
         }
         
-        // Use WordPress's native wp_save_image function to properly integrate with undo/redo
-        // This function handles backups and editor state management
-        require_once ABSPATH . 'wp-admin/includes/image-edit.php';
-        
-        // Load the new image and prepare it for WordPress's save function
-        // wp_save_image expects the edited image to be processed through the editor
-        
+        // Backups and editor state are handled directly below using core post-meta
+        // helpers, so no additional core editor files need to be loaded here.
+
+
         // First, we need to prepare the image as if it went through the editor
         // WordPress's image editor expects images to be processed a certain way
         
-        // Create a backup using WordPress's built-in backup mechanism
-        // WordPress stores backups with a suffix like '-backup-{timestamp}'
+        // Create a backup inside the plugin's dedicated uploads subfolder so we never
+        // scatter backup files beside the original media in the uploads tree.
         $backup_path = $old_file_path;
-        if (file_exists($old_file_path)) {
-            // WordPress's image editor uses this naming convention for backups
+        $backup_dir = $this->get_image_backup_dir();
+        if ($backup_dir && file_exists($old_file_path)) {
             $path_info = pathinfo($old_file_path);
             $backup_suffix = '-backup-' . time();
-            $backup_path = $path_info['dirname'] . '/' . $path_info['filename'] . $backup_suffix . '.' . $path_info['extension'];
-            
-            // Copy original to backup location (WordPress style)
+            $backup_path = $backup_dir . $attachment_id . '-' . $path_info['filename'] . $backup_suffix . '.' . $path_info['extension'];
+
+            // Copy original to the backup location (always inside the plugin's
+            // uploads subfolder, never beside the original attachment).
             if (!@copy($old_file_path, $backup_path)) {
-                // Fallback to our own backup system if WordPress style fails
-                $backup_path = dirname($old_file_path) . '/' . basename($old_file_path, '.' . $path_info['extension']) . '-original-' . time() . '.' . $path_info['extension'];
+                // Fallback name if the first copy fails
+                $backup_path = $backup_dir . $attachment_id . '-' . basename($old_file_path, '.' . $path_info['extension']) . '-original-' . time() . '.' . $path_info['extension'];
                 @copy($old_file_path, $backup_path);
             }
         }
@@ -9948,10 +9961,10 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
             return new WP_Error('no_backup', 'No backup file found. Original image cannot be restored.', array('status' => 404));
         }
         
-        require_once ABSPATH . 'wp-admin/includes/file.php';
-        require_once ABSPATH . 'wp-admin/includes/media.php';
+        // wp_generate_attachment_metadata() (used below to rebuild the restored
+        // image's metadata) lives in wp-admin/includes/image.php, so load it here.
         require_once ABSPATH . 'wp-admin/includes/image.php';
-        
+
         // Get current file path
         $current_file_path = get_attached_file($attachment_id);
         
@@ -10916,50 +10929,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
     }
 
     /**
-     * Scrape content from URL using AI provider
-     */
-    public function scrape_url_content($request) {
-        if (!$this->db) {
-            return new WP_Error('db_error', 'Database not initialized', array('status' => 500));
-        }
-
-        $data = $request->get_json_params();
-        $url = sanitize_url($data['url'] ?? '');
-        
-        if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
-            return new WP_Error('invalid_url', 'Please provide a valid URL', array('status' => 400));
-        }
-
-        $user_id = get_current_user_id();
-        
-        // Get AI provider settings (same logic as regular chat requests)
-        $this->settings = $this->db->get_all_settings($user_id);
-        $provider = $this->settings['ai_provider'] ?? 'openai';
-        $api_key = $this->get_api_key($provider);
-
-        try {
-            // Use the AI provider with web search capability to scrape the URL
-            $scraped_content = $this->scrape_with_ai($url, $provider, $api_key);
-            
-            if (empty($scraped_content)) {
-                return new WP_Error('scraping_failed', 'Could not extract content from URL', array('status' => 400));
-            }
-
-            return rest_ensure_response(array(
-                'success' => true,
-                'data' => array(
-                    'content' => $scraped_content,
-                    'source_url' => $url
-                ),
-                'message' => 'URL content scraped successfully'
-            ));
-
-        } catch (Exception $e) {
-            return new WP_Error('scraping_error', 'Error scraping URL: ' . $e->getMessage(), array('status' => 500));
-        }
-    }
-
-    /**
      * Extract text content from uploaded file
      */
     private function extract_file_content($file_path, $file_extension) {
@@ -11098,99 +11067,6 @@ Be conversational, helpful, and proactive in suggesting how you can help with Wo
         // 3. Ask AI to extract and format the text content
         
         return "Content extraction using AI is not yet implemented for {$file_type} files. Please convert to TXT or use direct text input.";
-    }
-
-    /**
-     * Scrape URL content using AI provider
-     */
-    private function scrape_with_ai($url, $provider, $api_key) {
-        // Create a system message for web scraping - emphasizing COMPLETE extraction
-        $system_message = "You are a web content extractor. Your ONLY job is to extract 100% of the meaningful text content from the webpage in its COMPLETE, UNMODIFIED ENTIRETY.
-
-MANDATORY REQUIREMENTS - NO EXCEPTIONS:
-- Extract EVERY SINGLE word, sentence, paragraph, and section from the main content
-- Do NOT summarize, condense, paraphrase, or create overviews
-- Do NOT omit any sections, details, examples, or explanations  
-- Do NOT create bullet point summaries or shortened versions
-- Copy the EXACT, VERBATIM text from each section of the article
-- If there are 12 sections mentioned, extract ALL 12 sections completely
-- Include ALL subsections, details, examples, and explanatory text
-- Length limits do not apply - extract everything regardless of length
-- Your response must contain the FULL article text as if copy-pasted from the webpage
-
-CRITICAL: Act as a copy machine, not a summarizer. Extract everything word-for-word.";
-        
-        // Prepare the message - emphasizing complete extraction
-        $message = "Visit this URL and extract EVERY SINGLE WORD of the main article/content. Do not summarize anything. Extract all sections, all paragraphs, all details. Copy the complete text word-for-word: " . $url . "\n\nRemember: I need the FULL article text, not a summary. If the article has multiple sections or points, include ALL of them completely.";
-        
-        // Build messages array for AI providers
-        $messages = array(
-            array('role' => 'system', 'content' => $system_message),
-            array('role' => 'user', 'content' => $message)
-        );
-        
-        try {
-            // Use AllOrigins API to get raw HTML content, then extract text
-            $scraped_content = $this->scrape_url_direct($url);
-            
-            if (empty($scraped_content)) {
-                throw new Exception('Failed to retrieve content from URL');
-            }
-            
-            return $scraped_content;
-        } catch (Exception $e) {
-            throw new Exception('AI scraping failed: ' . $e->getMessage());
-        }
-    }
-
-    /**
-     * Get default model for provider
-     */
-    private function get_default_model($provider) {
-        $defaults = array(
-            'openai' => 'gpt-4.1-mini',
-            'anthropic' => 'claude-sonnet-4-5-20250929',
-            'openrouter' => 'openai/gpt-4.1-mini'
-        );
-        
-        return $defaults[$provider] ?? 'gpt-4.1-mini';
-    }
-
-    /**
-     * Scrape URL content directly using AllOrigins API
-     */
-    private function scrape_url_direct($url) {
-        // Use AllOrigins to bypass CORS and get raw HTML
-        $allorigins_url = 'https://api.allorigins.win/get?url=' . urlencode($url);
-
-        $response = wp_remote_get($allorigins_url, array(
-            'timeout' => 30,
-            'headers' => array(
-                'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            )
-        ));
-
-        if (is_wp_error($response)) {
-            throw new Exception('Failed to fetch content via AllOrigins: ' . $response->get_error_message());
-        }
-
-        $body = wp_remote_retrieve_body($response);
-        $data = json_decode($body, true);
-
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new Exception('Invalid JSON response from AllOrigins');
-        }
-
-        if (!isset($data['contents'])) {
-            throw new Exception('No contents field in AllOrigins response');
-        }
-
-        $html = $data['contents'];
-        
-        // Extract text content from HTML
-        $text_content = $this->extract_text_from_html($html);
-
-        return $text_content;
     }
 
     /**
@@ -11391,15 +11267,31 @@ CRITICAL: Act as a copy machine, not a summarizer. Extract everything word-for-w
             return new WP_Error('not_found', 'Chatbot not found or inactive', array('status' => 404));
         }
 
-        // Rate limiting check
-        if (!empty($chatbot['rate_limit_settings'])) {
-            $rate_limit = $chatbot['rate_limit_settings'];
-            // Implement rate limiting logic here
-            // For now, we'll skip rate limiting
+        // Rate limiting for this public, unauthenticated endpoint to prevent abuse
+        // of the site owner's AI credits. Limits requests per visitor IP per chatbot.
+        $max_requests   = 20; // requests allowed per window
+        $window_seconds = 5 * MINUTE_IN_SECONDS;
+        if (!empty($chatbot['rate_limit_settings']['max_requests'])) {
+            $max_requests = max(1, intval($chatbot['rate_limit_settings']['max_requests']));
+        }
+        if (!empty($chatbot['rate_limit_settings']['window_seconds'])) {
+            $window_seconds = max(60, intval($chatbot['rate_limit_settings']['window_seconds']));
         }
 
-        $message = $data['message'] ?? '';
-        $conversation_history = $data['history'] ?? [];
+        $visitor_ip   = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : 'unknown';
+        $rate_key     = 'magica_cbrl_' . $chatbot_id . '_' . md5($visitor_ip);
+        $request_count = (int) get_transient($rate_key);
+        if ($request_count >= $max_requests) {
+            return new WP_Error(
+                'rate_limited',
+                __('Too many requests. Please wait a moment before sending another message.', 'magicassistant'),
+                array('status' => 429)
+            );
+        }
+        set_transient($rate_key, $request_count + 1, $window_seconds);
+
+        $message              = isset($data['message']) ? sanitize_textarea_field($data['message']) : '';
+        $conversation_history = isset($data['history']) && is_array($data['history']) ? $data['history'] : array();
 
         if (empty($message)) {
             return new WP_Error('empty_message', 'Message is required', array('status' => 400));

@@ -316,7 +316,11 @@ const getFilenameURLFromUrl = (url) => {
     new URL(url);
     return url;
   } catch (e) {
-    return 'https://placehold.co/600x400';
+    // Return a self-contained inline placeholder instead of calling a remote
+    // placeholder service (no external dependency).
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#e5e7eb"/></svg>'
+    );
   }
 };
 

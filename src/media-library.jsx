@@ -28,11 +28,11 @@ const MediaLibraryIntegration = () => {
           alt: imageAlt
         })
         
-        const response = await fetch(`${window.matAdminData.restUrl}save-to-media-library`, {
+        const response = await fetch(`${window.magicaAdminData.restUrl}save-to-media-library`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-WP-Nonce': window.matAdminData.nonces.wp_rest,
+            'X-WP-Nonce': window.magicaAdminData.nonces.wp_rest,
           },
           body: JSON.stringify({
             image_url: imageUrl,
@@ -71,8 +71,8 @@ const MediaLibraryIntegration = () => {
     console.log('MediaLibraryIntegration: useEffect running...')
     
     // Get REST URL and nonce from localized data
-    const restUrl = window.matAdminData?.restUrl || window.matPublicData?.restUrl
-    const nonce = window.matAdminData?.nonces?.wp_rest || window.matPublicData?.nonces?.wp_rest
+    const restUrl = window.magicaAdminData?.restUrl || window.magicaPublicData?.restUrl
+    const nonce = window.magicaAdminData?.nonces?.wp_rest || window.magicaPublicData?.nonces?.wp_rest
 
     if (!restUrl || !nonce) {
       console.error('MagicAssistant: Missing REST URL or nonce')
@@ -355,7 +355,7 @@ const MediaLibraryIntegration = () => {
         combineButton.style.display = selectedCount >= 2 ? 'inline-block' : 'none'
 
         // Store selected attachments for later use
-        window.matSelectedAttachments = selectedAttachments
+        window.magicaSelectedAttachments = selectedAttachments
       }
 
       // Check initially and watch for changes
@@ -370,7 +370,7 @@ const MediaLibraryIntegration = () => {
     }
 
     const openModalWithSelectedImages = (minCount) => {
-      const selectedAttachments = window.matSelectedAttachments || []
+      const selectedAttachments = window.magicaSelectedAttachments || []
       
       if (selectedAttachments.length < minCount) {
         alert(`Please select ${minCount} or more image${minCount > 1 ? 's' : ''}`)
@@ -378,7 +378,7 @@ const MediaLibraryIntegration = () => {
       }
 
       // Store selected images to pass to modal
-      window.matModalInitialImages = selectedAttachments
+      window.magicaModalInitialImages = selectedAttachments
       openModal()
     }
 
@@ -436,8 +436,8 @@ const MediaLibraryIntegration = () => {
       return
     }
 
-    const restUrl = window.matAdminData?.restUrl || window.matPublicData?.restUrl
-    const nonce = window.matAdminData?.nonces?.wp_rest || window.matPublicData?.nonces?.wp_rest
+    const restUrl = window.magicaAdminData?.restUrl || window.magicaPublicData?.restUrl
+    const nonce = window.magicaAdminData?.nonces?.wp_rest || window.magicaPublicData?.nonces?.wp_rest
 
     if (!restUrl || !nonce) {
       console.error('MagicAssistant: Missing REST URL or nonce')
@@ -472,10 +472,10 @@ const MediaLibraryIntegration = () => {
     // Get initial images if modal was opened with selection
     // Clone the array to avoid reference issues and ensure we have the current value
     let initialImages = null
-    if (window.matModalInitialImages && Array.isArray(window.matModalInitialImages) && window.matModalInitialImages.length > 0) {
-      initialImages = [...window.matModalInitialImages] // Clone the array
+    if (window.magicaModalInitialImages && Array.isArray(window.magicaModalInitialImages) && window.magicaModalInitialImages.length > 0) {
+      initialImages = [...window.magicaModalInitialImages] // Clone the array
       // Clear it after reading so next render starts fresh
-      window.matModalInitialImages = null
+      window.magicaModalInitialImages = null
     }
 
     const root = createRoot(container)

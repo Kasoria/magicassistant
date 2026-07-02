@@ -215,7 +215,7 @@ const ImageEnhancementModal = ({
     setSaveProgress({ current: 0, total: selectedEntries.length })
 
     const imagesToApply = []
-    const pluginData = window.magicAssistantAdmin || window.matAdminData || window.matPublicData || window.magicAssistantData
+    const pluginData = window.magicAssistantAdmin || window.magicaAdminData || window.magicaPublicData || window.magicAssistantData
 
     for (let i = 0; i < selectedEntries.length; i++) {
       const [elementId, selectedImage] = selectedEntries[i]

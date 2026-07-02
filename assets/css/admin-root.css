@@ -1,0 +1,40 @@
+#mat-admin-root {
+    width: 100%;
+    min-height: 100%;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+}
+
+.wrap #mat-admin-root {
+    margin: 0;
+}
+
+@media screen and (max-width: 782px) {
+    #mat-admin-root {
+        min-height: calc(100vh - 46px);
+    }
+}
+
+#wpfooter {
+    display: none !important;
+}
+
+#wpcontent {
+    padding: 0 !important;
+}
+
+#wpbody-content {
+    padding-bottom: 0 !important;
+}
+
+/* Theme-based WP admin background color overrides */
+html:not(.dark) body,
+html:not(.dark) #wpwrap {
+    background-color: #f4f4f4 !important;
+}
+
+html.dark body,
+html.dark #wpwrap {
+    background-color: #011326 !important;
+}

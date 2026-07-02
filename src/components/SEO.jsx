@@ -849,7 +849,7 @@ const SEO = ({ adminData, settings }) => {
 Please use the DataForSEO tools to gather this information and provide me with actionable insights to improve my website's search engine rankings.`
 
       // Save the message to be used when switching to chat
-      sessionStorage.setItem('mat_prefill_message', seoMessage)
+      sessionStorage.setItem('magica_prefill_message', seoMessage)
       
       // Switch to chat tab
       const url = new URL(window.location)
@@ -857,7 +857,7 @@ Please use the DataForSEO tools to gather this information and provide me with a
       window.history.pushState({}, '', url)
       
       // Trigger a custom event to notify the parent component
-      window.dispatchEvent(new CustomEvent('mat_switch_tab', { 
+      window.dispatchEvent(new CustomEvent('magica_switch_tab', { 
         detail: { tab: 'chat', prefillMessage: seoMessage } 
       }))
       
@@ -1047,10 +1047,10 @@ Please provide actionable insights and recommendations based on the data you fin
 Start by using the dataforseo_suggest_location tool to get the right location and language settings for my analysis.`
 
     // Store the message in sessionStorage for the chat interface to pick up
-    sessionStorage.setItem('mat_prefill_message', seoAnalysisMessage)
+    sessionStorage.setItem('magica_prefill_message', seoAnalysisMessage)
     
     // Dispatch custom event to switch to chat tab
-    window.dispatchEvent(new CustomEvent('mat_switch_tab', {
+    window.dispatchEvent(new CustomEvent('magica_switch_tab', {
       detail: { tab: 'chat' }
     }))
     
@@ -1085,10 +1085,10 @@ Please provide comprehensive insights with:
 Use max_pages=25 for a thorough analysis of my most important pages.`
 
     // Store the message in sessionStorage for the chat interface to pick up
-    sessionStorage.setItem('mat_prefill_message', siteAnalysisMessage)
+    sessionStorage.setItem('magica_prefill_message', siteAnalysisMessage)
     
     // Dispatch custom event to switch to chat tab
-    window.dispatchEvent(new CustomEvent('mat_switch_tab', {
+    window.dispatchEvent(new CustomEvent('magica_switch_tab', {
       detail: { tab: 'chat' }
     }))
     
@@ -1109,13 +1109,13 @@ Use max_pages=25 for a thorough analysis of my most important pages.`
 Note: This tool uses Google PageSpeed Insights API directly and saves data only to the PageSpeed section (not mixed with SEO data). This ensures proper data separation and prevents database bloat from binary image data.`
 
     // Save the message and switch to chat
-    sessionStorage.setItem('mat_prefill_message', message)
+    sessionStorage.setItem('magica_prefill_message', message)
     
     const url = new URL(window.location)
     url.searchParams.set('tab', 'chat')
     window.history.pushState({}, '', url)
     
-    window.dispatchEvent(new CustomEvent('mat_switch_tab', { 
+    window.dispatchEvent(new CustomEvent('magica_switch_tab', { 
       detail: { tab: 'chat', prefillMessage: message } 
     }))
     
@@ -1134,13 +1134,13 @@ Note: This tool uses Google PageSpeed Insights API directly and saves data only 
 Important: Use pagespeed_analyze for performance data (Core Web Vitals, PageSpeed scores) and dataforseo_technical_audit for broader technical SEO insights. This ensures proper data separation and better analysis coverage.`
 
     // Save the message and switch to chat
-    sessionStorage.setItem('mat_prefill_message', message)
+    sessionStorage.setItem('magica_prefill_message', message)
     
     const url = new URL(window.location)
     url.searchParams.set('tab', 'chat')
     window.history.pushState({}, '', url)
     
-    window.dispatchEvent(new CustomEvent('mat_switch_tab', { 
+    window.dispatchEvent(new CustomEvent('magica_switch_tab', { 
       detail: { tab: 'chat', prefillMessage: message } 
     }))
     

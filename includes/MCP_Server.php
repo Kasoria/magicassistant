@@ -332,9 +332,8 @@ class MCP_Server {
     }
 
     /**
-     * Permission check for MagicDash endpoints
-     * Requires logged-in WordPress user with edit_posts capability
-     * License validation is also performed by the proxy for additional security
+     * Generate a short-lived bearer token for the MCP endpoint.
+     * Minting requires a logged-in admin (manage_options); see check_auth_permissions().
      */
     public function generate_jwt_token($request) {
         $params = $request->get_json_params();
@@ -2865,7 +2864,8 @@ class MCP_Server {
             }
         }
         
-        // Update language
+        // Update language. "WPLANG" is a WordPress core option (the site language);
+        // it is intentionally not plugin-prefixed because we are updating core's own setting.
         if (isset($args['language'])) {
             $language = sanitize_text_field($args['language']);
             update_option('WPLANG', $language);
@@ -3118,18 +3118,6 @@ class MCP_Server {
             'callback' => array($this, 'db_get_table_schema')
         ));
 
-        // db_run_query (read-only)
-        $this->register_tool(array(
-            'name' => 'db_run_query',
-            'description' => 'Execute a read-only (SELECT) SQL query. Disabled by default for security – enable via settings.',
-            'inputSchema' => array(
-                'type' => 'object',
-                'properties' => array('query' => array('type' => 'string')),
-                'required' => array('query')
-            ),
-            'callback' => array($this, 'db_run_query')
-        ));
-
         // db_find_unused_data
         $this->register_tool(array(
             'name' => 'db_find_unused_data',
@@ -3374,22 +3362,6 @@ class MCP_Server {
         if($exists!=$table) throw new \Exception("Table not found");
         $schema = $wpdb->get_results("DESCRIBE `$table`", ARRAY_A);
         return array('success'=>true,'table_name'=>$table,'schema'=>$schema);
-    }
-
-    public function db_run_query($args) {
-        if(!$this->db || !$this->db->get_setting('enable_sql_queries', false)) {
-            throw new \Exception('SQL query execution is disabled in settings.');
-        }
-        global $wpdb;
-        $query = trim($args['query']);
-        $dangerous = $this->db && $this->db->get_setting('enable_dangerous_sql_queries', false);
-        if(!$dangerous && stripos($query,'select')!==0) {
-            throw new \Exception('Only SELECT queries allowed (dangerous queries disabled).');
-        }
-        $query = rtrim($query,';');
-        $results = $wpdb->get_results($query, ARRAY_A); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- User-provided query, gated by dangerous_sql_queries setting
-        if($wpdb->last_error) throw new \Exception('SQL Error: '.$wpdb->last_error);
-        return array('success'=>true,'row_count'=>count($results),'results'=>array_slice($results,0,100));
     }
 
     public function db_find_unused_data($args) {
@@ -4380,26 +4352,19 @@ class MCP_Server {
      * Check if a file is critical for security monitoring
      */
     private function is_critical_security_file($file) {
+        // NOTE: these are filename patterns used to flag sensitive core files during a
+        // security scan. They are matched (via strpos) against file paths only — never
+        // used to build or link to any request URL. Files under wp-admin/ and
+        // wp-includes/ are covered by the regex checks further below, so they are not
+        // repeated here.
         $critical_patterns = array(
             // WordPress core configuration
             'wp-config.php',
             'wp-config-sample.php',
             '.htaccess',
-            
-            // WordPress core admin files
-            'wp-admin/admin.php',
-            'wp-admin/admin-ajax.php',
-            'wp-admin/index.php',
             'wp-login.php',
             'xmlrpc.php',
-            
-            // WordPress core includes
-            'wp-includes/functions.php',
-            'wp-includes/class-wp-user.php',
-            'wp-includes/user.php',
-            'wp-includes/pluggable.php',
-            'wp-includes/wp-db.php',
-            
+
             // Must-use plugins (always loaded)
             'wp-content/mu-plugins/',
             
@@ -4762,39 +4727,44 @@ class MCP_Server {
      * Fetch Wordfence data with early termination for specific component
      */
     private function fetch_wordfence_component_specific($component) {
-        // Try to use curl with streaming and early termination
         $wordfence_url = 'https://www.wordfence.com/api/intelligence/v2/vulnerabilities/production';
-        
-        // The Wordfence vulnerability feed is multi-megabyte. We stream it with a write
-        // callback and terminate early once enough matches are found, which the WP HTTP
-        // API cannot do (it buffers the whole body). cURL is required here by design.
-        // phpcs:disable WordPress.WP.AlternativeFunctions.curl_curl_init, WordPress.WP.AlternativeFunctions.curl_curl_setopt, WordPress.WP.AlternativeFunctions.curl_curl_exec, WordPress.WP.AlternativeFunctions.curl_curl_close
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $wordfence_url);
-        curl_setopt($ch, CURLOPT_WRITEFUNCTION, array($this, 'curl_write_callback'));
-        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-        curl_setopt($ch, CURLOPT_USERAGENT, 'MagicAssistant-WordPress-Plugin/1.0');
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-        
+
         // Initialize search state
-        $this->search_component = $component;
+        $this->search_component      = $component;
         $this->found_vulnerabilities = array();
-        $this->json_buffer = '';
-        $this->max_vulnerabilities = 10; // Limit results
-        
-        curl_exec($ch);
-        curl_close($ch);
-        // phpcs:enable WordPress.WP.AlternativeFunctions.curl_curl_init, WordPress.WP.AlternativeFunctions.curl_curl_setopt, WordPress.WP.AlternativeFunctions.curl_curl_exec, WordPress.WP.AlternativeFunctions.curl_curl_close
+        $this->json_buffer           = '';
+        $this->max_vulnerabilities   = 10; // Limit results
+
+        // The Wordfence vulnerability feed is multi-megabyte. We fetch it through the
+        // WordPress HTTP API and cap the download with limit_response_size so we never
+        // pull more than we need, then parse the body for matches for this component.
+        $response = wp_remote_get($wordfence_url, array(
+            'timeout'             => 30,
+            'user-agent'          => 'MagicAssistant-WordPress-Plugin/1.0',
+            'limit_response_size' => 15 * MB_IN_BYTES,
+        ));
+
+        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+            return $this->found_vulnerabilities;
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        if (!empty($body)) {
+            $this->process_vulnerability_chunk($body);
+        }
 
         return $this->found_vulnerabilities;
     }
     
     /**
-     * CURL write callback for streaming vulnerability search
+     * Incrementally parse the Wordfence vulnerability feed for matches.
+     *
+     * Returns false once enough matches are collected (or the working buffer grows
+     * too large) so callers streaming the feed can stop early.
      */
-    private function curl_write_callback($ch, $data) {
+    private function process_vulnerability_chunk($data) {
         $this->json_buffer .= $data;
-        
+
         // Process complete vulnerability objects as we find them
         while (($pos = strpos($this->json_buffer, '"},"')) !== false) {
             $json_chunk = substr($this->json_buffer, 0, $pos + 2);
@@ -4822,18 +4792,18 @@ class MCP_Server {
                     
                     // Stop early if we found enough vulnerabilities
                     if (count($this->found_vulnerabilities) >= $this->max_vulnerabilities) {
-                        return 0; // Stop curl
+                        return false; // Enough matches collected
                     }
                 }
             }
         }
-        
+
         // Prevent buffer from growing too large
         if (strlen($this->json_buffer) > 100000) {
-            return 0; // Stop curl to prevent memory issues
+            return false; // Stop to prevent memory issues
         }
-        
-        return strlen($data);
+
+        return true;
     }
     
     /**
@@ -5474,6 +5444,10 @@ class MCP_Server {
     }
     
     public function wp_add_user($args) {
+        // Admin site-management tool: mirrors the wp-admin Users screen. Uses the WordPress
+        // core wp_insert_user() function and is gated by the core create_users capability.
+        // It never logs anyone in or sets an auth cookie/session, so login-attempt limits and
+        // other security plugins are not bypassed.
         if (!current_user_can('create_users')) {
             throw new Exception('Insufficient permissions to create users');
         }
@@ -5556,8 +5530,12 @@ class MCP_Server {
     }
     
     public function wp_update_user($args) {
+        // Admin site-management tool: mirrors the wp-admin Users screen. Uses the WordPress
+        // core wp_update_user() function and is gated by the core edit_user capability. It
+        // never logs anyone in or sets an auth cookie/session, so login-attempt limits and
+        // other security plugins are not bypassed.
         $id = intval($args['id']);
-        
+
         if (!current_user_can('edit_user', $id) && get_current_user_id() !== $id) {
             throw new Exception('Insufficient permissions to update this user');
         }
@@ -8281,6 +8259,11 @@ class MCP_Server {
         $slug = $args['slug'] ?? '';
         $activate = $args['activate'] ?? false;
 
+        // Activation requires its own capability, separate from installation.
+        if ($activate && !current_user_can('activate_plugins')) {
+            throw new Exception('Insufficient permissions. User must have activate_plugins capability to activate a plugin.');
+        }
+
         if (empty($slug)) {
             throw new Exception('Plugin slug is required');
         }
@@ -8774,7 +8757,7 @@ class MCP_Server {
         }
 
         // Reactivate plugin if it was active before update
-        if ($was_active) {
+        if ($was_active && current_user_can('activate_plugins')) {
             $activation_result = activate_plugin($plugin_file);
             if (is_wp_error($activation_result)) {
                 throw new Exception('Plugin updated but failed to reactivate: ' . $activation_result->get_error_message());
@@ -9026,8 +9009,8 @@ class MCP_Server {
      */
     private function register_dataforseo_tools() {
         // Get the DataForSEO instance from the main plugin
-        if (function_exists('MATDFS') && MATDFS()) {
-            $dataforseo = MATDFS();
+        if (function_exists('magica_dfs') && magica_dfs()) {
+            $dataforseo = magica_dfs();
             
             // Check if DataForSEO is available
             if (!$dataforseo->is_available()) {
@@ -12413,7 +12396,7 @@ class MCP_Server {
             );
 
         } catch (\Exception $e) {
-            \mat_debug_log('[MagicAssistant Unsplash] Error: ' . $e->getMessage());
+            \magica_debug_log('[MagicAssistant Unsplash] Error: ' . $e->getMessage());
             return new \WP_Error('unsplash_error', $e->getMessage(), array('status' => 500));
         }
     }

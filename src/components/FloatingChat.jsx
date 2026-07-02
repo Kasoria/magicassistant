@@ -15,7 +15,7 @@ import { ToastProvider } from './Toast'
  *
  * Required props:
  *   - pluginData:   The localisation object injected by PHP via wp_localize_script
- *                   (matPublicData or matAdminData).  This is forwarded to the
+ *                   (magicaPublicData or magicaAdminData).  This is forwarded to the
  *                   ChatInterface as `adminData` so we don't have to touch the
  *                   existing component.
  */
@@ -166,9 +166,9 @@ const FloatingChat = ({ pluginData }) => {
       }
     }
 
-    window.addEventListener('matFloatingChatCustomizationUpdate', handleCustomizationUpdate)
+    window.addEventListener('magicaFloatingChatCustomizationUpdate', handleCustomizationUpdate)
     return () => {
-      window.removeEventListener('matFloatingChatCustomizationUpdate', handleCustomizationUpdate)
+      window.removeEventListener('magicaFloatingChatCustomizationUpdate', handleCustomizationUpdate)
     }
   }, [])
 

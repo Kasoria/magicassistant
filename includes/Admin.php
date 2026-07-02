@@ -24,14 +24,14 @@ class Admin {
     add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
     
     // Add AJAX handlers
-    add_action('wp_ajax_mat_save_theme_mode', array($this, 'save_theme_mode'));
-    add_action('wp_ajax_mat_mark_tour_completed', array($this, 'mark_tour_completed'));
-    add_action('wp_ajax_mat_reset_tour', array($this, 'reset_tour'));
-    add_action('wp_ajax_mat_mark_tour_triggered', array($this, 'mark_tour_triggered'));
-    add_action('wp_ajax_mat_dismiss_tour_permanently', array($this, 'dismiss_tour_permanently'));
-    add_action('wp_ajax_mat_mark_first_visit_complete', array($this, 'mark_first_visit_complete'));
-    add_action('wp_ajax_mat_reset_all_tours', array($this, 'reset_all_tours'));
-    add_action('wp_ajax_mat_reenable_tours', array($this, 'reenable_tours'));
+    add_action('wp_ajax_magica_save_theme_mode', array($this, 'save_theme_mode'));
+    add_action('wp_ajax_magica_mark_tour_completed', array($this, 'mark_tour_completed'));
+    add_action('wp_ajax_magica_reset_tour', array($this, 'reset_tour'));
+    add_action('wp_ajax_magica_mark_tour_triggered', array($this, 'mark_tour_triggered'));
+    add_action('wp_ajax_magica_dismiss_tour_permanently', array($this, 'dismiss_tour_permanently'));
+    add_action('wp_ajax_magica_mark_first_visit_complete', array($this, 'mark_first_visit_complete'));
+    add_action('wp_ajax_magica_reset_all_tours', array($this, 'reset_all_tours'));
+    add_action('wp_ajax_magica_reenable_tours', array($this, 'reenable_tours'));
   }
   
   public function add_admin_menu() {
@@ -139,7 +139,18 @@ class Admin {
     if (!in_array($hook, $plugin_pages)) {
       return;
     }
-    
+
+    // Enqueue the shared settings page interactions on the MagicPlugins landing page.
+    if ($hook === 'toplevel_page_magic_plugins') {
+      wp_enqueue_script(
+        'mat-admin-settings',
+        MAGIC_ASSISTANT_PLUGIN_URL . 'assets/js/admin-settings.js',
+        array(),
+        MAGIC_ASSISTANT_VERSION,
+        true
+      );
+    }
+
     // The React dev class will handle the actual script enqueuing
     // We just need to localize admin-specific data here
     $this->localize_admin_data($hook);
@@ -158,9 +169,9 @@ class Admin {
       'restUrl' => rest_url('magicassistant/v1/'),
       'nonces' => array(
         'wp_rest' => wp_create_nonce('wp_rest'),
-        'mat_admin' => wp_create_nonce('mat_admin_nonce'),
-        'mat_ajax' => wp_create_nonce('mat_ajax_nonce'),
-        'save_theme_mode' => wp_create_nonce('mat_save_theme_mode'),
+        'magica_admin' => wp_create_nonce('magica_admin_nonce'),
+        'magica_ajax' => wp_create_nonce('magica_ajax_nonce'),
+        'save_theme_mode' => wp_create_nonce('magica_save_theme_mode'),
       ),
       'currentUser' => array(
         'id' => $current_user->ID,
@@ -168,7 +179,7 @@ class Admin {
         'email' => $current_user->user_email,
         'avatar' => get_avatar_url($current_user->ID),
       ),
-      'savedTheme' => get_user_meta($current_user->ID, 'mat_theme', true) ?: 'light',
+      'savedTheme' => get_user_meta($current_user->ID, 'magica_theme', true) ?: 'light',
       'isAdmin' => current_user_can('manage_options'),
       'isDev' => defined('WP_DEBUG') && WP_DEBUG,
       'pluginUrl' => MAGIC_ASSISTANT_PLUGIN_URL,
@@ -178,14 +189,14 @@ class Admin {
       'currentPost' => $current_post_info,
       'initialTab' => $this->get_initial_tab(),
       'tourCompleted' => array(
-        'dashboard' => (bool) get_user_meta(get_current_user_id(), 'mat_tour_completed_dashboard', true),
-        'settings' => (bool) get_user_meta(get_current_user_id(), 'mat_tour_completed_settings', true),
-        'firstVisit' => (bool) get_user_meta(get_current_user_id(), 'mat_tour_first_visit_complete', true)
+        'dashboard' => (bool) get_user_meta(get_current_user_id(), 'magica_tour_completed_dashboard', true),
+        'settings' => (bool) get_user_meta(get_current_user_id(), 'magica_tour_completed_settings', true),
+        'firstVisit' => (bool) get_user_meta(get_current_user_id(), 'magica_tour_first_visit_complete', true)
       ),
       'tourDismissed' => array(
-        'permanently' => (bool) get_user_meta(get_current_user_id(), 'mat_tour_dismissed_permanently', true)
+        'permanently' => (bool) get_user_meta(get_current_user_id(), 'magica_tour_dismissed_permanently', true)
       ),
-      'toursGloballyDisabled' => (bool) get_option('mat_tours_globally_disabled', false),
+      'toursGloballyDisabled' => (bool) get_option('magica_tours_globally_disabled', false),
       'i18n' => array(
         'loading' => __('Loading...', 'magicassistant'),
         'error' => __('An error occurred', 'magicassistant'),
@@ -199,8 +210,8 @@ class Admin {
     );
     
     // Localize the script - this will be picked up by the React dev class
-    wp_localize_script('mat-react-admin-dev', 'matAdminData', $admin_data);
-    wp_localize_script('mat-react-admin', 'matAdminData', $admin_data);
+    wp_localize_script('mat-react-admin-dev', 'magicaAdminData', $admin_data);
+    wp_localize_script('mat-react-admin', 'magicaAdminData', $admin_data);
   }
   
   /**
@@ -503,22 +514,10 @@ class Admin {
       <input type="number" name="custom_position" value="<?php echo esc_attr($custom_position); ?>" min="1" max="99" class="small-text">
     </div>
 
-    <?php // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript -- Small inline settings toggle ?>
-    <script>
-    document.addEventListener('DOMContentLoaded', function() {
-      const positionType = document.getElementById('menu-position-type');
-      const relativeWrapper = document.getElementById('relative-position-wrapper');
-      const customWrapper = document.getElementById('custom-position-wrapper');
-      
-      positionType.addEventListener('change', function() {
-        relativeWrapper.style.display = this.value === 'relative' ? 'block' : 'none';
-        customWrapper.style.display = this.value === 'custom' ? 'block' : 'none';
-      });
-    });
-    </script>
     <?php
+    // Interactions handled by the enqueued assets/js/admin-settings.js
   }
-  
+
   private function render_date_format_field($settings) {
     $date_format = $settings['date_format'];
     $format_options = array(
@@ -578,48 +577,10 @@ class Admin {
       </ul>
     </div>
 
-    <?php // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript -- Small inline drag-and-drop script ?>
-    <script>
-    document.addEventListener('DOMContentLoaded', function() {
-      // Simple drag and drop implementation
-      const sortable = document.getElementById('submenu-sortable');
-      if (sortable) {
-        let draggedElement = null;
-        
-        sortable.addEventListener('dragstart', function(e) {
-          draggedElement = e.target;
-          e.target.style.opacity = '0.5';
-        });
-        
-        sortable.addEventListener('dragend', function(e) {
-          e.target.style.opacity = '';
-          draggedElement = null;
-        });
-        
-        sortable.addEventListener('dragover', function(e) {
-          e.preventDefault();
-        });
-        
-        sortable.addEventListener('drop', function(e) {
-          e.preventDefault();
-          if (draggedElement && e.target !== draggedElement && e.target.tagName === 'LI') {
-            const rect = e.target.getBoundingClientRect();
-            const next = (e.clientY - rect.top) / (rect.bottom - rect.top) > 0.5;
-            sortable.insertBefore(draggedElement, next ? e.target.nextSibling : e.target);
-          }
-        });
-        
-        // Make items draggable
-        const items = sortable.querySelectorAll('li');
-        items.forEach(item => {
-          item.draggable = true;
-        });
-      }
-    });
-    </script>
     <?php
+    // Interactions handled by the enqueued assets/js/admin-settings.js
   }
-  
+
   public function admin_page() {
     ?>
       <div id="mat-admin-root"></div>
@@ -715,7 +676,7 @@ class Admin {
   // AJAX handler for saving theme mode
   public function save_theme_mode() {
     // Verify nonce
-    if (!check_ajax_referer('mat_save_theme_mode', '_ajax_nonce', false)) {
+    if (!check_ajax_referer('magica_save_theme_mode', '_ajax_nonce', false)) {
       wp_die(json_encode(array(
         'success' => false,
         'data' => __('Security check failed.', 'magicassistant')
@@ -741,7 +702,7 @@ class Admin {
     
     // Save the theme preference to WordPress user meta
     $user_id = get_current_user_id();
-    update_user_meta($user_id, 'mat_theme', $mode);
+    update_user_meta($user_id, 'magica_theme', $mode);
     
     wp_die(json_encode(array(
       'success' => true,
@@ -779,7 +740,7 @@ class Admin {
    */
   public function mark_tour_completed() {
     // Check nonce for security
-    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'mat_ajax_nonce')) {
+    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'magica_ajax_nonce')) {
       wp_die(json_encode(array(
         'success' => false,
         'data' => __('Invalid nonce.', 'magicassistant')
@@ -805,7 +766,7 @@ class Admin {
     
     // Save the tour completion to WordPress user meta
     $user_id = get_current_user_id();
-    $meta_key = 'mat_tour_completed_' . $tour_type;
+    $meta_key = 'magica_tour_completed_' . $tour_type;
     update_user_meta($user_id, $meta_key, true);
     
     wp_die(json_encode(array(
@@ -822,7 +783,7 @@ class Admin {
    */
   public function reset_tour() {
     // Check nonce for security
-    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'mat_ajax_nonce')) {
+    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'magica_ajax_nonce')) {
       wp_die(json_encode(array(
         'success' => false,
         'data' => __('Invalid nonce.', 'magicassistant')
@@ -848,7 +809,7 @@ class Admin {
     
     // Remove the tour completion from WordPress user meta
     $user_id = get_current_user_id();
-    $meta_key = 'mat_tour_completed_' . $tour_type;
+    $meta_key = 'magica_tour_completed_' . $tour_type;
     delete_user_meta($user_id, $meta_key);
     
     wp_die(json_encode(array(
@@ -865,7 +826,7 @@ class Admin {
    */
   public function mark_tour_triggered() {
     // Check nonce for security
-    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'mat_ajax_nonce')) {
+    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'magica_ajax_nonce')) {
       wp_die(json_encode(array(
         'success' => false,
         'data' => __('Invalid nonce.', 'magicassistant')
@@ -891,7 +852,7 @@ class Admin {
     
     // Save the tour trigger timestamp to WordPress user meta
     $user_id = get_current_user_id();
-    $meta_key = 'mat_tour_triggered_' . $tour_type;
+    $meta_key = 'magica_tour_triggered_' . $tour_type;
     update_user_meta($user_id, $meta_key, current_time('timestamp'));
     
     wp_die(json_encode(array(
@@ -908,7 +869,7 @@ class Admin {
    */
   public function dismiss_tour_permanently() {
     // Check nonce for security
-    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'mat_ajax_nonce')) {
+    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'magica_ajax_nonce')) {
       wp_die(json_encode(array(
         'success' => false,
         'data' => __('Invalid nonce.', 'magicassistant')
@@ -925,7 +886,7 @@ class Admin {
     
     // Mark tours as permanently dismissed for this user
     $user_id = get_current_user_id();
-    update_user_meta($user_id, 'mat_tour_dismissed_permanently', true);
+    update_user_meta($user_id, 'magica_tour_dismissed_permanently', true);
     
     wp_die(json_encode(array(
       'success' => true,
@@ -940,7 +901,7 @@ class Admin {
    */
   public function mark_first_visit_complete() {
     // Check nonce for security
-    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'mat_ajax_nonce')) {
+    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'magica_ajax_nonce')) {
       wp_die(json_encode(array(
         'success' => false,
         'data' => __('Invalid nonce.', 'magicassistant')
@@ -957,7 +918,7 @@ class Admin {
     
     // Mark first visit as complete for this user
     $user_id = get_current_user_id();
-    update_user_meta($user_id, 'mat_tour_first_visit_complete', true);
+    update_user_meta($user_id, 'magica_tour_first_visit_complete', true);
     
     wp_die(json_encode(array(
       'success' => true,
@@ -972,7 +933,7 @@ class Admin {
    */
   public function reset_all_tours() {
     // Check nonce for security
-    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'mat_ajax_nonce')) {
+    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'magica_ajax_nonce')) {
       wp_die(json_encode(array(
         'success' => false,
         'data' => __('Invalid nonce.', 'magicassistant')
@@ -989,14 +950,14 @@ class Admin {
     
     // Reset all tour-related user meta
     $user_id = get_current_user_id();
-    delete_user_meta($user_id, 'mat_tour_completed_license');
-    delete_user_meta($user_id, 'mat_tour_completed_dashboard');
-    delete_user_meta($user_id, 'mat_tour_completed_settings');
-    delete_user_meta($user_id, 'mat_tour_dismissed_permanently');
-    delete_user_meta($user_id, 'mat_tour_first_visit_complete');
-    delete_user_meta($user_id, 'mat_tour_triggered_license');
-    delete_user_meta($user_id, 'mat_tour_triggered_dashboard');
-    delete_user_meta($user_id, 'mat_tour_triggered_settings');
+    delete_user_meta($user_id, 'magica_tour_completed_license');
+    delete_user_meta($user_id, 'magica_tour_completed_dashboard');
+    delete_user_meta($user_id, 'magica_tour_completed_settings');
+    delete_user_meta($user_id, 'magica_tour_dismissed_permanently');
+    delete_user_meta($user_id, 'magica_tour_first_visit_complete');
+    delete_user_meta($user_id, 'magica_tour_triggered_license');
+    delete_user_meta($user_id, 'magica_tour_triggered_dashboard');
+    delete_user_meta($user_id, 'magica_tour_triggered_settings');
     
     wp_die(json_encode(array(
       'success' => true,
@@ -1011,7 +972,7 @@ class Admin {
    */
   public function reenable_tours() {
     // Check nonce for security
-    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'mat_ajax_nonce')) {
+    if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])), 'magica_ajax_nonce')) {
       wp_die(json_encode(array(
         'success' => false,
         'data' => __('Invalid nonce.', 'magicassistant')
@@ -1028,7 +989,7 @@ class Admin {
     
     // Remove permanently dismissed flag for this user
     $user_id = get_current_user_id();
-    delete_user_meta($user_id, 'mat_tour_dismissed_permanently');
+    delete_user_meta($user_id, 'magica_tour_dismissed_permanently');
     
     wp_die(json_encode(array(
       'success' => true,

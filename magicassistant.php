@@ -9,9 +9,9 @@
  *
  * @wordpress-plugin
  * Plugin Name:       MagicAssistant
- * Plugin URI:        https://magicplugins.io
+ * Plugin URI:        https://github.com/Kasoria/magicassistant
  * Description:       Your personal AI assistant for WordPress websites.
- * Version:           2.0
+ * Version:           2.0.2
  * Requires PHP:      7.4
  * Author:            Christian Wenterodt
  * Author URI:        https://chrispump.me
@@ -29,7 +29,7 @@ if (file_exists(__DIR__ . '/vendor/autoload.php')) {
 }
 
 // Define plugin constants
-define('MAGIC_ASSISTANT_VERSION', '2.0');
+define('MAGIC_ASSISTANT_VERSION', '2.0.2');
 define('MAGIC_ASSISTANT_PLUGIN_FILE', __FILE__);
 define('MAGIC_ASSISTANT_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('MAGIC_ASSISTANT_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -145,35 +145,33 @@ function magic_assistant() {
   return $GLOBALS['magic_assistant'];
 }
 
-// phpcs:disable WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedFunctionFound -- public API accessors with intentional short MAT* names
 /**
  * Global function to access MagicAssistant MCP server
  */
-function MATMCP() {
+function magica_mcp() {
   return $GLOBALS['magic_assistant']->get_mcp_server();
 }
 
 /**
  * Global function to access MagicAssistant database
  */
-function MATDB() {
+function magica_db() {
   return $GLOBALS['magic_assistant']->get_db();
 }
 
 /**
  * Global function to access MagicAssistant DataForSEO
  */
-function MATDFS() {
+function magica_dfs() {
   return $GLOBALS['magic_assistant']->get_dataforseo();
 }
 
 /**
  * Global function to access MagicAssistant PageSpeed service
  */
-function MATPS() {
+function magica_ps() {
   return $GLOBALS['magic_assistant']->get_pagespeed_service();
 }
-// phpcs:enable WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedFunctionFound
 
 // Register login event tracker
 \MagicAssistant\Login_Tracker::register();
@@ -184,7 +182,7 @@ function MATPS() {
  *
  * @param mixed $message String or any value to log.
  */
-function mat_debug_log($message) { // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedFunctionFound -- Uses the plugin's established mat_ prefix, consistent with its custom tables and global helpers.
+function magica_debug_log($message) {
   if (defined('WP_DEBUG') && WP_DEBUG) {
     // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- intentional, WP_DEBUG-gated debug logging
     error_log(is_scalar($message) ? (string) $message : wp_json_encode($message));

@@ -411,8 +411,8 @@ RewriteBase /
 
 Please provide actionable security recommendations and highlight any critical issues that need immediate attention.`
 
-    sessionStorage.setItem('mat_prefill_message', securityScanMessage)
-    window.dispatchEvent(new CustomEvent('mat_switch_tab', { detail: { tab: 'chat' } }))
+    sessionStorage.setItem('magica_prefill_message', securityScanMessage)
+    window.dispatchEvent(new CustomEvent('magica_switch_tab', { detail: { tab: 'chat' } }))
     
     setTimeout(() => {
       setIsGeneratingData(false)
@@ -810,8 +810,8 @@ Please provide actionable security recommendations and highlight any critical is
     // AI suggestion for .htaccess
     const suggestHtaccessCode = () => {
       const prompt = 'Please provide the exact Apache .htaccess code needed to secure my WordPress installation by implementing common hardening rules including denial of direct access to sensitive files and disabling directory browsing.'
-      sessionStorage.setItem('mat_prefill_message', prompt)
-      window.dispatchEvent(new CustomEvent('mat_switch_tab', { detail: { tab: 'chat' } }))
+      sessionStorage.setItem('magica_prefill_message', prompt)
+      window.dispatchEvent(new CustomEvent('magica_switch_tab', { detail: { tab: 'chat' } }))
     }
 
     return (
@@ -1358,8 +1358,8 @@ Please provide actionable security recommendations and highlight any critical is
               <Button
                 onClick={() => {
                   const message = 'Please scan my WordPress site for security vulnerabilities using the Wordfence database. Check all active plugins and themes for known vulnerabilities and provide me a detailed report with recommended actions.'
-                  sessionStorage.setItem('mat_prefill_message', message)
-                  window.dispatchEvent(new CustomEvent('mat_switch_tab', { detail: { tab: 'chat' } }))
+                  sessionStorage.setItem('magica_prefill_message', message)
+                  window.dispatchEvent(new CustomEvent('magica_switch_tab', { detail: { tab: 'chat' } }))
                 }}
                 size="sm"
                 color="blue"
@@ -1408,8 +1408,8 @@ Please provide actionable security recommendations and highlight any critical is
                     <Button
                       onClick={() => {
                         const message = `I have ${vulnScan.vulnerabilities.length} security vulnerabilities found on my WordPress site. Please analyze them and provide detailed recommendations for fixing each vulnerability, prioritizing by severity level.`
-                        sessionStorage.setItem('mat_prefill_message', message)
-                        window.dispatchEvent(new CustomEvent('mat_switch_tab', { detail: { tab: 'chat' } }))
+                        sessionStorage.setItem('magica_prefill_message', message)
+                        window.dispatchEvent(new CustomEvent('magica_switch_tab', { detail: { tab: 'chat' } }))
                       }}
                       size="sm"
                       color="orange"
@@ -1497,8 +1497,8 @@ Please provide actionable security recommendations and highlight any critical is
                   <Button
                     onClick={() => {
                       const message = 'Great news! No vulnerabilities were found in my WordPress site scan. Please provide me with additional security recommendations and best practices to keep my site secure.'
-                      sessionStorage.setItem('mat_prefill_message', message)
-                      window.dispatchEvent(new CustomEvent('mat_switch_tab', { detail: { tab: 'chat' } }))
+                      sessionStorage.setItem('magica_prefill_message', message)
+                      window.dispatchEvent(new CustomEvent('magica_switch_tab', { detail: { tab: 'chat' } }))
                     }}
                     size="sm"
                     color="green"
@@ -1522,8 +1522,8 @@ Please provide actionable security recommendations and highlight any critical is
                 <Button
                   onClick={() => {
                     const message = 'Please scan my WordPress site for security vulnerabilities using the Wordfence database. Check all active plugins and themes for known vulnerabilities and provide me a detailed report with recommended actions.'
-                    sessionStorage.setItem('mat_prefill_message', message)
-                    window.dispatchEvent(new CustomEvent('mat_switch_tab', { detail: { tab: 'chat' } }))
+                    sessionStorage.setItem('magica_prefill_message', message)
+                    window.dispatchEvent(new CustomEvent('magica_switch_tab', { detail: { tab: 'chat' } }))
                   }}
                   color="blue"
                 >
@@ -1532,8 +1532,8 @@ Please provide actionable security recommendations and highlight any critical is
                 <Button
                   onClick={() => {
                     const message = 'Please provide me with a comprehensive WordPress security checklist and best practices to protect my site from common vulnerabilities and attacks.'
-                    sessionStorage.setItem('mat_prefill_message', message)
-                    window.dispatchEvent(new CustomEvent('mat_switch_tab', { detail: { tab: 'chat' } }))
+                    sessionStorage.setItem('magica_prefill_message', message)
+                    window.dispatchEvent(new CustomEvent('magica_switch_tab', { detail: { tab: 'chat' } }))
                   }}
                   color="gray"
                 >

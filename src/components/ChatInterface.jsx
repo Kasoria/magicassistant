@@ -4,10 +4,17 @@ import CustomSelect from './CustomSelect'
 import { useToast } from './Toast'
 import ConfirmationModal from './ConfirmationModal'
 import ReactMarkdown from 'react-markdown'
+import { marked } from 'marked'
 import remarkBreaks from 'remark-breaks'
 import ContentMode from './ContentMode'
 import { parseHtmlStringToObjectArray, getDefaultParserStates, generateId } from '../utils/bricksParser'
 import { insertBricksStructure, isBricksBuilder } from '../utils/bricksInserter'
+
+// Self-contained fallback avatar (no remote dependency). Used only when the
+// WordPress-provided avatar URL is unavailable or fails to load.
+const FALLBACK_AVATAR = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+  "<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24'><circle cx='12' cy='12' r='12' fill='#c7c7c7'/><circle cx='12' cy='9.5' r='4' fill='#ffffff'/><path d='M4 22c0-4.4 3.6-8 8-8s8 3.6 8 8' fill='#ffffff'/></svg>"
+)
 
 const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, onAiResponseUpdate }) => {
   const [isContentMode, setIsContentMode] = useState(false)
@@ -100,7 +107,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
   // Image generation states
   const [imageGenerationMode, setImageGenerationMode] = useState(false)
   const [imageGenProvider, setImageGenProvider] = useState('openai')
-  const [imageGenModel, setImageGenModel] = useState('dall-e-3')
+  const [imageGenModel, setImageGenModel] = useState('gpt-image-2')
   const [imageAspectRatio, setImageAspectRatio] = useState('1024x1024')
   const [imageOutputFormat, setImageOutputFormat] = useState('png')
   
@@ -496,10 +503,10 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
     loadAvailableAgents() // Load AI agents
     
     // Check for prefilled message from SEO Analytics
-    const prefillMessage = sessionStorage.getItem('mat_prefill_message')
+    const prefillMessage = sessionStorage.getItem('magica_prefill_message')
     if (prefillMessage) {
       setInputMessage(prefillMessage)
-      sessionStorage.removeItem('mat_prefill_message')
+      sessionStorage.removeItem('magica_prefill_message')
     }
     
     // Load custom system message from localStorage
@@ -1302,7 +1309,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
   }
 
   // Helper: Generate image
-  const generateImage = async (prompt, provider = 'openai', model = 'dall-e-3', size = '1024x1024', format = 'png') => {
+  const generateImage = async (prompt, provider = 'openai', model = 'gpt-image-2', size = '1024x1024', format = 'png') => {
     try {
       const response = await fetch(`${adminData.restUrl}generate-image`, {
         method: 'POST',
@@ -3260,12 +3267,12 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
               <div className="flex-shrink-0">
                 {message.role === 'user' ? (
                   <img
-                    src={message.userAvatar || adminData?.currentUser?.avatar || `https://www.gravatar.com/avatar/default?s=24&d=mp`}
+                    src={message.userAvatar || adminData?.currentUser?.avatar || FALLBACK_AVATAR}
                     alt={message.userName || adminData?.currentUser?.name || 'User'}
                     className="h-6 w-6 rounded-full border border-gray-200 dark:border-gray-600"
                     title={message.userName || adminData?.currentUser?.name || 'User'}
                     onError={(e) => {
-                      e.target.src = `https://www.gravatar.com/avatar/default?s=24&d=mp`
+                      e.target.src = FALLBACK_AVATAR
                     }}
                   />
                 ) : (
@@ -3661,8 +3668,8 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
                       onChange={(e) => {
                         setImageGenProvider(e.target.value)
                         // Reset model when provider changes
-                        if (e.target.value === 'openai') setImageGenModel('dall-e-3')
-                        else if (e.target.value === 'google') setImageGenModel('gemini-2.5-flash-image')
+                        if (e.target.value === 'openai') setImageGenModel('gpt-image-2')
+                        else if (e.target.value === 'google') setImageGenModel('gemini-3.1-flash-image')
                       }}
                       className="w-full text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                     >
@@ -3679,17 +3686,16 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
                     >
                       {imageGenProvider === 'openai' && (
                         <>
-                          <option value="dall-e-3">DALL-E 3</option>
-                          <option value="dall-e-2">DALL-E 2</option>
+                          <option value="gpt-image-2">GPT Image 2 (Latest)</option>
+                          <option value="gpt-image-1.5">GPT Image 1.5</option>
+                          <option value="gpt-image-1-mini">GPT Image 1 Mini (Fast)</option>
                         </>
                       )}
                       {imageGenProvider === 'google' && (
                         <>
+                          <option value="gemini-3-pro-image">Gemini 3 Pro Image (Nano Banana Pro)</option>
+                          <option value="gemini-3.1-flash-image">Gemini 3.1 Flash Image (Nano Banana 2)</option>
                           <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (Nano Banana)</option>
-                          <option value="imagen-4.0-fast-generate-001">Imagen 4 (Fast)</option>
-                          <option value="imagen-4.0-generate-001">Imagen 4 (Standard)</option>
-                          <option value="imagen-4.0-ultra-generate-001">Imagen 4 (Ultra)</option>
-                          <option value="imagen-3.0-generate-002">Imagen 3</option>
                         </>
                       )}
                     </select>
@@ -4033,11 +4039,11 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
                 >
                   <div className="flex items-start gap-2">
                     <img
-                      src={adminData?.currentUser?.avatar || `https://www.gravatar.com/avatar/default?s=20&d=mp`}
+                      src={adminData?.currentUser?.avatar || FALLBACK_AVATAR}
                       alt={adminData?.currentUser?.name || 'User'}
                       className="h-5 w-5 rounded-full border border-gray-200 dark:border-gray-600 flex-shrink-0 mt-0.5"
                       onError={(e) => {
-                        e.target.src = `https://www.gravatar.com/avatar/default?s=20&d=mp`
+                        e.target.src = FALLBACK_AVATAR
                       }}
                     />
                     <div className="flex-1 min-w-0 pr-6">
@@ -4582,7 +4588,9 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
                 <Button
                   onClick={() => {
                     const formattedText = formatConversationForSharing()
-                    const dataUri = 'data:text/plain;charset=utf-8,' + encodeURIComponent(formattedText)
+                    // Render Markdown to HTML locally with the bundled "marked" library
+                    // (no remote scripts are loaded — required by WordPress.org guidelines).
+                    const renderedContent = marked.parse(formattedText)
                     const newWindow = window.open()
                     if (newWindow) {
                       newWindow.document.write(`
@@ -4618,11 +4626,7 @@ const ChatInterface = ({ adminData, isDrawerMode = false, isBricksMode = false, 
                             </style>
                           </head>
                           <body>
-                            <div id="content"></div>
-                            <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-                            <script>
-                              document.getElementById('content').innerHTML = marked.parse(\`${formattedText.replace(/`/g, '\\`')}\`);
-                            </script>
+                            <div id="content">${renderedContent}</div>
                           </body>
                         </html>
                       `)
